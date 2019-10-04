@@ -1,2 +1,9 @@
 /// @description Insert description here
 // You can write your code in this editor
+
+// Follow the player if influenced
+if (influenced) {
+
+	move_towards_point(obj_player.x, obj_player.y,speed);
+
+}
