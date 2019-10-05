@@ -7,4 +7,4 @@ var cw = camera_get_view_width(view_camera[0]);
 
 draw_set_font(fnt_score);
 draw_set_colour(c_white);
-draw_text(cx+cw/2,cy+25,"Score:"+string(trees_left));
+draw_text(cx+cw/2,cy+25,"Trees Remaining to Plant:"+string(trees_left));
