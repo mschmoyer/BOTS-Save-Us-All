@@ -1,17 +1,10 @@
 /// @description Insert description here
 // You can write your code in this editor
 
-if (instance_exists(obj_player)) {
+if (instance_exists(obj_tree)) {
 
-	move_towards_point(obj_player.x, obj_player.y,spd);
+	tree_target = instance_nearest(x,y,obj_tree);
+	move_towards_point(tree_target.x, tree_target.y,speed);
 
 }
 
-image_angle = direction;
-
-if (hp <= 0) {
-	with (obj_score) thescore = thescore + 5;
-	audio_sound_pitch(snd_enemy_death,random_range(0.8,1.2));
-	audio_play_sound(snd_enemy_death,0,0);
-	instance_destroy();
-}

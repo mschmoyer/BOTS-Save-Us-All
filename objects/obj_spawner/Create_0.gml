@@ -1,5 +1,4 @@
-/// @description Insert description here
-// You can write your code in this editor
+/// @description Spawns tree eater
 
-spawnrate = 30;
-alarm[0] = spawnrate;
+spawnrate = 300;
+alarm[0] = 1;
