@@ -2,7 +2,7 @@
     "id": "79c958f4-b28f-48a0-b541-17a701b5c6a8",
     "modelName": "GMObject",
     "mvc": "1.0",
-    "name": "obj_robot_spawner",
+    "name": "obj_robot_builder",
     "eventList": [
         {
             "id": "a2d769b3-babf-4ce6-a72c-de70ec882935",

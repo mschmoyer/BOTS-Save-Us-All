@@ -186,7 +186,7 @@
             "Key": "79c958f4-b28f-48a0-b541-17a701b5c6a8",
             "Value": {
                 "id": "1e93192e-ac82-4e49-af86-83091f6014a6",
-                "resourcePath": "objects\\obj_robot_spawner\\obj_robot_spawner.yy",
+                "resourcePath": "objects\\obj_robot_builder\\obj_robot_builder.yy",
                 "resourceType": "GMObject"
             }
         },
@@ -204,6 +204,14 @@
                 "id": "0de4fd46-3566-45e2-ac03-922aefe58279",
                 "resourcePath": "sprites\\spr_egg\\spr_egg.yy",
                 "resourceType": "GMSprite"
+            }
+        },
+        {
+            "Key": "81ae7df4-2c33-432b-8693-c66941ee718e",
+            "Value": {
+                "id": "edbec2d5-4c05-46d2-b4e5-fd576f1e5ebc",
+                "resourcePath": "views\\81ae7df4-2c33-432b-8693-c66941ee718e.yy",
+                "resourceType": "GMFolder"
             }
         },
         {

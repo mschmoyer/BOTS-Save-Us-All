@@ -2,7 +2,7 @@
 
 instance_create_layer(x + irandom_range(-OFFSET, OFFSET),
 					  y + irandom_range(-OFFSET, OFFSET),
-					  "Instances",
+					  "TreeLayer",
 					  obj_tree);
 
 alarm[1] = seedling_timer;
