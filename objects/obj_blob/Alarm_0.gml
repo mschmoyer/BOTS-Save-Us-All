@@ -1,4 +1,4 @@
-/// @description Insert description here
+/// @description Randomly move
 // You can write your code in this editor
 
 // Move randomly if not influenced

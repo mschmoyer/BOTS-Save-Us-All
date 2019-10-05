@@ -1,4 +1,5 @@
 /// @description Insert description here
 // You can write your code in this editor
 
-trees_left = 1000000000;
+// Spawn a robot
+instance_create_layer(x,y,"EnemyLayer",obj_blob);
