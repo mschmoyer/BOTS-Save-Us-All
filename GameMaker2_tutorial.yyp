@@ -250,7 +250,7 @@
             "Key": "b46250a6-11dd-48d4-a875-ff5752f65ec1",
             "Value": {
                 "id": "ee216f01-a5d0-4ed8-a4fb-fb0c46bf5c24",
-                "resourcePath": "sprites\\spr_enemy\\spr_enemy.yy",
+                "resourcePath": "sprites\\spr_builder_bot\\spr_builder_bot.yy",
                 "resourceType": "GMSprite"
             }
         },
