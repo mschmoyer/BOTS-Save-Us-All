@@ -1,5 +1,4 @@
 /// @description Randomly move
-// You can write your code in this editor
 
 // Move randomly if not influenced
 	direction = irandom_range(0,359);

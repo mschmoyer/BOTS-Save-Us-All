@@ -1,4 +1,7 @@
-/// @description Insert description here
-// You can write your code in this editor
+/// @description Trigger thr countdown until the tree eater eats the tree
 
-instance_destroy()
+if (!attacked)
+{
+	alarm[0] = tree_life;
+	attacked = true;
+}
