@@ -1,5 +1,4 @@
-/// @description Insert description here
-// You can write your code in this editor
+/// @description Spawns resource
 
-// i have grown frail and slow...
-instance_destroy();
+instance_create_layer(random(room_width),random(room_height),"PhysicalObjectsLayer",obj_metal);
+alarm[1] = resource_spawn_rate
