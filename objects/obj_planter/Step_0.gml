@@ -8,3 +8,9 @@ if (influenced) {
 	move_towards_point(index_of_target.x, index_of_target.y,speed);
 
 }
+
+//if (random_range(0,100) > 90) {
+	// plant a tree
+	//instance_create_layer(x,y,"EnemyLayer",obj_tree);
+
+//}

@@ -1,4 +1,5 @@
 /// @description Insert description here
 // You can write your code in this editor
 
-speed = 0.4;
+// i have grown frail and slow...
+instance_destroy();
