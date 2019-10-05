@@ -5,7 +5,7 @@
 alarm[0] = 60;
 
 // Timer to spawn
-alarm[1] = 200;
+alarm[1] = 100;
 
 // Timer to die
 alarm[2] = 600;
