@@ -9,3 +9,6 @@ draw_set_colour(c_white);
 draw_text(cx+cw/2,
 		  cy+25,
 		  "O2 gauge: " + string((trees_planted / trees_left) * 100) + "%");
+draw_text(cx+cw/2,
+		  cy+50,
+		  "Minerals: " + string(minerals));
