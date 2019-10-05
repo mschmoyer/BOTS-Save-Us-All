@@ -1,5 +1,4 @@
 /// @description Insert description here
-// You can write your code in this editor
 
 // Timer for movement
 alarm[0] = 60;
@@ -12,3 +11,6 @@ influenced = false;
 
 // Unit speed
 speed = 2;
+
+// Unit cost
+cost = 1;
