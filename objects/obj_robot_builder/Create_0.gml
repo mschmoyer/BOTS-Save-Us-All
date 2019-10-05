@@ -5,7 +5,8 @@
 alarm[0] = 60;
 
 // Timer to spawn
-alarm[1] = 100;
+buildRate = 200;
+alarm[1] = buildRate;
 
 // Timer to die
 alarm[2] = 600;

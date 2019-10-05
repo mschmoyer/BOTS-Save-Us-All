@@ -11,7 +11,7 @@ max_growth_val = 200;
 tree_life = 500;
 
 // How long until it spawns a seed
-seedling_timer = 500;
+seedling_timer = 800;
 on_planting_cooldown = false;
 
 // Affect the score
