@@ -18,3 +18,6 @@ speed = 2;
 
 // Unit target
 index_of_target = 0
+
+// Unit cost
+cost = 1

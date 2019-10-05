@@ -2,4 +2,8 @@
 // You can write your code in this editor
 
 // Spawn a robot
-instance_create_layer(x,y+128,"PhysicalObjectsLayer",obj_planter);
+if (obj_score.minerals >= 1)
+{
+	instance_create_layer(x,y+128,"PhysicalObjectsLayer",obj_planter);
+	obj_score.minerals--;
+}
