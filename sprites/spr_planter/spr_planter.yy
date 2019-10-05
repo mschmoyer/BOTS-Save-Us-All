@@ -2,7 +2,7 @@
     "id": "8e6d7f48-87f9-47a2-83fe-cede13059693",
     "modelName": "GMSprite",
     "mvc": "1.12",
-    "name": "blob",
+    "name": "spr_planter",
     "For3D": false,
     "HTile": false,
     "VTile": false,

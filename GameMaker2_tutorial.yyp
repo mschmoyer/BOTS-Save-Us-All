@@ -162,7 +162,7 @@
             "Key": "58a1d31a-a3cf-41e4-9b3f-4785d017812c",
             "Value": {
                 "id": "9cd8fb04-6c39-48bc-81d0-23b983805433",
-                "resourcePath": "objects\\obj_blob\\obj_blob.yy",
+                "resourcePath": "objects\\obj_planter\\obj_planter.yy",
                 "resourceType": "GMObject"
             }
         },
@@ -180,6 +180,14 @@
                 "id": "227ebbed-6c5b-45c9-811d-5e9f260279c7",
                 "resourcePath": "timelines\\timeline0\\timeline0.yy",
                 "resourceType": "GMTimeline"
+            }
+        },
+        {
+            "Key": "79c958f4-b28f-48a0-b541-17a701b5c6a8",
+            "Value": {
+                "id": "1e93192e-ac82-4e49-af86-83091f6014a6",
+                "resourcePath": "objects\\obj_robot_spawner\\obj_robot_spawner.yy",
+                "resourceType": "GMObject"
             }
         },
         {
@@ -202,7 +210,7 @@
             "Key": "8e6d7f48-87f9-47a2-83fe-cede13059693",
             "Value": {
                 "id": "10a6c5e3-6354-4a5d-9262-47a9f8cf7d2b",
-                "resourcePath": "sprites\\blob\\blob.yy",
+                "resourcePath": "sprites\\spr_planter\\spr_planter.yy",
                 "resourceType": "GMSprite"
             }
         },

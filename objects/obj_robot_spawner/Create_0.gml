@@ -4,8 +4,11 @@
 // Timer for movement
 alarm[0] = 60;
 
-// Timer to plant and destroy
+// Timer to spawn
 alarm[1] = 200;
+
+// Timer to die
+alarm[2] = 600;
 
 // Influence status
 influenced = false;
