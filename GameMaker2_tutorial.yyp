@@ -98,7 +98,7 @@
             "Key": "26a08429-c3e6-4b2f-b9d7-1c6c7090dfce",
             "Value": {
                 "id": "112a12e2-f80a-4585-b0a1-32d2f5927616",
-                "resourcePath": "sprites\\spr_mike\\spr_mike.yy",
+                "resourcePath": "sprites\\spr_robot_tree_eater\\spr_robot_tree_eater.yy",
                 "resourceType": "GMSprite"
             }
         },
@@ -202,7 +202,7 @@
             "Key": "8e6d7f48-87f9-47a2-83fe-cede13059693",
             "Value": {
                 "id": "10a6c5e3-6354-4a5d-9262-47a9f8cf7d2b",
-                "resourcePath": "sprites\\spr_planter\\spr_planter.yy",
+                "resourcePath": "sprites\\spr_robot_tree_planter\\spr_robot_tree_planter.yy",
                 "resourceType": "GMSprite"
             }
         },
