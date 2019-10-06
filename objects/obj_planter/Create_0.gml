@@ -4,7 +4,7 @@
 alarm[0] = 60;
 
 // Timer to plant and die
-alarm[1] = 600;
+alarm[1] = 400;
 
 // Unit speed
 speed = 2;
