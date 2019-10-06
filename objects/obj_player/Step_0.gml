@@ -19,6 +19,10 @@ if (keyboard_check(vk_down)) || keyboard_check(ord("S")) {
 	direction = FACING_DIRECTION.dir_down;
 }
 
-if obj_score.end_game_triggered && point_distance(x, y, obj_boss.x, obj_boss.y) < 100
-   move_towards_point(obj_boss.x, obj_boss.y, -200);
-else speed = 0;
+
+// Being knocked away by bad guy. 
+if( instance_exists(obj_boss) ) {
+	if obj_score.end_game_triggered && point_distance(x, y, obj_boss.x, obj_boss.y) < 100
+	   move_towards_point(obj_boss.x, obj_boss.y, -200);
+	else speed = 0;
+}

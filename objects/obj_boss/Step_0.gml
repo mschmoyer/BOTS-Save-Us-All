@@ -11,7 +11,10 @@
 if( hp <= 0 ) {
 
 	// Boss defeated! Win the game!
-	instance_destroy();
+	
 	instance_destroy(obj_enemy); // destroy all enemies. 
+	instance_destroy(obj_planter);
+	instance_destroy(obj_robot_builder);
 
+	instance_destroy();
 }
