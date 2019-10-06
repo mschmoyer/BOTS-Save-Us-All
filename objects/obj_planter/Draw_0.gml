@@ -5,7 +5,7 @@ draw_sprite(spr_robot_tree_planter,0,x,y);
 
 
 // The love of robots!
-if (obj_score.end_game_triggered == true && !global.dialogActive) {
+if (obj_end_game_start.good_robots_rebel == true && !global.dialogActive) {
 	
 	//draw_sprite(spr_love_bubble,0,x+40,y-60);
 	

@@ -2,7 +2,7 @@
 
 // Transition music
 
-if( trees_planted > 6 ) {
+if( trees_planted > 6 && !enemySpawnerCreated ) {
 	// Introduce baddies. 
 	instance_create_layer(0,0,"EffectsLayer",obj_enemy_spawner);
 	enemySpawnerCreated = true;
@@ -17,7 +17,7 @@ if( trees_planted > (TREES_TO_WIN/4) && current_song < 2 ) {
 	alarm[0] = 360;
 }
 
-// Start end game event
+// Start end game event 100%!
 if (trees_planted >= TREES_TO_WIN && !end_game_triggered)
 //if (trees_planted >= 1 && !end_game_triggered)
 {

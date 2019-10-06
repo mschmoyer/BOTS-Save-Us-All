@@ -119,6 +119,14 @@
             }
         },
         {
+            "Key": "1ca6d8bc-4e1d-459f-b616-e2c598731ff3",
+            "Value": {
+                "id": "6ffd7c9e-f5ed-40af-8bcf-95746952a8ce",
+                "resourcePath": "sprites\\spr_robot_face\\spr_robot_face.yy",
+                "resourceType": "GMSprite"
+            }
+        },
+        {
             "Key": "1f80d96d-94aa-44a5-b07e-1c18f77bafec",
             "Value": {
                 "id": "494005a1-3c48-4534-816e-bd8fa3a790ee",
@@ -140,6 +148,14 @@
                 "id": "0f0c25fd-c742-4b4f-ae84-6488a10d1555",
                 "resourcePath": "views\\226227f2-910a-43a2-8e00-2dcae2d1549e.yy",
                 "resourceType": "GMFolder"
+            }
+        },
+        {
+            "Key": "2597f2ac-dbad-4fea-b82f-408942cf7e2a",
+            "Value": {
+                "id": "784de5bc-049f-46c8-95ad-5f7a7f9075ff",
+                "resourcePath": "sprites\\spr_confused_bubble\\spr_confused_bubble.yy",
+                "resourceType": "GMSprite"
             }
         },
         {
@@ -415,6 +431,14 @@
             }
         },
         {
+            "Key": "87b3b80d-424e-45be-b9d8-f0396b27e18e",
+            "Value": {
+                "id": "d6373f2f-64bf-46b0-92f3-047f1d65d4b0",
+                "resourcePath": "objects\\obj_dialog_save_human\\obj_dialog_save_human.yy",
+                "resourceType": "GMObject"
+            }
+        },
+        {
             "Key": "8e6d7f48-87f9-47a2-83fe-cede13059693",
             "Value": {
                 "id": "10a6c5e3-6354-4a5d-9262-47a9f8cf7d2b",
@@ -623,6 +647,14 @@
             }
         },
         {
+            "Key": "c8b2dbbb-9656-4643-a231-ea75901a932f",
+            "Value": {
+                "id": "d4f19576-e5b2-4284-b891-6a0e85f9158e",
+                "resourcePath": "scripts\\convo_on_fighting1\\convo_on_fighting1.yy",
+                "resourceType": "GMScript"
+            }
+        },
+        {
             "Key": "cc98d028-7bdd-4680-85f3-c87a7baa481e",
             "Value": {
                 "id": "851ee781-c035-47e6-b1eb-2150e6f5cd3e",
@@ -766,6 +798,7 @@
         "3039ca01-300f-45fb-8407-9847550489ed",
         "7ec761dd-1f50-48dd-813b-48111ea880b0",
         "9a5220a3-c2d3-4768-9c92-d6f3e1a05cf6",
+        "c8b2dbbb-9656-4643-a231-ea75901a932f",
         "74b9ff9c-9656-43d7-bca0-73d4e7517e41",
         "2c6f055c-9c2c-4daf-84fb-1aa186fada31"
     ],
