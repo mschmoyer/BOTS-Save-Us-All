@@ -10,7 +10,8 @@
         "091fcd19-80dd-40bc-9cb3-54c0f704c831",
         "79c958f4-b28f-48a0-b541-17a701b5c6a8",
         "5296ce26-eb3f-4d18-99e1-c86760ba54f0",
-        "e76dc5d9-4816-4211-b644-769adb1eedb9"
+        "e76dc5d9-4816-4211-b644-769adb1eedb9",
+        "0a7e8f69-6847-4e61-9034-ada71e5fe9c8"
     ],
     "filterType": "GMObject",
     "folderName": "Robots_and_Things",

@@ -79,6 +79,14 @@
             }
         },
         {
+            "Key": "0a7e8f69-6847-4e61-9034-ada71e5fe9c8",
+            "Value": {
+                "id": "3e54705f-7455-4297-8cd7-bb2827204d65",
+                "resourcePath": "objects\\obj_boss\\obj_boss.yy",
+                "resourceType": "GMObject"
+            }
+        },
+        {
             "Key": "0e0b43c7-27dd-4807-8909-2473a19003ce",
             "Value": {
                 "id": "65928314-23e2-41c2-8696-e1fd21d94c69",
@@ -215,6 +223,14 @@
             }
         },
         {
+            "Key": "3ccfc741-40a9-4a3b-910e-bddbd6360df2",
+            "Value": {
+                "id": "abe97a2e-ec7a-4f2a-b228-64185ae4f2aa",
+                "resourcePath": "sprites\\spr_boss\\spr_boss.yy",
+                "resourceType": "GMSprite"
+            }
+        },
+        {
             "Key": "4120945d-86a8-4855-b892-9e43c2355f36",
             "Value": {
                 "id": "02ebaecf-1f3a-40a3-a4a7-38c40a8c4584",
@@ -300,6 +316,14 @@
                 "id": "e24540c5-7a8f-4187-bc53-da1ff161e4c8",
                 "resourcePath": "sprites\\spr_tip_builder\\spr_tip_builder.yy",
                 "resourceType": "GMSprite"
+            }
+        },
+        {
+            "Key": "736498d9-5f37-4fb6-8d7f-1fbae8b38024",
+            "Value": {
+                "id": "b6633b0a-4cc1-4140-a5cf-8ef5ed629735",
+                "resourcePath": "objects\\obj_end_game_start\\obj_end_game_start.yy",
+                "resourceType": "GMObject"
             }
         },
         {
@@ -540,14 +564,6 @@
                 "id": "020cf882-2843-43ec-97b5-5d68b8324fb0",
                 "resourcePath": "rooms\\rm_title\\rm_title.yy",
                 "resourceType": "GMRoom"
-            }
-        },
-        {
-            "Key": "bdab1a59-0e52-42f5-b144-3aebbb1f61fe",
-            "Value": {
-                "id": "5244a424-454e-4a74-b229-7f0756419468",
-                "resourcePath": "objects\\obj_bullet\\obj_bullet.yy",
-                "resourceType": "GMObject"
             }
         },
         {

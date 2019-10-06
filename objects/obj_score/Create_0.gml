@@ -8,3 +8,5 @@ TREES_TO_WIN = 1200;
 minerals = 0;
 
 current_song = 1;
+
+end_game_triggered = false
