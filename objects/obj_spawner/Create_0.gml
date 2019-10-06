@@ -1,10 +1,9 @@
-/// @description Spawns tree eater
+/// @description Spawns minerals
 
-spawnrate = 100;
-alarm[0] = 1;
 
 // Mineral spwan rate
+spawn_margin = 128;
 mineral_max_on_screen = 20;
-mineral_spawn = 50;
+mineral_spawn = 150;
 minerals_spawned = 0;
 alarm[1] = mineral_spawn;

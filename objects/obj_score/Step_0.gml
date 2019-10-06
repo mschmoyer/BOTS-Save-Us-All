@@ -1,6 +1,13 @@
 /// @description Check for events
 
 // Transition music
+
+if( trees_planted > 6 ) {
+	// Introduce baddies. 
+	instance_create_layer(0,0,"EffectsLayer",obj_enemy_spawner);
+	enemySpawnerCreated = true;
+}
+
 if( trees_planted > (TREES_TO_WIN/4) && current_song < 2 ) {
 	
 	// Play transition to stage 2

@@ -9,4 +9,6 @@ minerals = 0;
 
 current_song = 1;
 
-end_game_triggered = false
+end_game_triggered = false;
+
+enemySpawnerCreated = false;
