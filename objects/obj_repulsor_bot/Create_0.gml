@@ -11,7 +11,7 @@ speed = 0;
 cost = 5;
 
 // Repulsor push distance
-push = 50;
+push = 10;
 
 // Repulsor range
 range = 200;
