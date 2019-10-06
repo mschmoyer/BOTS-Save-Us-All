@@ -1,3 +1,7 @@
 /// @description Move the character
 
-//move_random(1,1)
+if (obj_score.end_game_triggered == true)
+{
+	speed = 5;
+	move_towards_point(obj_boss.x, obj_boss.y, speed);
+}

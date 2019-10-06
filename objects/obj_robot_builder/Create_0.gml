@@ -14,3 +14,5 @@ speed = 2;
 
 // Unit cost
 cost = 3
+
+kamikaze = false

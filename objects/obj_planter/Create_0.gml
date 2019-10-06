@@ -11,3 +11,6 @@ speed = 2;
 
 // Unit cost
 cost = 1;
+
+// Move towards boss
+kamikaze = false

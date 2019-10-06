@@ -5,7 +5,7 @@
 //trees_left = 200;
 trees_planted = 0;
 TREES_TO_WIN = 1200;
-minerals = 0;
+minerals = 100;
 
 current_song = 1;
 
