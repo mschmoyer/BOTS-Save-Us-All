@@ -4,11 +4,21 @@
 if (instance_exists(obj_tree)) {
 
 	tree_target = instance_nearest(x,y,obj_tree);
-	move_towards_point(tree_target.x-5, tree_target.y-5,speed);
+	
+	if( !tree_target.attacked ) {
+		move_towards_point(tree_target.x-5, tree_target.y-5,speed);
+	}
 
+	if( distance_to_object(tree_target) < 32 ) {
+		// start chomping!
+		image_index = chomp_frame;
+		if( alarm[0] < 0 ) alarm[0] = chomp_speed;
+	}
+	
 }
 
 if (being_repulsed) {
+	image_index = 2;
 	image_alpha -= 0.01;
 	if (image_alpha <= 0) instance_destroy();
 }

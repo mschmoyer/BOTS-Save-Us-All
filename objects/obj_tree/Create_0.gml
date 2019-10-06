@@ -4,6 +4,9 @@
 OFFSET_MAX= 120;
 OFFSET_MIN = 50;
 
+// Crowding distance
+min_distance_to_other = 300;
+
 // Range for tree growth timer
 min_growth_val = 100;
 max_growth_val = 200;
@@ -31,5 +34,3 @@ image_index = tree_stage;
 // Tree is under attack
 attacked = false;
 
-// Crowding distance
-min_distance_to_other = 20;
