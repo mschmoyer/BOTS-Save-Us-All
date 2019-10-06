@@ -1,7 +1,8 @@
 /// @description Insert description here
 // You can write your code in this editor
 
-if( trees_planted > 250 && current_song < 2 ) {
+
+if( trees_planted > 100 && current_song < 2 ) {
 	
 // Music
 	audio_stop_sound(snd_medium_trees);
@@ -11,5 +12,7 @@ if( trees_planted > 250 && current_song < 2 ) {
 
 if (trees_left <= 0)
 {
-	game_end();
+	// You win!!
+	room_goto(rm_title);
+	//game_end();
 }
