@@ -1,4 +1,4 @@
 /// @description Set up vars
 
 // Boss speed
-speed = 10;
+speed = 5;

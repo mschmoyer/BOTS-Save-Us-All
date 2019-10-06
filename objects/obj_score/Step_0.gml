@@ -11,8 +11,8 @@ if( trees_planted > (TREES_TO_WIN/4) && current_song < 2 ) {
 }
 
 // Start end game event
-//if (trees_planted >= TREES_TO_WIN)
-if (trees_planted >= 1 && !end_game_triggered)
+if (trees_planted >= TREES_TO_WIN && !end_game_triggered)
+//if (trees_planted >= 1 && !end_game_triggered)
 {
 	end_game_triggered = true;
 	instance_create_depth(0,0,0,obj_end_game_start);

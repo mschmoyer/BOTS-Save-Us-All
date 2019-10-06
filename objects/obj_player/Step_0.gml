@@ -19,15 +19,6 @@ if (keyboard_check(vk_down)) || keyboard_check(ord("S")) {
 	direction = FACING_DIRECTION.dir_down;
 }
 
-//image_angle = point_direction(x,y,mouse_x,mouse_y);
-
-// Shoot
-/*
-if (mouse_check_button(mb_left) && cooldown <= 0) {
-	instance_create_layer(x, y,"BulletsLayer",obj_bullet);	
-	cooldown = 5;
-}
-
-if (cooldown > 0) cooldown = cooldown - 1;
-*/
-
+if obj_score.end_game_triggered && point_distance(x, y, obj_boss.x, obj_boss.y) < 100
+   move_towards_point(obj_boss.x, obj_boss.y, -200);
+else speed = 0;
