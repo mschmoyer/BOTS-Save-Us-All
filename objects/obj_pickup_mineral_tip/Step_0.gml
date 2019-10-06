@@ -4,7 +4,7 @@
 if ( tip_disappearing == true && !tip_dead ) {
 	image_alpha-=0.05; // fade out. 
 	if (image_alpha<=0) {
-		alarm[0] = 400;
+		alarm[0] = 200;
 		tip_dead=true;
 	}
 }
