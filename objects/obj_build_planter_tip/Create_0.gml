@@ -10,3 +10,7 @@ tip_disappearing = false;
 
 hover_offset = 0;
 hover_delta = 1;
+
+
+// Now destroy the previous tip. 
+instance_destroy(obj_pickup_mineral_tip);

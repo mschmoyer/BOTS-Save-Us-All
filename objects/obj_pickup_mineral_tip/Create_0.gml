@@ -8,5 +8,7 @@ tip_appearing = true;
 // For a future "fade-out"
 tip_disappearing = false;
 
+tip_dead = false;
+
 hover_offset = 0;
 hover_delta = 1;
