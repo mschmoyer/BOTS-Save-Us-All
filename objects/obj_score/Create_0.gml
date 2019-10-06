@@ -4,7 +4,7 @@
 trees_left = 1000;
 trees_planted = 0;
 
-minerals = 0;
+minerals = 5;
 
 current_song = 1;
 // Music
