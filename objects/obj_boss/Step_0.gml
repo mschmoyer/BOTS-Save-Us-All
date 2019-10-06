@@ -6,3 +6,12 @@
 //} else {
 //	speed = 0;	
 //}
+
+
+if( hp <= 0 ) {
+
+	// Boss defeated! Win the game!
+	instance_destroy();
+	instance_destroy(obj_enemy); // destroy all enemies. 
+
+}

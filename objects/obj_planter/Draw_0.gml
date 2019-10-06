@@ -5,7 +5,7 @@ draw_sprite(spr_robot_tree_planter,0,x,y);
 
 
 // The love of robots!
-if (obj_score.end_game_triggered && !obj_score.good_robots_rebel) {
+if (obj_score.end_game_triggered) {
 	
 	if( obj_score.good_robots_rebel) {
 		// We love the human!!

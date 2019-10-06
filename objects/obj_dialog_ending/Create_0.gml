@@ -6,6 +6,6 @@ scr_InitializeDialog1();
 if (!active) {
 	active = true;
 	convoIndex = 0;
-	convo_robots_save_us();
+	convo_ending();
 	scr_DisplayConvoText();
 }
