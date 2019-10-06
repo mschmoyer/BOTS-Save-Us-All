@@ -655,6 +655,14 @@
             }
         },
         {
+            "Key": "e7e918b9-9f03-4bcc-bfcf-6f85e966360c",
+            "Value": {
+                "id": "3e78388d-68f5-401d-9d59-e88203b8872a",
+                "resourcePath": "sounds\\snd_explostion\\snd_explostion.yy",
+                "resourceType": "GMSound"
+            }
+        },
+        {
             "Key": "e805caae-76f3-4593-94b1-aa6003a29645",
             "Value": {
                 "id": "fd063ab6-7991-4c75-97fe-b4ceb38e3b0d",
