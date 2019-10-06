@@ -7,6 +7,7 @@ trees_planted = 0;
 TREES_TO_WIN = 1;
 minerals = 0;
 
+
 current_song = 1;
 
 end_game_triggered = false;
