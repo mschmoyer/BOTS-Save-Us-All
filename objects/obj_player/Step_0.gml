@@ -22,3 +22,7 @@ if (keyboard_check(vk_down)) || keyboard_check(ord("S")) {
 if obj_score.end_game_triggered && point_distance(x, y, obj_boss.x, obj_boss.y) < 100
    move_towards_point(obj_boss.x, obj_boss.y, -200);
 else speed = 0;
+
+// Stop from moving off screen
+x=clamp(x, 0, room_width);
+y=clamp(y, 0, room_height);
