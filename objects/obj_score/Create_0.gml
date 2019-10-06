@@ -10,5 +10,6 @@ minerals = 0;
 current_song = 1;
 
 end_game_triggered = false;
+good_robots_rebel = false;
 
 enemySpawnerCreated = false;

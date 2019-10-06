@@ -24,4 +24,6 @@ if (trees_planted >= TREES_TO_WIN && !end_game_triggered)
 	end_game_triggered = true;
 	instance_create_depth(0,0,0,obj_end_game_start);
 	//room_goto(rm_title);
+	
+	alarm[1] = 5*60;
 }

@@ -6,9 +6,9 @@ draw_sprite(spr_builder_bot,0,x,y);
 
 
 // The love of robots!
-if (obj_score.end_game_triggered && !obj_end_game_start.good_robots_rebel) {
+if (obj_score.end_game_triggered && !obj_score.good_robots_rebel) {
 	
-	if( obj_end_game_start.good_robots_rebel) {
+	if( obj_score.good_robots_rebel) {
 		// We love the human!!
 		draw_sprite_part_ext(spr_love_bubble,0,0,0,128,128,x+40,y-260,1,1,c_white,0.8);
 	} else {
