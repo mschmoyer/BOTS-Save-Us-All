@@ -2,6 +2,7 @@
 if( currCharIndex < string_length(dialog[convoIndex,1]) + 1) {
 	
 	spriteToDisplay = dialog[convoIndex, 0];
+	spriteImageIndexToDisplay = dialog[convoIndex, 2];
 	stringToDisplay += string_char_at(dialog[convoIndex,1], currCharIndex++);
 
 } else {

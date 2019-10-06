@@ -4,4 +4,4 @@
 global.dialogActive = false;
 global.dialogInstance = 0;
 
-alarm[0] = 300; // start intro dialog
+alarm[0] = 150; // start intro dialog

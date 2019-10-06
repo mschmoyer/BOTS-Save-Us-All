@@ -34,4 +34,5 @@ convoDialogCount = 0;
 convoIndex = 0;
 spriteToDisplay = -1;
 stringToDisplay = "";
+spriteImageIndexToDisplay = 0;
 currCharIndex = 1;
