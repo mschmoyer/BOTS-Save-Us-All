@@ -271,6 +271,14 @@
             }
         },
         {
+            "Key": "7bb14eb9-fb87-4be7-abc9-530600623f44",
+            "Value": {
+                "id": "4319684a-f11d-4db9-84c0-51ef72670b32",
+                "resourcePath": "objects\\obj_build_planter_tip\\obj_build_planter_tip.yy",
+                "resourceType": "GMObject"
+            }
+        },
+        {
             "Key": "7eb88635-f1d6-4118-939a-c20b7b53e5c2",
             "Value": {
                 "id": "cccee47e-4a22-4842-b882-b97f7f7f66b2",

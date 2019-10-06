@@ -3,11 +3,7 @@
 
 if ( tip_disappearing == true ) {
 	image_alpha-=0.05; // fade out. 
-	if (image_alpha<=0) {
-		
-		alert[0] = 400;
-
-	}
+	if image_alpha<=0 instance_destroy();
 }
 if ( tip_appearing == true ) {
 	image_alpha+=0.05;
