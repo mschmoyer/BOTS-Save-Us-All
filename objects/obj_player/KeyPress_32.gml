@@ -1,11 +1,11 @@
 /// @description Create planter
-// You can write your code in this editor
 
-// Spawn a robot
-if (obj_score.minerals >= 1 && !global.dialogActive)
+// Check to make sure there are enough minerals and no dialgoue is active
+if (obj_score.minerals >= planter_cost && 
+	!global.dialogActive)
 {
 	instance_create_layer(x,y+128,"PhysicalObjectsLayer",obj_planter);
-	obj_score.minerals--;
+	obj_score.minerals -= planter_cost;
 	audio_play_sound(snd_build,20,false);
 	
 	
@@ -13,7 +13,6 @@ if (obj_score.minerals >= 1 && !global.dialogActive)
 	if ( instance_exists(obj_build_planter_tip) ) {
 		obj_build_planter_tip.tip_disappearing = true;
 	}
-
 }
 
 

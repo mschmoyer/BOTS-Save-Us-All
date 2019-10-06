@@ -3,7 +3,7 @@
 alarm[0] = 60;
 
 // Timer to spawn
-buildRate = 600;
+buildRate = 400;
 alarm[1] = buildRate;
 
 // Timer to die
@@ -13,6 +13,6 @@ alarm[2] = 600;
 speed = 2;
 
 // Unit cost
-cost = 3
+cost = 6
 
 kamikaze = false
