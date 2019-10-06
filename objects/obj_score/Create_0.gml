@@ -2,8 +2,13 @@
 // You can write your code in this editor
 
 
-trees_left = 200;
+//trees_left = 200;
 trees_planted = 0;
+
+
+TREES_TO_WIN = 200;
+
+
 
 minerals = 5;
 

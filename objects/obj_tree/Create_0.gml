@@ -1,7 +1,8 @@
 /// @description Insert description here
 
 // Offset for tree range
-OFFSET = 50;
+OFFSET_MAX= 120;
+OFFSET_MIN = 50;
 
 // Range for tree growth timer
 min_growth_val = 100;
@@ -15,7 +16,7 @@ seedling_timer = 800;
 on_planting_cooldown = false;
 
 // Affect the score
-obj_score.trees_left--;
+//obj_score.trees_left--;
 obj_score.trees_planted++;
 
 // Start tree life

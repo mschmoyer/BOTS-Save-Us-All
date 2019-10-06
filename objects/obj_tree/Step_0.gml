@@ -11,7 +11,7 @@ if (tree_growth >= tree_nextlevel) {
 		tree_growth = 0;
 		image_index = tree_stage;
 		obj_score.trees_planted++;
-		obj_score.trees_left--;
+		//obj_score.trees_left--;
 	}
 }
 
