@@ -8,3 +8,8 @@ if( trees_planted > 250 && current_song < 2 ) {
 	audio_play_sound(snd_background, 10, true);	
 	current_song = 2;
 }
+
+if (trees_left <= 0)
+{
+	game_end();
+}

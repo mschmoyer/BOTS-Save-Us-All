@@ -1,6 +1,6 @@
 /// @description Repulsor blast
 
-sprite_index = 1;
+image_index = 1;
 
 var replusor_range = range
 var repulsor_push = push
@@ -13,6 +13,5 @@ with(obj_enemy) {
 		//y -= repulsor_push ; 
 	}
 }
-
-sprite_index = 0;
 alarm[0] = push_timer;
+alarm[1] = 10;
