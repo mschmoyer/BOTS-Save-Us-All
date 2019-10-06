@@ -17,6 +17,10 @@ if( hp <= 0 ) {
 	instance_destroy(obj_enemy); // destroy all enemies. 
 	instance_destroy(obj_planter);
 	instance_destroy(obj_robot_builder);
+	instance_destroy(obj_spawner);
+	instance_destroy(obj_enemy_spawner);
+	
+	instance_create_depth(0,0,0,obj_dialog_ending);
 
 	instance_destroy();
 }
