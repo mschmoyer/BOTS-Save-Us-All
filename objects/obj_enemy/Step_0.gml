@@ -1,6 +1,9 @@
 /// @description Insert description here
 // You can write your code in this editor
 
+x=clamp(x, 0, room_width);
+y=clamp(y, 0, room_height);
+
 if (instance_exists(obj_tree)) {
 
 	tree_target = instance_nearest(x,y,obj_tree);
