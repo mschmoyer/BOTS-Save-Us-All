@@ -1,10 +1,11 @@
 /// @description Insert description here
 // You can write your code in this editor
 
-trees_left = 1000;
+
+trees_left = 200;
 trees_planted = 0;
 
-minerals = 0;
+minerals = 5;
 
 current_song = 1;
 // Music

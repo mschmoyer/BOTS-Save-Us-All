@@ -1,6 +1,6 @@
 /// @description Spawns tree eater
 
-spawnrate = random_range(1000,3000);
+spawnrate = 100;
 alarm[0] = 1;
 
 // Mineral spwan rate

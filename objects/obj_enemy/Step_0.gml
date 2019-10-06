@@ -8,3 +8,7 @@ if (instance_exists(obj_tree)) {
 
 }
 
+if (being_repulsed) {
+	image_alpha -= 0.01;
+	if (image_alpha <= 0) instance_destroy();
+}
