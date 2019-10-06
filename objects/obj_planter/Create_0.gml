@@ -1,13 +1,10 @@
-/// @description Insert description here
+/// @description Robot vars
 
 // Timer for movement
 alarm[0] = 60;
 
-// Timer to plant and destroy
-alarm[1] = 200;
-
-// Influence status
-influenced = false;
+// Timer to plant and die
+alarm[1] = 600;
 
 // Unit speed
 speed = 2;
