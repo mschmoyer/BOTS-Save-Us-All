@@ -30,3 +30,6 @@ image_index = tree_stage;
 
 // Tree is under attack
 attacked = false;
+
+// Crowding distance
+min_distance_to_other = 20;
