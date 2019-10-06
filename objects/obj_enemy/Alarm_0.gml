@@ -6,6 +6,7 @@ image_index = chomp_frame;
 alarm[0] = chomp_speed;
 
 // Sometimes, play chomp sound
-if( random_range(1,160) > 97 ) {
+if( !hasBittenSomething ) {
 	audio_play_sound(snd_eat_tree,20,false);	
+	hasBittenSomething = true;
 }

@@ -5,5 +5,7 @@
 velocity = 8;
 //max_velocity = 9;
 
+soundCooldown = 0;
+
 direction = FACING_DIRECTION.dir_down;
 

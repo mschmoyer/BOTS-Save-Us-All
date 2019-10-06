@@ -10,7 +10,8 @@
         "a56a1f5e-d6a3-4477-abe7-34fa8ce416a7",
         "8ea8643a-39de-46ac-9187-c43df1a5c995",
         "d5421438-217f-4703-9a01-729229e0c8c0",
-        "b1eb36eb-1015-493b-9985-60b304edfb2d"
+        "b1eb36eb-1015-493b-9985-60b304edfb2d",
+        "f5f58cfe-79d0-4ba3-83f4-cde73c331a4a"
     ],
     "filterType": "GMSprite",
     "folderName": "Tips and Text",

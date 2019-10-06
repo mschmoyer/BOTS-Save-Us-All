@@ -1,5 +1,6 @@
 /// @description Tree growth
 
+
 // Ages the tree
 if (tree_stage < 3) tree_growth = tree_growth + 1;
 

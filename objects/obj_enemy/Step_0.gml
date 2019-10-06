@@ -21,7 +21,6 @@ if (instance_exists(obj_tree)) {
 		}
 		
 	}
-	
 }
 
 if (being_repulsed) {

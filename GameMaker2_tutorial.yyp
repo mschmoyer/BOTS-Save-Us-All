@@ -295,6 +295,14 @@
             }
         },
         {
+            "Key": "5e5098a8-e97b-4681-88d2-49fe655f637a",
+            "Value": {
+                "id": "c0735e27-78bc-4082-bde2-fc546779b30a",
+                "resourcePath": "sounds\\snd_klaxon\\snd_klaxon.yy",
+                "resourceType": "GMSound"
+            }
+        },
+        {
             "Key": "5eb5f37d-26cc-4f8a-9bfe-229d1b2b4163",
             "Value": {
                 "id": "6f064e03-59bb-445e-9759-618a2ddb33fc",
@@ -724,6 +732,14 @@
                 "id": "e676dc06-743c-4df0-bc17-2fdaa0a7c22e",
                 "resourcePath": "options\\mac\\options_mac.yy",
                 "resourceType": "GMMacOptions"
+            }
+        },
+        {
+            "Key": "f5f58cfe-79d0-4ba3-83f4-cde73c331a4a",
+            "Value": {
+                "id": "551078fa-3710-4a9c-bcd4-d4a9fcebb7cc",
+                "resourcePath": "sprites\\spr_love_bubble\\spr_love_bubble.yy",
+                "resourceType": "GMSprite"
             }
         },
         {
