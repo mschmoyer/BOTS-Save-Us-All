@@ -4,7 +4,7 @@
 
 //trees_left = 200;
 trees_planted = 0;
-TREES_TO_WIN = 1;
+TREES_TO_WIN = 400;
 minerals = 0;
 
 

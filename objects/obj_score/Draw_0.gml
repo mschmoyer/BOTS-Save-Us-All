@@ -24,7 +24,7 @@ switch(oxygen_stage) {
 		draw_set_colour(c_white);
 }
 draw_set_font(fnt_score);
-draw_text(cx+cw/2+500,
+draw_text(cx+cw/2+700,
 		  cy+25,
 		  "o2 Level: " + string(oxygen_level) + "%");
 		  
@@ -33,3 +33,8 @@ draw_set_colour(c_white);
 draw_text(cx+cw/2-1000,
 		  cy+25,
 		  "Minerals: " + string(minerals));
+		  
+		    
+draw_set_font(fnt_score);
+draw_set_color(c_white);
+draw_text(cx+cw/2-630,cy+25,"SPACE=Planter [3]    Q=Builder [6]    R=Repulsor [5]");

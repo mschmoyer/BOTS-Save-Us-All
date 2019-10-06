@@ -17,9 +17,10 @@ if (instance_exists(obj_tree)) {
 		image_index = chomp_frame;
 		if( alarm[0] < 0 ) alarm[0] = chomp_speed;
 		
-		if( !global.attackTipDone ) {
+		if( !global.attackTipDone && !global.attackTipStarted ) {
 			
 			// Start the fighting tip. 
+			global.attackTipStarted = true;
 			instance_create_depth(0,0,0,obj_dialog_fight);	
 		}
 		
