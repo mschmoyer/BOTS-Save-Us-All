@@ -4,7 +4,7 @@
 if (obj_score.good_robots_rebel == true && !global.dialogActive)
 {
 	speed = 5;
-	move_towards_point(obj_boss.x, obj_boss.y, speed);
+	if (instance_exists(obj_boss)) move_towards_point(obj_boss.x, obj_boss.y, speed);
 }
 
 x=clamp(x, 0, room_width);
