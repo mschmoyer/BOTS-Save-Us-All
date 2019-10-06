@@ -4,3 +4,5 @@
 //acceleration = 0.1;
 velocity = 8;
 //max_velocity = 9;
+
+direction = FACING_DIRECTION.dir_down;
