@@ -1,6 +1,7 @@
 
 global.dialogActive = true;
 global.dialogInstance = self;
+
 finished = false;
 
 padding = 50;
@@ -23,9 +24,11 @@ avatar_yOrigin = innerBox_yOrigin + 20;
 text_xOrigin = avatar_xOrigin + 150;
 text_yOrigin = avatar_yOrigin + 25;
 
+// reset the dialog
 for (i=0;i<100;i++) {
-	dialog[i, 0] = -1;
+	dialog[i, 0] = 12;
 	dialog[i, 1] = "";
+	dialog[i, 2] = 0;
 }
 
 active = false;

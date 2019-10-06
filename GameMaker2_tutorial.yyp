@@ -127,6 +127,14 @@
             }
         },
         {
+            "Key": "1fb251d4-887f-4ce1-975d-bd9c92a8b22f",
+            "Value": {
+                "id": "d363166f-a7a5-40c8-a22b-f051e7eaa286",
+                "resourcePath": "objects\\obj_dialog_fight\\obj_dialog_fight.yy",
+                "resourceType": "GMObject"
+            }
+        },
+        {
             "Key": "226227f2-910a-43a2-8e00-2dcae2d1549e",
             "Value": {
                 "id": "0f0c25fd-c742-4b4f-ae84-6488a10d1555",
@@ -423,6 +431,14 @@
             }
         },
         {
+            "Key": "9a5220a3-c2d3-4768-9c92-d6f3e1a05cf6",
+            "Value": {
+                "id": "90f5cdea-fdab-405f-b0b1-0aa87de35771",
+                "resourcePath": "scripts\\convo_on_fighting\\convo_on_fighting.yy",
+                "resourceType": "GMScript"
+            }
+        },
+        {
             "Key": "9b5978ec-b8f0-4507-8abd-1aaafcef342b",
             "Value": {
                 "id": "ebc7e087-d4ec-43e5-bc27-bea297f54fd0",
@@ -709,6 +725,7 @@
         "668828c8-1753-4549-9899-48a02f22bd36",
         "3039ca01-300f-45fb-8407-9847550489ed",
         "7ec761dd-1f50-48dd-813b-48111ea880b0",
+        "9a5220a3-c2d3-4768-9c92-d6f3e1a05cf6",
         "74b9ff9c-9656-43d7-bca0-73d4e7517e41",
         "2c6f055c-9c2c-4daf-84fb-1aa186fada31"
     ],

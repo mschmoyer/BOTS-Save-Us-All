@@ -13,6 +13,13 @@ if (instance_exists(obj_tree)) {
 		// start chomping!
 		image_index = chomp_frame;
 		if( alarm[0] < 0 ) alarm[0] = chomp_speed;
+		
+		if( !global.attackTipDone ) {
+			
+			// Start the fighting tip. 
+			instance_create_depth(0,0,0,obj_dialog_fight);	
+		}
+		
 	}
 	
 }

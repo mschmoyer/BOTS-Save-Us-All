@@ -2,6 +2,7 @@
 randomize();
 
 global.introductionDone = false;
+global.attackTipDone = false;
 
 global.current_song = 1;
 // Music

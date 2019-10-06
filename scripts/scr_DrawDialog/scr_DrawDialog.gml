@@ -10,6 +10,8 @@ if (active) {
 
 	draw_set_color(c_white);
 	draw_text(text_xOrigin, text_yOrigin, stringToDisplay);
+	
+	
 	draw_sprite_ext(spriteToDisplay, spriteImageIndexToDisplay, avatar_xOrigin, avatar_yOrigin, avatarScale, avatarScale, 0, c_white, 1);
 	
 }
