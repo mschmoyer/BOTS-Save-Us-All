@@ -1,8 +1,10 @@
 /// @description Plant tree and die
-// You can write your code in this editor
 
 // Plant a tree
-instance_create_layer(x,y,"PhysicalObjectsLayer",obj_tree);
+if (!kamikaze) {
+	instance_create_layer(x,y,"PhysicalObjectsLayer",obj_tree);
+	alarm[1] = tree_planting_rate;
+}
 
-
-instance_destroy();
+// Doesn't die right now
+//instance_destroy();

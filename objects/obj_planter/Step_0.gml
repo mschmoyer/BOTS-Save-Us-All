@@ -1,16 +1,11 @@
-/// @description Insert description here
-// You can write your code in this editor
+/// @description Move the character
 
-// Follow the player if influenced
-if (influenced) {
-
-	//move_towards_point(obj_player.x, obj_player.y,speed);
-	move_towards_point(index_of_target.x, index_of_target.y,speed);
-
+// Go towards boss
+if (obj_score.good_robots_rebel == true && !global.dialogActive)
+{
+	speed = 5;
+	if (instance_exists(obj_boss)) move_towards_point(obj_boss.x, obj_boss.y, speed);
 }
 
-//if (random_range(0,100) > 90) {
-	// plant a tree
-	//instance_create_layer(x,y,"EnemyLayer",obj_tree);
-
-//}
+x=clamp(x, 0, room_width);
+y=clamp(y, 0, room_height);

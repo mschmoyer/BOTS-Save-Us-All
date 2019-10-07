@@ -5,16 +5,6 @@
     "name": "obj_pickup_mineral_tip",
     "eventList": [
         {
-            "id": "6e38d81a-42df-4f0c-a474-afdfdeec429d",
-            "modelName": "GMEvent",
-            "mvc": "1.0",
-            "IsDnD": false,
-            "collisionObjectId": "00000000-0000-0000-0000-000000000000",
-            "enumb": 0,
-            "eventtype": 1,
-            "m_owner": "26ee7f62-c519-4cae-8e74-0dd9121d2b11"
-        },
-        {
             "id": "6405b4dc-2bbb-465d-8654-2b1a82ea3612",
             "modelName": "GMEvent",
             "mvc": "1.0",
@@ -32,6 +22,16 @@
             "collisionObjectId": "00000000-0000-0000-0000-000000000000",
             "enumb": 0,
             "eventtype": 0,
+            "m_owner": "26ee7f62-c519-4cae-8e74-0dd9121d2b11"
+        },
+        {
+            "id": "803a7872-daf8-4a38-bf4b-04368e47996c",
+            "modelName": "GMEvent",
+            "mvc": "1.0",
+            "IsDnD": false,
+            "collisionObjectId": "00000000-0000-0000-0000-000000000000",
+            "enumb": 0,
+            "eventtype": 2,
             "m_owner": "26ee7f62-c519-4cae-8e74-0dd9121d2b11"
         }
     ],

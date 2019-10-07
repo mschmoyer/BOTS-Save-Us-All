@@ -1,7 +1,11 @@
 /// @description Insert description here
 
 // Offset for tree range
-OFFSET = 50;
+OFFSET_MAX= 120;
+OFFSET_MIN = 50;
+
+// Crowding distance
+min_distance_to_other = 300;
 
 // Range for tree growth timer
 min_growth_val = 100;
@@ -11,11 +15,11 @@ max_growth_val = 200;
 tree_life = 500;
 
 // How long until it spawns a seed
-seedling_timer = 800;
+seedling_timer = 2000;
 on_planting_cooldown = false;
 
 // Affect the score
-obj_score.trees_left--;
+//obj_score.trees_left--;
 obj_score.trees_planted++;
 
 // Start tree life
@@ -29,3 +33,4 @@ image_index = tree_stage;
 
 // Tree is under attack
 attacked = false;
+
