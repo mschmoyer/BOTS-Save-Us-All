@@ -535,6 +535,14 @@
             }
         },
         {
+            "Key": "a4ad61ff-7d94-422d-b7d0-f8f1190192c8",
+            "Value": {
+                "id": "937d5fe6-222e-4977-acae-b6b63be30a27",
+                "resourcePath": "views\\a4ad61ff-7d94-422d-b7d0-f8f1190192c8.yy",
+                "resourceType": "GMFolder"
+            }
+        },
+        {
             "Key": "a56a1f5e-d6a3-4477-abe7-34fa8ce416a7",
             "Value": {
                 "id": "50b34647-1845-4ad2-97d4-a14a91f13123",
@@ -564,14 +572,6 @@
                 "id": "1fa03dcf-4119-43af-b7d9-11bcedd2e577",
                 "resourcePath": "options\\linux\\options_linux.yy",
                 "resourceType": "GMLinuxOptions"
-            }
-        },
-        {
-            "Key": "abac7544-1dff-4853-851a-e72b7a183da0",
-            "Value": {
-                "id": "71ff61a7-6163-4c28-ab1b-e35bfaa42b84",
-                "resourcePath": "sounds\\music_stage1_stage2_transition\\music_stage1_stage2_transition.yy",
-                "resourceType": "GMSound"
             }
         },
         {
