@@ -1,7 +1,7 @@
 /// @description Spawn Tree Eaters
 // You can write your code in this editor
 
-if (obj_score.trees_planted >= 0)
+if (obj_score.trees_planted >= 0 && instance_number(obj_enemy) < max_enemies)
 {
 	
 	enum Side{

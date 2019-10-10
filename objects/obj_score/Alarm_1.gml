@@ -1,4 +1,3 @@
-/// @description Insert description here
-// You can write your code in this editor
+/// @description Robot suicidal defense timer
 
 good_robots_rebel = true;

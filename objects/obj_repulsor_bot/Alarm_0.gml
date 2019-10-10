@@ -14,5 +14,16 @@ with(obj_enemy) {
 		//y -= repulsor_push ; 
 	}
 }
-alarm[0] = push_timer;
-alarm[1] = 20;
+
+pulsesRemaining--; 
+if( pulsesRemaining <= 0 )
+{
+	// Out of pulses!
+	instance_destroy();
+}
+else
+{
+	// Prepare to pulse again...
+	alarm[0] = push_timer;
+	alarm[1] = 20;
+}

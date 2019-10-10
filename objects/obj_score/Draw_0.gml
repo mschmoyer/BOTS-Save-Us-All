@@ -9,32 +9,20 @@ var cw = camera_get_view_width(view_camera[0]);
 oxygen_level = min((trees_planted / TREES_TO_WIN),1) * 100;
 oxygen_stage = round(oxygen_level / 25);
 
-switch(oxygen_stage) {
-	case 0:
-		draw_set_colour(c_red);
-	case 1:
-		draw_set_colour(c_orange);
-	case 2:
-		draw_set_colour(c_yellow);
-	case 3:
-		draw_set_colour(c_lime);
-	case 4:
-		draw_set_colour(c_aqua);
-	default:
-		draw_set_colour(c_white);
-}
+// Draw the o2 sensor
 draw_set_font(fnt_score);
 draw_text(cx+cw/2+700,
 		  cy+25,
-		  "o2 Level: " + string(oxygen_level) + "%");
+		  "o2 Level: " + string(round(oxygen_level)) + "%");
 		  
+// Draw the mineral counter
 draw_set_font(fnt_score);
 draw_set_colour(c_white);  
 draw_text(cx+cw/2-1000,
 		  cy+25,
 		  "Minerals: " + string(minerals));
 		  
-		    
+// Draw the instructions and available commands
 draw_set_font(fnt_score);
 draw_set_color(c_white);
-draw_text(cx+cw/2-630,cy+25,"SPACE=Planter [3]    Q=Builder [6]    R=Repulsor [5]");
+draw_text(cx+cw/2-630,cy+25,"SPACE=Planter ["+string(global.planterCost)+"]    Q=Builder ["+string(global.builderCost)+"]    R=Repulsor ["+string(global.repulsorCost)+"]");
