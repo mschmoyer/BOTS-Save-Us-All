@@ -12,3 +12,5 @@ https://www.youtube.com/watch?v=bDuzEBYhxHE
 ## Code Notes
 
 The code is a mess. The jam was 48 hours and we both literally did not have more than a day's experience with Game Maker. We understand it could have infinite improvement and polish. Things like "functions" were not accessible to us until late in the project. Maybe someday we'll play with this and improve it. 
+
+Test code. 
