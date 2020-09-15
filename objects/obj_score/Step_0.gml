@@ -1,15 +1,16 @@
 /// @description Check for events
 
-// Transition music
-
-if( trees_planted > 6 && !enemySpawnerCreated ) {
+// After a tree or two, start spawning enemies...
+if( trees_planted > 6 && !enemySpawnerCreated ) 
+{
 	// Introduce baddies. 
 	instance_create_layer(0,0,"EffectsLayer",obj_enemy_spawner);
 	enemySpawnerCreated = true;
 }
 
-if( trees_planted > (TREES_TO_WIN/2) && current_song < 2 ) {
-	
+// Trees spawn trees, so I moved stage 2 back to 33%
+if( trees_planted > (TREES_TO_WIN/3) && current_song < 2 ) 
+{	
 	// Play transition to stage 2
 	audio_stop_all();
 	audio_play_sound(music_stage2, 10, true);	

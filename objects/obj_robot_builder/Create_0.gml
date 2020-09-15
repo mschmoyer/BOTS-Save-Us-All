@@ -13,6 +13,10 @@ alarm[2] = 600;
 speed = 2;
 
 // Unit cost
-cost = 6
+cost = 6;
 
-kamikaze = false
+// Emotional reaction to human in distress
+kamikaze = false;
+
+// Initially, can build 4 robots. 
+robotSupply = 4;
