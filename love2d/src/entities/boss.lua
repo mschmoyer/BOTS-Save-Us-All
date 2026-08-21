@@ -976,73 +976,60 @@ function Boss:drawDeck(lift)
   Draw.setColor(C.void, 0.55)
   LG.ellipse("fill", 0, deckY - r * 0.04, r * 0.40, r * 0.19)
 
-  -- the core aperture: an iris of six leaves ringing the throat's base. Sealed
-  -- in phase 1, cracked in phase 2, retracted and molten in phase 3 -- so the
-  -- phase is legible from the shape of the machine, not from a plate count.
+  -- The core aperture: a molten well with six iris leaves closed over it.
+  -- Sealed in phase 1, cracked in phase 2, retracted in phase 3 -- so the phase
+  -- is legible from the shape of the machine and not from a plate count.
+  --
+  -- The pool is drawn *opaque* and the leaves sit on top of it. Drawing the hot
+  -- part additively in the gaps instead turned the open core into a pale beige
+  -- sunburst: molten metal is a surface, and only its bloom is light.
   local open = (self.phase - 1) * 0.5
   if self.coreOpen > 0 then open = 1 end
   local pulse = 0.65 + 0.35 * sin(self.age * 3)
-  local hot = P.mix(ri(3), C.molten, open)
   local isq = A.deckSq / A.deckR
+  local rOut = r * (A.irisOut + 0.02)
 
-  -- the well the leaves close over
   Draw.setColor(C.void)
-  plate(0, deckY, 0, TAU, r * (A.irisIn - 0.06), r * (A.irisOut + 0.04), isq,
-        C.void, C.void, 1, 24)
+  LG.ellipse("fill", 0, deckY, rOut * 1.06, rOut * 1.06 * isq)
+  -- the pool: dark red at the rim, white-hot at the middle, and it only gets
+  -- properly hot once the machine is actually open
+  local coreEdge = P.mix(P.shade(P.ramp.ember, 1.6), ri(2), 1 - open)
+  local coreMid  = P.mix(P.shade(P.ramp.ember, 2.3), ri(3), (1 - open) * 0.8)
+  local coreHot  = P.mix(P.shade(P.ramp.ember, 3.4), ri(4), (1 - open) * 0.7)
+  ngonLit(0, deckY, rOut, rOut * isq, 20, 0, coreEdge, coreEdge, 1)
+  plate(0, deckY, 0, TAU, 0, rOut, isq, coreMid, coreEdge, 1, 22)
+  plate(0, deckY, 0, TAU, 0, rOut * 0.30, isq, coreHot, P.alpha(coreHot, 0), 0.45 * pulse, 20)
 
-  -- The light is drawn *in the gaps between the leaves*, not as a wash under
-  -- them: a broad additive disc here turned the whole middle of the machine
-  -- into pale fog and cost the deck every detail on it.
-  local coreIn  = P.mix(C.moltenHi, C.molten, 0.35)
-  local coreOut = P.shade(P.ramp.ember, 2)
-  for k = 0, 5 do
-    local mid = (k + 0.5) / 6 * TAU
-    local half = 0.04 + open * 0.30
-    local lo, hi = mid - half, mid + half
-    if hi > lo then
-      -- opaque, saturated. Drawn additively this went straight to pale beige
-      -- and the open core -- the whole phase-three read -- looked like a lamp.
-      plate(0, deckY, lo, hi, r * (A.irisIn - 0.04), r * (A.irisOut + 0.02), isq,
-            P.mix(coreIn, hot, 1 - open), coreOut, 0.55 + 0.45 * open, 4)
-      Draw.additive(function()
-        plate(0, deckY, lo, hi, r * (A.irisIn - 0.04), r * (A.irisOut * 0.7), isq,
-              coreIn, P.alpha(coreIn, 0), 0.30 * pulse, 4)
-      end)
-    end
-  end
   -- crust: broken plate still floating on it, so the pool has a surface
-  if open > 0.3 then
-    for k = 1, 7 do
-      local a = hash(k, 51, 3) * TAU + self.age * 0.10
-      local d = r * (A.irisIn - 0.02 + hash(k, 53, 4) * (A.irisOut - A.irisIn + 0.04))
-      Draw.setColor(P.mix(C.void, C.deep, hash(k, 57, 5)), 0.85 * open)
-      Draw.blob(cos(a) * d, deckY + sin(a) * d * isq, r * (0.030 + hash(k, 59, 6) * 0.035),
-                6, k * 17, 0.4, 0.55)
-    end
+  for k = 1, 8 do
+    local a = hash(k, 51, 3) * TAU + self.age * 0.09
+    local d = rOut * (0.20 + hash(k, 53, 4) * 0.72)
+    Draw.setColor(P.mix(C.void, C.deep, hash(k, 57, 5)), 0.90)
+    Draw.blob(cos(a) * d, deckY + sin(a) * d * isq, r * (0.028 + hash(k, 59, 6) * 0.036),
+              6, k * 17, 0.42, 0.55)
   end
 
-  -- the leaves themselves, retracting outward as the machine opens
+  -- the leaves, retracting outward as the machine opens
   for k = 0, 5 do
-    local a0 = k / 6 * TAU + 0.04 + open * 0.30
-    local a1 = (k + 1) / 6 * TAU - 0.04 - open * 0.30
+    local a0 = k / 6 * TAU + 0.05 + open * 0.28
+    local a1 = (k + 1) / 6 * TAU - 0.05 - open * 0.28
     if a1 > a0 then
       local up = 0.5 + 0.5 * cos((a0 + a1) * 0.5 - math.pi * 1.25)
-      plate(0, deckY, a0, a1, r * (A.irisIn + open * 0.14), r * (A.irisOut + open * 0.12),
-            isq, P.mix(C.void, C.hull, 0.35 + up * 0.45), P.mix(C.deep, C.lit, 0.2 + up * 0.8), 1, 4)
-      -- the leaf's leading lip, which is what makes six wedges read as an iris
-      plate(0, deckY, a0, a1, r * (A.irisOut + open * 0.12 - 0.03), r * (A.irisOut + open * 0.12),
-            isq, P.mix(C.lit, C.rim, up), P.mix(C.lit, C.rim, up), 0.9, 4)
+      local inner = r * (A.irisIn * 0.10 + open * 0.34)
+      local outer = r * (A.irisOut + 0.03 + open * 0.10)
+      plate(0, deckY, a0, a1, inner, outer, isq,
+            P.mix(C.void, C.hull, 0.30 + up * 0.45), P.mix(C.deep, C.lit, 0.15 + up * 0.80), 1, 4)
+      plate(0, deckY, a0, a1, outer - r * 0.030, outer, isq,
+            P.mix(C.lit, C.rim, up), P.mix(C.lit, C.rim, up), 0.9, 4)
+      -- the shadow the leaf throws into the well
+      plate(0, deckY, a0, a1, inner, inner + r * 0.05, isq,
+            C.void, P.alpha(C.void, 0), 0.8, 4)
     end
   end
-  if open > 0.4 then
-    Draw.setColor(P.shade(P.ramp.ember, 2.6), (open - 0.4) * 1.6)
-    LG.ellipse("fill", 0, deckY, r * A.irisIn * 0.90, r * A.irisIn * 0.90 * isq)
-    Draw.setColor(C.moltenHi, (open - 0.4) * 1.2 * pulse)
-    LG.ellipse("fill", 0, deckY, r * A.irisIn * 0.40, r * A.irisIn * 0.40 * isq)
-    Draw.additive(function()
-      Draw.glow(0, deckY, r * 0.34 * pulse, C.molten, 0.30 * open)
-    end)
-  end
+
+  Draw.additive(function()
+    Draw.glow(0, deckY, r * (0.16 + 0.30 * open) * pulse, C.molten, 0.20 + 0.35 * open)
+  end)
 
   -- molten cracks spidering out of the core once it is open
   if self.coreOpen > 0 then
@@ -1573,8 +1560,8 @@ function Boss:emitLight(Lighting)
   Lighting.addLight(self.x, self.y + r * A.mouthY, AR.throatRadius, P.o2,
                     AR.throatGain * (0.75 + 0.25 * math.sin(self.age * 3.4)))
   if (self.coreOpen or 0) > 0 then
-    Lighting.addLight(self.x, self.y - r * 0.14, AR.moltenRadius, P.ramp.ember[3],
-                      AR.moltenGain * (0.8 + 0.2 * math.sin(self.age * 3)))
+    Lighting.addLight(self.x, self.y + r * 0.30, AR.moltenRadius, P.ramp.ember[3],
+                      AR.moltenGain * (0.8 + 0.2 * math.sin(self.age * 3)), { softness = 1 })
   end
   if self.state == "beam" then
     Lighting.addLight(self.x, self.y, 700, P.danger, 1.4)

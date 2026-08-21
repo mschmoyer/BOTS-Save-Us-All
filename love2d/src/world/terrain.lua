@@ -115,6 +115,7 @@ extern float uBeach;
 extern float uWet;
 extern vec2  uSun;
 extern float uSunZ;
+extern vec2  uStrike;    // the island's bedding direction, unit length
 extern vec3  cSand[4];
 extern vec3  cGrass[4];
 extern vec3  cMoss[4];
@@ -319,43 +320,40 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   rockT  *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);   // sand wins at the tideline
   screeT *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);
 
-  // Bedded stone. The beds are elevation contours, so they follow the shape of
-  // the land, crowd where it is steep and open out where it is not -- which is
-  // what makes a headland read as strata rather than as grey fur. A slow noise
-  // wanders each boundary so it is geology and not a contour map.
-  // A formation has a strike, and it holds it across a headland before it turns.
-  // Reading the direction off the local gradient instead makes the frame spin
-  // as fast as the elevation noise does, and the stone comes out marbled like
-  // brushed metal. One very slow angle field, turning over about a thousand
-  // pixels, is what gives the spine a direction you can see.
-  float strike = fbm3(w * 0.00062 + 601.0) * 4.2;
-  vec2 td = vec2(cos(strike), sin(strike));
+  // Bedded stone, as slabs laid along the island's bedding direction.
+  // The island's formation has ONE strike. Turning the frame with a noise field
+  // instead -- reading the angle off the local gradient, or off a slow angle
+  // noise -- looks reasonable written down and is a disaster: rotating a
+  // coordinate already three thousand units from the origin by an angle that
+  // varies with position multiplies the local frequency by |w| times that
+  // angle's gradient. Here that is a factor of ten, and it is what turned every
+  // attempt at bedded stone into brushed metal and wood grain. The beds get
+  // bent by a bounded warp instead, which behaves.
+  vec2 td = uStrike;
   vec2 gd = vec2(-td.y, td.x);
-  // A fracture field stretched along the strike, then *quantised into plates*.
-  // The quantisation is the geology: flat slabs with hard edges, roughly
-  // 140 x 45 px, which is a form you can read from across the screen. A
-  // continuous field at any octave count renders as combed grey fur, which is
-  // what this used to be.
   float broad = fbm3(w * 0.0016 + 149.0);           // ~600 px: which end is dark
-  // Into the strike frame, then warped, so the slabs are laid along the bedding
-  // and their edges are broken rather than ruled.
   vec2 pw = vec2(dot(w, td), dot(w, gd))
-          + vec2((fbm3(w * 0.0072 + 313.0) - 0.5) * 66.0,
-                 (fbm3(w * 0.0072 +  91.0) - 0.5) * 46.0);
+          + vec2((fbm3(w * 0.0026 + 313.0) - 0.5) * 150.0,
+                 (fbm3(w * 0.0026 +  91.0) - 0.5) * 110.0)
+          + vec2((fbm3(w * 0.0115 + 27.0) - 0.5) * 26.0,
+                 (fbm3(w * 0.0115 + 53.0) - 0.5) * 20.0);
   vec2 sw = vec2(dot(uSun, td), dot(uSun, gd)) * 7.0;
-  // Slabs are about 68 x 46 px, and a slow field swells and shrinks them so a
-  // headland has coarse ground and fine ground rather than one repeating tile.
-  vec2 cs = vec2(0.0147, 0.0217) * (0.76 + 0.58 * fbm3(w * 0.0011 + 77.0));
+  vec2 cs = vec2(0.0138, 0.0230);                   // ~72 x 43 px slabs
   vec3 ca = cells(pw * cs);
   vec3 cb = cells((pw + sw) * cs);
-  float tone = hsh(ca.xy + 11.3);                 // this slab's own value
+  // A slab's tone is mostly the region it is in and only partly its own. Purely
+  // random slab tones tessellate into crazy paving: every edge shouts equally
+  // and there are no larger masses for the eye to hold on to.
+  float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 1.0), hsh(ca.xy + 11.3), 0.52);
   float ha   = hsh(ca.xy * 1.7 + 3.0);            // ...and how high it stands
   float hb   = hsh(cb.xy * 1.7 + 3.0);
   vec3 rockC = ramp(cStone[0], cStone[1], cStone[2], cStone[3],
-                    0.30 + tone * 1.35 + broad * 0.90 + elev * 0.28);
+                    0.34 + tone * 1.60 + broad * 0.55 + elev * 0.26);
   // shadowed stone runs cool and lit stone runs warm: without the temperature
   // split a grey ramp is just grey, and the sun has nothing to land on
-  rockC *= mix(vec3(0.93, 0.97, 1.06), vec3(1.06, 1.01, 0.93), tone);
+  rockC *= mix(vec3(0.92, 0.97, 1.07), vec3(1.04, 1.00, 0.95), tone);
+  // a slab is not a flat swatch of paint
+  rockC *= 0.94 + 0.12 * fbm3(w * 0.0125 + 5.0);
   // Light the step: if the slab seven pixels up-sun stands higher we are in its
   // shadow, if it stands lower we are the lit lip over it. Only inside the band
   // where the two samples disagree, so it is an edge and not a gradient.
@@ -364,7 +362,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   rockC *= 1.0 - onEdge * max(rise, 0.0) * 0.44;
   rockC *= 1.0 + onEdge * max(-rise, 0.0) * 0.24;
   // and the fissure itself, always there, always thin
-  rockC *= 1.0 - smoothstep(0.050, 0.004, ca.z) * 0.34;
+  rockC *= 1.0 - smoothstep(0.052, 0.004, ca.z * (0.60 + 1.00 * fbm3(w * 0.019 + 3.0))) * 0.32;
   // A rare through-going fault, crossing several slabs at once.
   float jnt = rdg3(w * 0.0062 + vec2(0.0, elev * 26.0) + 7.0);
   rockC *= 1.0 - smoothstep(0.93, 0.995, jnt) * 0.36;
@@ -430,15 +428,18 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     vec3 pb  = cells(cwp * 0.0395);                 // ~25 px crazing
     float tA = hsh(pa.xy + 5.7);
     float tB = hsh(pb.xy + 19.3);
-    float crackA = smoothstep(0.080, 0.012, pa.z);
-    float crackB = smoothstep(0.095, 0.022, pb.z);
+    // the fissures open and close along their length instead of running as a
+    // ruled net of equal width
+    float cvz = 0.55 + 1.05 * fbm3(w * 0.017 + 3.0);
+    float crackA = smoothstep(0.070, 0.006, pa.z * cvz);
+    float crackB = smoothstep(0.085, 0.014, pb.z * cvz);
     float crack  = clamp(crackA + crackB * 0.55, 0.0, 1.0);
 
     vec3 dead = ramp(cAsh[0], cAsh[1], cAsh[2], cAsh[3],
                      0.70 + tA * 1.30 + tB * 0.60 + (d2 - 0.5) * 0.40);
     // a little dead soil under the ash: warm, but never enough to make the
     // whole scar brown
-    dead = mix(dead, ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.45 + d2 * 0.90), 0.18);
+    dead = mix(dead, ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.45 + d2 * 0.90), 0.14);
     // the heart of a scar is burnt out; the rim is still dust
     dead *= 0.58 + 0.56 * (1.0 - deep) + 0.30 * form;
     // a plate standing proud of its neighbour catches the light on its up-sun
@@ -446,13 +447,15 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     float lift = clamp((hsh(pa.xy * 1.7 + 3.0) - hsh(pas.xy * 1.7 + 3.0)) * 2.6, -1.0, 1.0);
     float pEdge = step(0.001, length(pas.xy - pa.xy));
     dead *= 1.0 + pEdge * max(lift, 0.0) * 0.26 - pEdge * max(-lift, 0.0) * 0.30;
-    dead *= 1.0 - crack * 0.60;
+    dead *= 1.0 - crack * 0.72;
     // The stain, and only in the fissures: a cold bruise where the ground has
     // opened. Poisoned earth is a bruise, not a sweet.
-    dead = mix(dead, mix(dead, cBlight[1], 0.66), crackA * deep);
-    // the one hairline allowed to be hot -- the floor of the deepest fissures
-    // at the heart of the scar, and nowhere else on the island
-    dead += cBlight[3] * smoothstep(0.026, 0.0, pa.z) * deep * deep * 0.24;
+    dead = mix(dead, mix(dead, cBlight[1], 0.34), crackA * deep);
+    // The one hairline allowed to be hot, and it is rationed twice over: only
+    // the floor of a fissure, only at the heart of a scar, and only in the one
+    // fissure in four that the plate hash lets glow at all.
+    float live = smoothstep(0.68, 0.86, hsh(pa.xy * 2.3 + 7.1));
+    dead += cBlight[3] * smoothstep(0.012, 0.0, pa.z * cvz) * deep * deep * live * 0.22;
     col = mix(col, dead, scarT);
     // The rot rim: living ground going grey a few metres before it dies. Value
     // and saturation, not hue -- a violet halo round every scar was the tell.
@@ -704,6 +707,11 @@ function Terrain:_generate()
   yield(0.97)
   self:_buildFields()
   self.generated = true
+
+  -- One bedding direction for the whole island, drawn from the seed. The rock
+  -- shader rotates into it and the rock marks lie along it.
+  local sa = (hash2(self.seed % 613, 17, 3) * 0.80 + 0.10) * math.pi
+  self.strike = { cos(sa), sin(sa) }
 
   self.genTime = (love.timer and love.timer.getTime() or os.clock()) - t0
 end
@@ -1107,6 +1115,7 @@ function Terrain:_makeShaders()
   put(g, "uWet", WET_W)
   put(g, "uSun", { SUN[1], SUN[2] })
   put(g, "uSunZ", SUN_Z)
+  put(g, "uStrike", { self.strike[1], self.strike[2] })
     local R = P.ramp
   local function sendRamp(name, ramp)
     local v = rampVecs(ramp)
@@ -1496,9 +1505,7 @@ function Terrain:_scatterMarks(tile, part, parts)
           -- bare face: the bake already said everything there is to say
         elseif roll < 0.545 then
           -- a fracture lying along the bedding, with a lit lip on the sun side
-          local gx = self.gradx[i] or 0
-          local gy = self.grady[i] or 0
-          local a = atan2(gy, gx) + 1.5707963 + (rng:next() - 0.5) * 0.40
+          local a = atan2(self.strike[2], self.strike[1]) + (rng:next() - 0.5) * 0.40
           local l = (9 + rng:next() * 20) * 0.5
           local ca_, sa_ = cos(a), sin(a)
           local bow = (rng:next() - 0.5) * l * 0.5

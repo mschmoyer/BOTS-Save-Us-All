@@ -14,6 +14,7 @@ function S:enter(...)
   Perf.warmup = tonumber(cfg("BOTS_PERF_WARM") or "") or 60
   Perf.install({ noDrawCounts = cfg("BOTS_PERF_NODC") ~= nil,
                  nullGpu = cfg("BOTS_PERF_NULLGPU") ~= nil,
+                 keepSend = cfg("BOTS_PERF_KEEPSEND") ~= nil,
                  ablate = cfg("BOTS_PERF_ABLATE"),
                  noJit = cfg("BOTS_PERF_NOJIT") ~= nil })
   local r = Game.enter(self, ...)

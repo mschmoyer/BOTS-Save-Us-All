@@ -294,7 +294,7 @@ T.boss = {
     keyRadius     = 380, keyGain    = 0.30,
     strobeRadius  = 300, strobeGain = 0.40,
     throatRadius  = 150, throatGain = 0.30,
-    moltenRadius  = 320, moltenGain = 0.75,
+    moltenRadius  = 330, moltenGain = 0.42,
   },
 }
 
@@ -369,6 +369,102 @@ T.juice = {
   shakeRotAmp    = 0.035,
   hitstopMax     = 0.18,
   zoomPunchDecay = 7.0,
+}
+
+-------------------------------------------------------------------------- touch
+-- The iPhone control layer, entire. Every number the touch UI lays itself out
+-- with lives here; engine/touch.lua contains no geometry of its own.
+--
+-- Fractions of S = min(screenW, screenH) unless the name says otherwise, so one
+-- set of numbers holds for a letterboxed browser canvas, a native retina buffer
+-- and the headless capture harness alike.
+--
+-- The arrangement: a phone held in landscape is gripped at the bottom corners,
+-- and the two arcs a thumb sweeps out from those corners are the only ground on
+-- the screen that is both reachable and already hidden by a hand. So the verbs
+-- live on those arcs -- three constant ones on the near arc, two deliberate ones
+-- one ring further out -- the movement stick owns the mirrored arc on the other
+-- side, and every readout the player has to *read* is pushed up into the top
+-- band where no hand ever goes.
+T.touch = {
+  maxTouches   = 10,
+
+  ---------------------------------------------------------------- floating stick
+  stickRing    = 0.112,   -- ring radius: full deflection
+  stickNub     = 0.046,
+  stickDead    = 0.155,   -- fraction of the ring ignored at the centre
+  stickGrip    = 0.011,   -- absolute jitter floor before anything moves at all
+  stickCurve   = 1.25,    -- >1 = finer control near the centre
+  stickFollow  = 26,      -- damp rate at which the ring chases a runaway thumb
+  stickZoneX   = 0.52,    -- fraction of screen width owned by the stick
+  -- The stick may not spawn under the top band: a finger planted over the
+  -- oxygen arc hides the one readout the whole campaign is measured in.
+  stickZoneTop = 0.30,    -- below the top safe inset, in S
+  -- Where the resting ghost sits when nobody is touching the glass. This is the
+  -- only thing on a first touch screen that says "drag anywhere here to walk",
+  -- so it is drawn at the thumb's actual rest position, not in a corner.
+  homeX        = 0.235,   -- in from the safe left edge
+  homeY        = 0.215,   -- up from the safe bottom edge
+  ghostA       = 0.42,    -- ghost opacity, relative to the layer
+  ghostPulse   = 1.1,     -- breaths per second while it is still being taught
+  hintMove     = 2.6,     -- seconds of actual stick use before the ghost retires
+  hintFade     = 1.6,     -- 1/s it retires at
+
+  ------------------------------------------------------------- action cluster
+  -- Two arcs struck from a pivot at the grip corner. Angles are degrees in
+  -- screen space: 180 is straight inboard, 270 is straight up, and anything
+  -- below 180 would fall off the bottom of the phone.
+  pivotX       = 0.105,   -- pivot inset from the safe right edge
+  pivotY       = 0.020,   -- ... and up from the safe bottom edge
+  arcIn        = 0.288,   -- near arc: the constant verbs
+  arcOut       = 0.452,   -- far arc: the deliberate ones
+  innerAng     = { 187, 226, 265 },
+  outerAng     = { 202, 248 },
+  btnIn        = 0.067,   -- near-arc button radius
+  btnOut       = 0.055,   -- far-arc button radius
+  btnRail      = 0.042,   -- right-rail utility button radius
+  btnHitPad    = 1.44,    -- invisible hit radius multiplier
+  btnSlop      = 2.30,    -- drag this far off a button before it cancels
+  labelGap     = 1.16,    -- caption baseline, in button radii from the centre
+  labelSize    = 0.255,   -- caption size, in button radii
+
+  ------------------------------------------------------------------- right rail
+  -- Utility verbs nobody presses in a panic: they sit above the thumb arc,
+  -- grouped under the map, where reaching for them is a deliberate act.
+  railGap      = 0.032,   -- between rail buttons
+  railDrop     = 0.026,   -- below the minimap plate
+
+  -------------------------------------------------------------------- build radial
+  radialInner  = 0.072,
+  radialOuter  = 0.245,
+  radialGap    = 0.030,   -- wedge separation, radians
+  radialHold   = 0.15,    -- hold this long (or drag) to open
+  radialDrag   = 0.030,   -- ... or drag this far, whichever comes first
+  radialDilate = 0.25,    -- the world runs this slow while the wheel is open
+  radialGlyph  = 0.115,   -- bot silhouette size, in wheel outer radii
+
+  --------------------------------------------------------------------------- aim
+  aimDead      = 0.028,   -- drag before an aim touch commits
+  aimRange     = 430,     -- world units for auto-aim
+  aimCone      = 1.05,    -- half-angle of the travel cone, radians
+  aimStick     = 0.55,    -- how strongly a locked target is preferred
+
+  -------------------------------------------------------------------------- feel
+  fade         = 7.0,     -- opacity damp rate
+  press        = 26.0,    -- press-scale damp rate
+  latch        = 0.085,   -- min time a tapped action reports down
+  ripple       = 0.36,
+  hapticTap    = 0.011,
+  hapticSlide  = 0.006,
+  hapticFire   = 0.020,
+
+  ------------------------------------------------------------------- safe area
+  safeMin      = 0.020,   -- fallback inset when the OS will not tell us
+  safeNotch    = 0.055,   -- assumed notch inset on iOS when the API is absent
+  -- Nothing load-bearing may sit in the outermost band of a phone screen even
+  -- when the OS swears there is no notch: the browser's own chrome, a rounded
+  -- display corner and a camera housing all live there.
+  safeFloor    = 24,      -- px, absolute
 }
 
 ------------------------------------------------------------------------ camera

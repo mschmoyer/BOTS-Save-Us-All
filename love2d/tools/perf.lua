@@ -22,7 +22,7 @@ local getTime = love.timer.getTime
 local getStats = love.graphics.getStats
 
 local ORDER = {
-  "sim", "terrain", "water", "decals",
+  "sim", "treeUpdate", "botUpdate", "enemyUpdate", "terrain", "water", "decals",
   "treeShadow", "treeDraw", "treeRim",
   "entities", "vfxUpdate", "vfxDraw", "lights", "post", "hud", "worldDraw",
   "frame",
@@ -41,9 +41,21 @@ for i = 1, #ORDER do
 end
 
 --- Wrap `tbl[name]` so that time and draw calls land in bucket `key`.
-local function wrap(tbl, name, key)
+--- `cheap` skips the draw-call query: for entry points called hundreds of times
+--- a frame the query costs more than the pass it is measuring.
+local function wrap(tbl, name, key, cheap)
   local fn = tbl and tbl[name]
   if type(fn) ~= "function" then return false end
+  if cheap then
+    tbl[name] = function(...)
+      local t0 = getTime()
+      local a, b, c = fn(...)
+      acc[key] = acc[key] + (getTime() - t0)
+      calls[key] = calls[key] + 1
+      return a, b, c
+    end
+    return true
+  end
   tbl[name] = function(...)
     local d0 = 0
     if countDraws then getStats(statsA) d0 = statsA.drawcalls end
@@ -62,7 +74,7 @@ Perf.wrap = wrap
 --- binding cost only. Absolute GPU time under llvmpipe/SwiftShader is
 --- meaningless; the Lua half is not, and in the browser it is interpreted Lua
 --- (love.js has no JIT), so it is the half that scales worst.
-local function nullGpu()
+local function nullGpu(keepSend)
   local g = love.graphics
   local noop = function() end
   for _, n in ipairs({ "draw", "circle", "ellipse", "polygon", "rectangle", "line",
@@ -97,10 +109,14 @@ function Perf.install(opts)
   -- native proxy for how the Lua half of a frame actually costs in a browser.
   if opts and opts.noJit then
     local ok, jit = pcall(require, "jit")
-    if ok and jit and jit.off then jit.off(true, true) jit.flush() print("PERF,jit,off") end
+    if ok and jit and jit.off then
+      jit.off()          -- global: turn the compiler off
+      jit.flush()        -- ...and drop everything it already compiled
+      print("PERF,jit," .. tostring(jit.status()))
+    end
   end
   countDraws = not (opts and opts.noDrawCounts)
-  if opts and opts.nullGpu then nullGpu() countDraws = false end
+  if opts and opts.nullGpu then nullGpu(opts.keepSend) countDraws = false end
 
   local function need(mod, name, key)
     local ok, m = pcall(require, mod)
@@ -121,6 +137,10 @@ function Perf.install(opts)
   need("src.engine.lighting", "finish",          "lights")
   need("src.engine.postfx",   "render",          "post")
   need("src.game.hud",        "draw",            "hud")
+  -- per-entity update, measured cheaply (hundreds of calls a frame)
+  wrap(require("src.entities.tree"), "update", "treeUpdate", true)
+  wrap(require("src.entities.bot"), "update", "botUpdate", true)
+  wrap(require("src.entities.enemy"), "update", "enemyUpdate", true)
   -- every mobile entity that draws itself, as one "entities" bucket
   for _, m in ipairs({ "src.entities.bot", "src.entities.enemy", "src.entities.player",
                        "src.entities.cobalt", "src.entities.projectile",
@@ -220,7 +240,9 @@ function Perf.report(tag, extra)
     topSum = topSum + sum[k]
     row(k, ms(k), pct(k), sumCalls[k] / frames, sumDc[k] / frames)
   end
-  row("  sim.vfxUpdate", ms("vfxUpdate"), pct("vfxUpdate"), sumCalls.vfxUpdate / frames, 0)
+  for _, k in ipairs({ "vfxUpdate", "treeUpdate", "botUpdate", "enemyUpdate" }) do
+    row("  sim." .. k, ms(k), pct(k), sumCalls[k] / frames, 0)
+  end
   local wSum = 0
   for i = 1, #INWORLD do
     local k = INWORLD[i]
