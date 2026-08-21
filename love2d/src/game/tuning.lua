@@ -197,7 +197,9 @@ T.o2 = {
   rise        = 0.42,           -- how fast the reading climbs toward the forest
   fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
   weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 1.5 },
-  siphonDrain = 1.4,            -- debt added per second per feeding siphon
+  -- The Siphon's damage is the tree it is perched on now; the meter dip is
+  -- only the tell. 1.4 was double-dipping.
+  siphonDrain = 0.6,            -- debt added per second per feeding siphon
   debtCap     = 45,             -- a swarm of siphons cannot zero you out
   debtRecover = 0.35,           -- debt bled off per second once they stop
 }
@@ -219,6 +221,46 @@ T.cycle = {
   -- is a much smaller reminder that a bigger wood is a longer perimeter.
   budget     = { 26, 46, 78, 120, 172, 236, 310 },   -- floor for the night's spend
   budgetPerTree = 0.16,        -- ...plus this much for every tree you have grown
+  -- What the night is made of, by cycle: the weight of each type at the cycle it
+  -- unlocks, and how that weight drifts per cycle afterwards (under 1 fades,
+  -- over 1 grows). The Director used to hard-code one set of weights with no
+  -- cycle term at all, so night six was night three with a bigger number in
+  -- front of it. A type absent from this table can never be drafted -- which is
+  -- how the Scar exists as an enemy without being something the Blight buys.
+  mix = {
+    chomper = { 4.0, 0.84 },
+    skitter = { 2.6, 0.86 },
+    spitter = { 1.2, 1.20 },
+    siphon  = { 1.6, 1.16 },
+    bulwark = { 1.0, 1.34 },
+    warden  = { 1.4, 1.25 },
+    maw     = { 0.5, 1.20 },
+  },
+  -- Two pacing shapes, blended across the run. An early night has a real lull in
+  -- the middle of it; a late one has a floor under it and never drops back
+  -- through that floor once it is up.
+  curveEarly = { 0.25, 0.50, 0.85, 1.00, 0.55, 0.40, 0.70, 0.95, 1.00, 0.60 },
+  curveLate  = { 0.55, 0.80, 0.72, 0.95, 0.82, 1.00, 0.90, 1.00, 1.00, 0.95 },
+
+  clutchBudget = 18,      -- cost-worth of a clutch; cheap types arrive in packs
+  frontsFrom   = 5,       -- the cycle the rift opens a second side
+  focusFrom    = 4,       -- ...and the cycle it starts reinforcing success
+  focusChance  = 0.34,
+  focusDecay   = 12,      -- seconds a place stays hot after teeth went into it
+  anchorWindow = 0.45,    -- fraction of the night a surviving Scar pulls waves in
+  anchorChance = 0.80,
+  escortFrom   = 6,       -- Wardens and Maws arrive with a bodyguard from here
+  escortSpend  = 0.22,    -- ...paid for out of this share of what is left
+  scarQuota    = { 0, 1, 2, 2, 3, 3, 4 },  -- Scars the Blight may leave per dawn
+  mawAlive     = 1,       -- live Maws at once, dormant ones included
+  -- The world advances its phase clock before it ticks the Director, so a night
+  -- whose two clocks are exactly equal ended without the Director ever seeing
+  -- its own last frame: endNight never ran, director:dawn never fired (the HUD
+  -- has a NIGHT SURVIVED toast that had never once been shown) and `active`
+  -- stayed true all through the following day. The Director's night ends a hair
+  -- before the phase's, which is invisible and gives it its ending back.
+  directorLead = 0.35,
+
   maxAlive   = { 14, 20, 26, 32, 38, 44, 52 },
   maxAlivePerTree = 0.016,
 }
@@ -227,15 +269,50 @@ T.cycle = {
 T.enemy = {
   chomper = { cost = 4,  hp = 3,  speed = 74,  radius = 14, damage = 1, from = 1,
               treeSearch = 480 },   -- past this it comes for your bots instead
-  skitter = { cost = 5,  hp = 2,  speed = 168, radius = 11, damage = 1, from = 2 },
+  -- A hit-and-run animal: it plants, winds up, throws itself, and backs off
+  -- whatever happened. Chasing one is a waste of a night.
+  skitter = { cost = 5,  hp = 2,  speed = 168, radius = 11, damage = 1, from = 2,
+              lungeRange = 230, lungeWind = 0.36, lungeSpeed = 640, lungeTime = 0.32,
+              backoff = 1.6, backoffSpeed = 1.5 },
+  -- It gives ground inside this fraction of its range: a Spitter that stands
+  -- still while you walk up to it is a Chomper with extra steps.
   spitter = { cost = 9,  hp = 4,  speed = 62,  radius = 14, damage = 1, from = 3,
-              range = 280, fireEvery = 2.6, projSpeed = 330, puddle = 6 },
-  siphon  = { cost = 11, hp = 5,  speed = 52,  radius = 16, damage = 0, from = 3, float = true },
-  bulwark = { cost = 18, hp = 14, speed = 44,  radius = 22, damage = 2, from = 3, armoured = true,
-              armour = 0.5 },   -- fraction of incoming damage it shrugs off
-  maw     = { cost = 34, hp = 22, speed = 0,   radius = 30, damage = 0, from = 4,
+              range = 280, fireEvery = 2.6, projSpeed = 330, puddle = 6, kite = 0.5 },
+  -- It perches on one specific tree and takes *that tree*, through the same
+  -- timer and the same tally as everything else. The oxygen dip is the tell,
+  -- not the damage. While it is feeding it takes more than double.
+  siphon  = { cost = 11, hp = 5,  speed = 52,  radius = 16, damage = 0, from = 3, float = true,
+              perchRange = 2400, perchRadius = 56, perchHeight = 26, feedVuln = 2.2 },
+  -- instSearch: how far it will walk to find an installation before settling
+  -- for the wood. It used to be the whole island, which made it a homing
+  -- missile that never touched a tree in its life.
+  bulwark = { cost = 18, hp = 14, speed = 44,  radius = 22, damage = 2, from = 4, armoured = true,
+              armour = 0.5,      -- fraction of incoming damage it shrugs off
+              instSearch = 720 },
+  -- A rift does not walk off at sunrise: it goes dormant, and every night it
+  -- survives it wakes up hungrier.
+  maw     = { cost = 34, hp = 22, speed = 0,   radius = 30, damage = 0, from = 5,
               armoured = true, armour = 1.0,
-              spawnEvery = 4.5, shovesToClose = 6 },
+              spawnEvery = 4.5, shovesToClose = 6,
+              holdsGround = true, wakeStep = 0.84, wakeFloor = 2.4 },
+  -- The Warden has no attack. It hangs behind the pack and everything Blight
+  -- near it shrugs off most of a hit and moves faster, which turns a late-cycle
+  -- wave from "hit the nearest thing" into "get to the back".
+  warden  = { cost = 16, hp = 9,  speed = 58,  radius = 18, damage = 0, from = 6,
+              float = true, wardRadius = 250, wardCut = 0.55, wardHaste = 0.22,
+              wardTick = 0.2, standOff = 210, shy = 330, flockRange = 900 },
+  -- The Scar: what the Blight leaves in the ground when the sun comes up. It is
+  -- the day's opposition and it is deliberately not a fight -- it never moves,
+  -- never chases, and cannot hurt the player at all. It eats the wood around
+  -- it, its reach grows all day, it seeds another if left to finish growing,
+  -- and at dusk it is where the night starts. `from` is absent on purpose: a
+  -- type with no entry in T.cycle.mix can never be drafted as a wave card, and
+  -- a Scar is never bought -- it is left behind.
+  scar    = { cost = 0,  hp = 20, speed = 0,   radius = 20, damage = 0,
+              armoured = true, armour = 0.45, shovesToClose = 5,
+              creepStart = 110, creepMax = 300, creepGrow = 2.2,
+              rotEvery = 9, rotRamp = 0.55, spreadEvery = 26, maxAlive = 6,
+              bounty = 8 },
   spawnEdgePad = 90,
   fleeOnDawn   = 8,             -- seconds to retreat and despawn at dawn
 }
@@ -343,6 +420,25 @@ T.boss = {
     descend       = 400,    -- how far above the canopy the arrival starts
     gaitLift      = 0.22,   -- foot lift, in rig radii
     gaitReach     = 0.15,   -- foot swing along the heading, in rig radii
+    -- The molten core, rebuilt as crust over a pool rather than a graded disc.
+    -- Two rings of cooled plate turn over the melt in opposite directions and
+    -- the gaps between them are the cracks, so the fissure network moves on its
+    -- own without a frame of it being authored.
+    coreCells     = { 5, 8, 11 },  -- crust plates per ring, inner ring first
+    coreDriftRps  = 0.026,  -- crust rotation, revs/sec; the rings differ
+    coreCrack     = 0.016,  -- crack width, in rig radii, with the core sealed
+    coreCrackOpen = 0.013,  -- ...added on top once it is open
+    coreCrackMax  = 0.11,   -- ...but never more than this share of a plate
+    coreFlowHz    = 0.30,   -- the breathing and the convection turn at this
+    coreVeins     = 6,      -- cracks running out of the core over the deck
+    deckRivets    = 8,      -- one per deck seam; it used to be twenty-four
+    -- The beam. It used to be drawn wide at the muzzle with a 62 px radial
+    -- bloom on top, which clipped to white and read as a lens flare. It is
+    -- tightest where it leaves the barrel now and opens downrange.
+    beamMuzzleW   = 0.085,  -- beam half-width at the muzzle, in rig radii
+    beamFarW      = 0.26,   -- ...and at the far end of its range
+    beamMuzzle    = 0.30,   -- the muzzle flash's reach, in rig radii
+    beamSpall     = 5,      -- sparks shed sideways along the cut
     columnMotes   = 34,
     columnRings   = 6,
     columnRise    = 0.26,   -- column-heights per second travelled by rings/motes

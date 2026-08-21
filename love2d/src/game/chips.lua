@@ -185,8 +185,11 @@ local C = {
     desc = "A tree the Blight fells takes its feller down with it.",
     -- Changes what an outlying grove is for. Undefended trees stop being pure
     -- loss and start being a cost the swarm pays to come inland.
+    -- Teeth only: acid, the rig's beam and anything else that takes a tree
+    -- from a distance has nothing standing there to fall on.
     on = { ["tree:lost"] = function(chips, w, t, by)
-      if by == "acid" or by == "beam" then return end
+      if not t then return end
+      if by ~= "chewed" and not (type(by) == "table" and by.kind == "enemy") then return end
       w:areaShove(t.x, t.y, 96, 420, 3, 0.7)
     end },
   },
@@ -302,7 +305,9 @@ local C = {
     -- The other answer to the rescue decision, and the opposite build to
     -- MUTUAL AID: this one is paid for in Beacons, and it rewards spacing them
     -- out over the island rather than stacking them where you already stand.
-    every = 0,
+    -- A tenth of a second is three pixels of crawl: smooth enough to read, and
+    -- it keeps the terrain query off the frame.
+    every = 0.1,
     tick = function(chips, w, dt)
       local speed = 30
       local list = w.bots
@@ -316,7 +321,8 @@ local C = {
               b:revive()
               w.stats.rescued = w.stats.rescued + 1
             elseif d > 10 then
-              b.x, b.y = b.x + dx * speed * dt, b.y + dy * speed * dt
+              -- dragged, not walked: it never crosses water to get there
+              b.x, b.y = onLand(w, b.x + dx * speed * dt, b.y + dy * speed * dt)
               b.crawling = true
             end
           end
@@ -366,7 +372,7 @@ local C = {
     mod = { elderWeight = 2.0, saplingWeight = 0 } },
 
   { id = "oneFront", f = F.COMBAT, r = 3, name = "ONE FRONT",
-    desc = "The rift never moves again. Twice as much comes out of it.",
+    desc = "The rift never moves again, and twice as much comes through it.",
     -- Every other night the rift drifts, and from cycle five it opens a second
     -- side and asks which one you are willing to lose. This answers that
     -- question permanently, so Sentries and Beacons stop being reactive
@@ -478,7 +484,7 @@ local function wireSignals()
         local r = list[i]
         if (ch.owned[r.id] or 0) > 0 then r.fn(ch, w, a, b, c, d) end
       end
-    end)
+    end, Chips)
   end
 end
 

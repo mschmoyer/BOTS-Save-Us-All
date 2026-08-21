@@ -1,5 +1,13 @@
--- TEMPORARY ground-review scene (art iteration only; delete when done).
---   BOTS_SEED=9 BOTS_SCENE=src.scenes.demo_ground tools/shot.sh 40 40 /tmp/g
+-- Ground-review scene. Six fixed panels -- rock, scar, shore, meadow -- each with
+-- its own camera parked on a representative point of the generated island, so one
+-- screenshot shows every surface at the zoom it ships at. The patrol in
+-- demo_terrain flies over the coast and rarely crosses the ground that needs
+-- judging; this is the faster loop for terrain.lua's shading work.
+--
+--   BOTS_SEED=9 BOTS_SCENE=src.scenes.demo_ground tools/shot.sh 30 30 /tmp/g
+--   BOTS_LOOK=rock|scar          six views of one biome instead
+--   BOTS_LOOK=seam|seamrock      panels parked on the bake's tile boundaries,
+--                                which is where a seam in the bake shows up
 local P       = require("src.engine.palette")
 local Camera  = require("src.engine.camera")
 local Terrain = require("src.world.terrain")

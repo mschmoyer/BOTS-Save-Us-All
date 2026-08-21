@@ -193,10 +193,26 @@ float hash21(vec2 p) {
 // it gives bands, and bands read as marbled paper. This gives real cells.
 // Two passes: the first finds the cell, the second the distance to the
 // bisector between it and its neighbours.
+vec2 cellId(vec2 p) {
+  vec2 ip = floor(p);
+  vec2 fp = p - ip;
+  vec2 bid = ip;
+  float bd = 9.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 o = g + hash22(ip + g) - fp;
+      float d = dot(o, o);
+      if (d < bd) { bd = d; bid = ip + g; }
+    }
+  }
+  return bid;
+}
+
 vec3 cells(vec2 p) {
   vec2 ip = floor(p);
   vec2 fp = p - ip;
-  vec2 bid = vec2(0.0);
+  vec2 bid = ip;
   vec2 bpt = vec2(0.0);
   float bd = 9.0;
   for (int j = -1; j <= 1; j++) {
@@ -214,7 +230,15 @@ vec3 cells(vec2 p) {
       vec2 o = g + hash22(ip + g) - fp;
       vec2 dv = o - bpt;
       float l = length(dv);
-      if (l > 0.0001) { be = min(be, dot(0.5 * (o + bpt), dv / l)); }
+      // The cell's own site gives dv == 0. Written as `if (l > eps) { ... dv / l
+      // ... }` this is correct on a renderer that branches and a disaster on one
+      // that flattens the branch and evaluates both sides: 0/0 is a NaN, min()
+      // is free to propagate it, and the NaN lands in the border distance and
+      // then in the colour. Desktop GL branched; WebGL flattened, and the scar
+      // came out as flat patches of red and navy. Divide by a floored length so
+      // the dead branch is merely wrong rather than NaN, and select after.
+      float e = dot(0.5 * (o + bpt), dv / max(l, 0.0001));
+      be = min(be, l > 0.0001 ? e : 9.0);
     }
   }
   return vec3(bid, be);
@@ -370,13 +394,13 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   vec2 sw = vec2(dot(uSun, td), dot(uSun, gd)) * 7.0;
   vec2 cs = vec2(0.0138, 0.0230);                   // ~72 x 43 px slabs
   vec3 ca = cells(pw * cs);
-  vec3 cb = cells((pw + sw) * cs);
+  vec2 cb = cellId((pw + sw) * cs);
   // A slab's tone is mostly the region it is in and only partly its own. Purely
   // random slab tones tessellate into crazy paving: every edge shouts equally
   // and there are no larger masses for the eye to hold on to.
   float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 0.86), hash21(ca.xy + 11.3), 0.54);
   float ha   = hash21(ca.xy + 61.0);              // ...and how high it stands
-  float hb   = hash21(cb.xy + 61.0);
+  float hb   = hash21(cb + 61.0);
   // Keep a floor under the value. Bare stone is the only surface with no
   // canopy over it and no light of its own, so under a night grade it is
   // multiplied straight down; taken too low in daylight it stops being a
@@ -392,7 +416,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // Light the step: if the slab seven pixels up-sun stands higher we are in its
   // shadow, if it stands lower we are the lit lip over it. Only inside the band
   // where the two samples disagree, so it is an edge and not a gradient.
-  float onEdge = step(0.001, length(cb.xy - ca.xy));
+  float onEdge = step(0.001, length(cb - ca.xy));
   float rise = clamp((hb - ha) * 2.6, -1.0, 1.0);
   rockC *= 1.0 - onEdge * max(rise, 0.0) * 0.34;
   rockC *= 1.0 + onEdge * max(-rise, 0.0) * 0.24;
@@ -468,7 +492,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     vec2 cwp = w + vec2((fbm3(w * 0.0105 +  5.0) - 0.5) * 26.0,
                         (fbm3(w * 0.0105 + 61.0) - 0.5) * 26.0);
     vec3 pa  = cells(cwp * 0.0165);                 // ~61 px plates
-    vec3 pas = cells((cwp + uSun * 5.0) * 0.0165);
+    vec2 pas = cellId((cwp + uSun * 5.0) * 0.0165);
     vec3 pb  = cells(cwp * 0.0470);                 // ~21 px crazing
     float tA = hash21(pa.xy + 5.7);
     float tB = hash21(pb.xy + 19.3);
@@ -495,8 +519,8 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     dead *= 0.52 + 0.56 * (1.0 - deep) + 0.52 * form;
     // a plate standing proud of its neighbour catches the light on its up-sun
     // lip and throws a shadow off the other side
-    float lift = clamp((hash21(pa.xy + 61.0) - hash21(pas.xy + 61.0)) * 2.6, -1.0, 1.0);
-    float pEdge = step(0.001, length(pas.xy - pa.xy));
+    float lift = clamp((hash21(pa.xy + 61.0) - hash21(pas + 61.0)) * 2.6, -1.0, 1.0);
+    float pEdge = step(0.001, length(pas - pa.xy));
     dead *= 1.0 + pEdge * max(lift, 0.0) * 0.26 - pEdge * max(-lift, 0.0) * 0.30;
     dead *= 1.0 - crack * 0.72;
     // The stain, and only in the fissures: a cold bruise where the ground has

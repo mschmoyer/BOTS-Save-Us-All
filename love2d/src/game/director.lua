@@ -26,56 +26,6 @@ local TU    = require("src.game.tuning")
 
 local Director = Class("Director")
 
---------------------------------------------------------- pending tuning values
--- PROMOTE AND DELETE. Same arrangement as the block at the top of
--- `entities/enemy.lua`: `tuning.lua` is owned by another workstream while this
--- pass lands, so the cycle-shaped constants the Director needs are declared here
--- and merged into `T.cycle` only where the real table has nothing to say yet.
--- Every one is written up verbatim for promotion; once they land this block does
--- nothing and should go.
-local PENDING = {
-  -- Weight at the cycle a type unlocks, and how that weight drifts per cycle
-  -- afterwards. Under 1 fades, over 1 grows. A type absent from this table can
-  -- never be drafted -- which is how the Scar exists as an enemy without ever
-  -- being something the Director can buy.
-  mix = {
-    chomper = { 4.0, 0.84 },
-    skitter = { 2.6, 0.86 },
-    spitter = { 1.2, 1.20 },
-    siphon  = { 1.6, 1.16 },
-    bulwark = { 1.0, 1.34 },
-    warden  = { 1.4, 1.25 },
-    maw     = { 0.5, 1.20 },
-  },
-  -- Two pacing shapes, blended across the run. The early night has a real lull
-  -- in the middle of it; the late one has a floor under it and never drops back
-  -- through that floor once it is up.
-  curveEarly = { 0.25, 0.50, 0.85, 1.00, 0.55, 0.40, 0.70, 0.95, 1.00, 0.60 },
-  curveLate  = { 0.55, 0.80, 0.72, 0.95, 0.82, 1.00, 0.90, 1.00, 1.00, 0.95 },
-
-  clutchBudget = 18,      -- cost-worth of a clutch; cheap types arrive in packs
-  frontsFrom   = 5,       -- the cycle the rift opens a second side
-  focusFrom    = 4,       -- ...and the cycle it starts reinforcing success
-  focusChance  = 0.34,
-  focusDecay   = 12,      -- seconds a place stays hot after teeth went into it
-  anchorWindow = 0.45,    -- fraction of the night a surviving Scar pulls waves in
-  anchorChance = 0.80,
-  escortFrom   = 6,       -- Wardens and Maws arrive with a bodyguard from here
-  escortSpend  = 0.22,    -- ...paid for out of this share of what is left
-  scarQuota    = { 0, 1, 1, 2, 2, 3, 3 },  -- Scars the Blight may leave per dawn
-  mawAlive     = 1,       -- live Maws at once, dormant ones included
-  -- The world advances its phase clock before it ticks the Director, so a night
-  -- whose two clocks are exactly equal ends without the Director ever seeing its
-  -- own last frame. `endNight` never ran, `director:dawn` never fired (the HUD
-  -- has a NIGHT SURVIVED toast that has never once been shown) and `active`
-  -- stayed true all through the following day. The Director's night ends a hair
-  -- before the phase's, which is invisible and gives it its ending back.
-  directorLead = 0.35,
-}
-for k, v in pairs(PENDING) do
-  if TU.cycle[k] == nil then TU.cycle[k] = v end
-end
-
 function Director:init(world)
   self.world = world
   -- Seeded from the world, not a constant: otherwise every playthrough on every

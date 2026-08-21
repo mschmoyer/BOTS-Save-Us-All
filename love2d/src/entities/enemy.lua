@@ -25,54 +25,6 @@ local Audio = Opt.require("src.engine.audio")
 
 local Enemy = Class("Enemy", Entity)
 
---------------------------------------------------------- pending tuning values
--- PROMOTE AND DELETE. `tuning.lua` is under another workstream's hand while this
--- pass lands, so the constants two new behaviours and four reworked ones need
--- are declared here and merged into `T` only where the real table has nothing to
--- say yet. Every one of them is written up verbatim for promotion into
--- `T.enemy`; the moment they land this block does nothing and should go. No
--- behaviour code below reads `PENDING` -- it reads `self.def`, exactly as it
--- would if these had always lived in tuning.
-local PENDING = {
-  -- A Skitter is a hit-and-run animal now, so it needs a wind-up, a throw and a
-  -- retreat rather than just a walk speed.
-  skitter = { lungeRange = 230, lungeWind = 0.36, lungeSpeed = 640, lungeTime = 0.32,
-              backoff = 1.6, backoffSpeed = 1.5 },
-  -- A Spitter that stands still while you walk up to it is a Chomper with extra
-  -- steps; it gives ground inside this fraction of its range.
-  spitter = { kite = 0.5 },
-  -- The Siphon perches on one specific tree and takes *that tree*, so it needs a
-  -- perch geometry, and the vulnerability that makes committing to a meal a risk.
-  siphon  = { perchRange = 2400, perchRadius = 56, perchHeight = 26, feedVuln = 2.2 },
-  -- A rift does not walk off at sunrise.
-  maw     = { holdsGround = true, wakeStep = 0.84, wakeFloor = 2.4 },
-
-  --------------------------------------------------------------- new behaviours
-  -- The Warden: no attack of its own. It hangs behind the pack, and everything
-  -- Blight near it shrugs off most of a hit and moves faster -- which turns a
-  -- late-cycle wave from "hit the nearest thing" into "get to the back".
-  warden  = { cost = 16, hp = 9, speed = 58, radius = 18, damage = 0, from = 6,
-              float = true, wardRadius = 250, wardCut = 0.55, wardHaste = 0.22,
-              wardTick = 0.2, standOff = 210, shy = 330, flockRange = 900 },
-  -- The Scar: what the Blight leaves in the ground when the sun comes up. It is
-  -- the day's opposition and it is deliberately not a fight -- it never moves,
-  -- never chases, and cannot hurt the player at all. It eats the wood around it,
-  -- its reach grows all day, it seeds another one if it is left to finish
-  -- growing, and at dusk it is where the night starts. `from` is absent on
-  -- purpose: a type with no entry in `T.cycle.mix` can never be drafted as a
-  -- wave card, and a Scar is never bought -- it is left behind.
-  scar    = { cost = 0, hp = 20, speed = 0, radius = 20, damage = 0,
-              armoured = true, armour = 0.45, shovesToClose = 5,
-              creepStart = 110, creepMax = 300, creepGrow = 2.2,
-              rotEvery = 9, rotRamp = 0.55, spreadEvery = 26, maxAlive = 6,
-              bounty = 8 },
-}
-for kind, def in pairs(PENDING) do
-  local live = T[kind]
-  if type(live) ~= "table" then T[kind] = def
-  else for k, v in pairs(def) do if live[k] == nil then live[k] = v end end end
-end
-
 function Enemy:init(x, y, kind, world, rng)
   Enemy.super.init(self, x, y)
   local def = T[kind]
@@ -275,7 +227,11 @@ function Enemy:update_skitter(dt)
   if (self.backoffT or 0) > 0 then
     self.backoffT = self.backoffT - dt
     local t = self.target
-    local ax, ay = self.rng:range(-1, 1), self.rng:range(-1, 1)
+    -- Away from whatever it just bit. With no target left it keeps whatever
+    -- heading it already had rather than drawing a fresh angle every frame: the
+    -- Blight shares the world's RNG stream, so a draw taken here moves where the
+    -- forest seeds itself, and a headless trace stops comparing like with like.
+    local ax, ay = self.faceX ~= 0 and -self.faceX or 1, -self.faceY
     if t then ax, ay = self.x - t.x, self.y - t.y end
     local nx, ny = U.norm(ax, ay)
     local sp = D.speed * D.backoffSpeed * self:slowFactor()
@@ -426,10 +382,15 @@ function Enemy:update_siphon(dt)
   end
 end
 
+--- Armour, and a grudge against the things that shoot back. The search radius is
+--- the whole of what makes it a threat rather than a courier: at 2400 it could
+--- see every Beacon on the island and walked straight past every tree between
+--- here and there, so a night that bought Bulwarks bought the forest a night off.
+--- It looks for something to break locally and takes the wood if there is nothing.
 function Enemy:update_bulwark(dt)
   local w = self.world
   if not self.target or not self.target.alive or self.target.state == "dead" then
-    self.target = w and (w:nearestBot(self.x, self.y, 2400, function(b)
+    self.target = w and (w:nearestBot(self.x, self.y, self.def.instSearch, function(b)
       return b.type == "beacon" or b.type == "sentry" or b.type == "repulsor"
     end) or w:nearestTree(self.x, self.y, 2400))
   end
@@ -789,10 +750,12 @@ function Enemy:drawShadow()
   if self.type == "scar" then
     local cr = self.creep or self.def.creepStart
     local p = 0.94 + math.sin(self.pulse or 0) * 0.06
-    Draw.softShadow(self.x, self.y, cr * p, cr * p * 0.62, 0.40,
-                    P.shade(P.ramp.blight, 1.3))
-    Draw.setColor(P.ramp.rift[3], 0.30 + 0.10 * math.sin((self.pulse or 0) * 1.7))
-    Draw.dashedCircle(self.x, self.y, cr * p, 9, 7, (self.age or 0) * 12, 2)
+    Draw.softShadow(self.x, self.y, cr * p, cr * p * 0.62, 0.55,
+                    P.shade(P.ramp.blight, 1.2))
+    Draw.setColor(P.ramp.rift[3], 0.42 + 0.12 * math.sin((self.pulse or 0) * 1.7))
+    Draw.dashedCircle(self.x, self.y, cr * p, 11, 8, (self.age or 0) * 12, 3)
+    Draw.setColor(P.ramp.rift[4], 0.14)
+    Draw.dashedCircle(self.x, self.y, cr * p * 0.72, 7, 12, -(self.age or 0) * 8, 2)
     Draw.softShadow(self.x, self.y + 2, self.radius * 1.15, self.radius * 0.5, 0.42)
     return
   end

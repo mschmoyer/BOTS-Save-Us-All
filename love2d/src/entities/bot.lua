@@ -236,12 +236,17 @@ function Bot:update_builder(dt)
       VFX.emit("cobalt_pickup", self.x, self.y)
     end
   end
-  local buildCost = self.def.buildCost or 2
+  -- COPY WORK makes a Builder build whatever you last built rather than only
+  -- Planters, and a dearer machine costs it more of what it found.
+  local want    = (self.world and self.world.copyType) or "planter"
+  local wantDef = T[want] or T.planter
+  local buildCost = (self.def.buildCost or 2)
+                    * math.max(1, math.ceil(wantDef.cost / T.planter.cost))
   if self.actionT <= 0 and self.carry >= buildCost then
     -- Out of its own carry, and nothing out of the player's bank: the cobalt
-    -- it walked over is the cobalt the Planter is made of.
+    -- it walked over is the cobalt the machine is made of.
     if self.world and self.world:spawnBot(self.x + self.rng:range(-20, 20),
-                                          self.y + self.rng:range(10, 26), "planter", true) then
+                                          self.y + self.rng:range(10, 26), want, true) then
       self.carry = self.carry - buildCost
       self.built = self.built + 1
       self.actionT = self.def.buildEvery / (self.world.chips and self.world.chips:get("buildRate", 1) or 1)

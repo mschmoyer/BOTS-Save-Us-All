@@ -278,8 +278,21 @@ function World:consumeCobaltNear(x, y, r, dropLoose)
 end
 
 ----------------------------------------------------------------------- actions
+--- Is this ground inside a Blight Scar's creep? Nothing roots in it.
+function World:blightedAt(x, y)
+  local r = TU.enemy.scar and TU.enemy.scar.creepMax or 0
+  if r <= 0 then return false end
+  return self.hEnemy:nearest(x, y, r, function(e)
+    return e.alive and e.type == "scar" and U.dist(e.x, e.y, x, y) < (e.creep or 0)
+  end) ~= nil
+end
+
 function World:plantTree(x, y, by)
   if self.treeCount >= TU.tree.maxTrees then return false end
+  -- A Scar does not only eat the wood around it, it *denies the ground*. That
+  -- is what makes clearing one a decision about where the forest goes rather
+  -- than an errand with a deadline, and it is the job PIONEER exists to undo.
+  if self:blightedAt(x, y) and not self.chips:has("pioneer") then return false end
   if self.terrain and self.terrain.isLand and not self.terrain:isLand(x, y) then return false end
   -- Bare rock and blight scars stay bare, which is where the forest gets its
   -- shape. Pioneer is the chip that lets you take the dead ground back.
@@ -383,7 +396,7 @@ function World:spawnBot(x, y, botType, free)
   if self.phase == "extraction" and self.boss and self.boss.alive and self.botsRebelled then
     b:rebel(self.boss)
   end
-  Signal.emit("bot:built", b)
+  Signal.emit("bot:built", b, free)
   return b
 end
 
@@ -1183,6 +1196,11 @@ function World:draw(camera)
   if self.boss and self.boss.alive then self.boss:draw() end
 
   if VFX.draw then VFX.draw("world") end
+  -- The "air" layer was never drawn in gameplay. Every effect on it has been
+  -- invisible for the whole life of this build: pollen, fireflies, mist, blight
+  -- spores, rift ambience and half of a Blight's death. The comment above about
+  -- the additive pass sitting "under the air particles" says where it belongs.
+  if VFX.draw then VFX.draw("air") end
   if VFX.draw then VFX.draw("additive") end
 
   self:drawRally()

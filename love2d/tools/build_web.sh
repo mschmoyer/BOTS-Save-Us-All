@@ -20,3 +20,11 @@ node "$TC/love.js/index.js" -t "BOTS: Save Us All" -c -m 335544320 \
 node tools/inline_web.js "$WORK/out" "$OUT" "BOTS: Save Us All"
 rm -rf "$WORK"
 ls -la "$OUT"
+# What a phone actually downloads. The HTML is one base64 blob, which inflates
+# the payload by a third on disk and then compresses most of that back off
+# again -- so the on-disk figure is not the figure that costs anybody anything,
+# and the gzip figure is the one to watch.
+RAW=$(wc -c < "$OUT")
+GZ=$(gzip -9 -c "$OUT" | wc -c)
+printf 'size: %.2f MB on disk, %.2f MB gzipped (serve it with Content-Encoding: gzip)\n' \
+  "$(echo "$RAW/1048576" | bc -l)" "$(echo "$GZ/1048576" | bc -l)"
