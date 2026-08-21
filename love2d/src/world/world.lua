@@ -59,6 +59,7 @@ function World:init(seed, opts)
   self.cobalt      = TU.cobalt.startingCobalt
   self.treeCount   = 0
   self.o2          = 0
+  self.o2Debt      = 0
   self.chips       = Chips.new()
   self.director    = Director.new(self)
 
@@ -72,6 +73,7 @@ function World:init(seed, opts)
   self.dawnReport  = nil
 
   if Tree.prewarm then pcall(Tree.prewarm) end
+  if Water.load then pcall(Water.load) end
 
   self.centerX, self.centerY = TU.world.w / 2, TU.world.h / 2
   self:placeHome()
@@ -446,8 +448,10 @@ function World:dropCarried(player)
   end
 end
 
+--- Siphons do not remove oxygen directly - they add a debt against the forest's
+--- reading, so killing them restores what they took.
 function World:drainO2(rate, dt)
-  self.o2 = math.max(0, self.o2 - rate * dt)
+  self.o2Debt = math.min(TU.o2.debtCap, (self.o2Debt or 0) + rate * dt)
 end
 
 function World:speak(who, line)
@@ -473,7 +477,7 @@ function World:setPhase(phase)
   -- draft returning to day is what actually advances the cycle.
   if phase == "day" and prev == "dawn" then
     self.cycle = self.cycle + 1
-    if self.cycle > TU.cycle.count or self.o2 >= TU.o2.target then
+    if self.cycle > TU.cycle.count or self.o2 >= TU.o2.target - 0.5 then
       self:beginExtraction()
       return
     end
@@ -560,6 +564,7 @@ end
 function World:update(dt)
   self.time = self.time + dt
   if Wind.update then Wind.update(dt) end
+  if self.terrain and self.terrain.update then self.terrain:update(dt) end
 
   if self.phase ~= "extraction" and self.phase ~= "ending" and not self.cutscene then
     self.phaseT = self.phaseT + dt
@@ -568,18 +573,7 @@ function World:update(dt)
 
   if self.phase == "night" then self.director:update(dt) end
 
-  -- oxygen
-  local mature, elders = 0, 0
-  for i = 1, #self.trees do
-    local t = self.trees[i]
-    if t.alive then
-      if t.stage == "elder" then elders = elders + 1
-      elseif t.stage == "mature" then mature = mature + 1 end
-    end
-  end
-  self.matureTrees, self.elderTrees = mature, elders
-  local gain = (mature * TU.o2.perTreeSecond + elders * TU.o2.perTreeSecond * 2) * dt
-  self.o2 = U.clamp(self.o2 + gain - TU.o2.decayPerSec * dt, 0, TU.o2.target)
+  self:updateOxygen(dt)
 
   if self.player then self.player:update(dt, self.camera) end
   sweep(self.trees, self.hTree, dt)
@@ -622,6 +616,32 @@ function World:update(dt)
   if VFX.update then VFX.update(dt) end
   if Music.setIntensity then Music.setIntensity(self:threat()) end
   if Music.setO2 then Music.setO2(self.o2 / TU.o2.target) end
+end
+
+--- Oxygen reads the standing forest. Saplings count a little, elders count
+--- double, and siphons apply a debt that bleeds off once they are driven away.
+local O2W = TU.o2.weight
+function World:updateOxygen(dt)
+  local mature, elders, points = 0, 0, 0
+  for i = 1, #self.trees do
+    local t = self.trees[i]
+    if t.alive and t.stage ~= "dead" and t.stage ~= "dying" then
+      local s = t.stage
+      if s == "elder" then elders = elders + 1 points = points + O2W.elder
+      elseif s == "mature" then mature = mature + 1 points = points + O2W.mature
+      elseif s == "young" then points = points + O2W.young
+      else points = points + O2W.sapling end
+    end
+  end
+  self.matureTrees, self.elderTrees, self.forestPoints = mature, elders, points
+
+  self.o2Debt = math.max(0, (self.o2Debt or 0) - TU.o2.debtRecover * dt)
+
+  local ideal = TU.o2.target * U.saturate(points / TU.o2.fullForest) - self.o2Debt
+  ideal = U.clamp(ideal, 0, TU.o2.target)
+  local rate = ideal > self.o2 and TU.o2.rise or TU.o2.fall
+  self.o2 = U.damp(self.o2, ideal, rate, dt)
+  self.o2Ideal = ideal
 end
 
 --- Forests compound: mature trees drop seedlings nearby. Amortised over frames
@@ -696,7 +716,15 @@ function World:draw(camera)
   local g = love.graphics
 
   if Tree.setViewFromCamera then Tree.setViewFromCamera(camera) end
+
+  -- sea first, then the island on top of it, then the foam that laps the shore
+  if Water.draw and self.terrain then
+    Water.setTint(DayNight.fogColor, (DayNight.fogStrength or 0) * 0.8)
+    Water.setSky(DayNight.skyTint)
+    Water.draw(camera, self.time, self.terrain.shoreCanvas)
+  end
   if self.terrain and self.terrain.draw then self.terrain:draw(camera) end
+  if self.terrain and self.terrain.drawOverlay then self.terrain:drawOverlay(camera) end
   if Decals.draw then Decals.draw(camera) end
 
   -- shadow pass: everything's contact shadow lands on the ground, under all art

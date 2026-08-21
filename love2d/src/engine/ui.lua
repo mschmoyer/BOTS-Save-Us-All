@@ -467,48 +467,54 @@ end
 
 --------------------------------------------------------------------- button
 --- A menu row. opts: { align, size, sub, icon, danger, disabled, accent,
---- badge, height, quiet }.
+--- badge, alpha, slide }.
+---
+--- `alpha` scales every colour the row draws, which is what lets a menu stagger
+--- its rows in without any of them losing focusability on the way.
 function UI.button(ctx, id, x, y, w, h, label, opts)
   opts = opts or UI.EMPTY
   local enabled = not opts.disabled
+  local a = opts.alpha or 1
   local focused, hot, activated, s = ctx:interact(id, x, y, w, h, enabled)
   local acc = opts.accent or ctx.accent
   if opts.danger then acc = P.danger end
+  if a <= 0.004 then return activated, s end
+  x = x + (opts.slide or 0)
 
   local f = s.focus
   local pressK = U.ease.outQuad(s.press)
   local slide = f * 6 - pressK * 3
 
   -- plate
-  Draw.setColor(UI.c(P.black, 0.34 + f * 0.2))
+  Draw.setColor(UI.c(P.black, (0.34 + f * 0.2) * a))
   Draw.roundRect("fill", x, y, w, h, UI.r)
   if f > 0.002 then
-    UI.hgrad(x, y, w * 0.85, h, acc, acc, 0.14 * f, 0)
+    UI.hgrad(x, y, w * 0.85, h, acc, acc, 0.14 * f * a, 0)
   end
   lg.setLineWidth(1)
-  Draw.setColor(UI.c(enabled and P.ink or P.inkFaint, 0.1 + f * 0.16))
+  Draw.setColor(UI.c(enabled and P.ink or P.inkFaint, (0.1 + f * 0.16) * a))
   Draw.roundRect("line", x + 0.5, y + 0.5, w - 1, h - 1, UI.r)
 
   -- accent spine
   local spineH = (h - 16) * (0.35 + 0.65 * f)
-  Draw.setColor(UI.c(acc, enabled and (0.35 + 0.65 * f) or 0.15))
+  Draw.setColor(UI.c(acc, (enabled and (0.35 + 0.65 * f) or 0.15) * a))
   Draw.roundRect("fill", x + 3, y + (h - spineH) * 0.5, 3, spineH, 1.5)
 
   -- label
   local size = opts.size or UI.ts.h4
   local lc = enabled and (focused and P.ink or P.inkDim) or P.inkFaint
   local ly = y + (h - size) * 0.5 - (opts.sub and size * 0.42 or 0)
-  UI.text(label, x + 20 + slide, ly, size, lc, "left", enabled and 1 or 0.45, 0.06)
+  UI.text(label, x + 20 + slide, ly, size, lc, "left", (enabled and 1 or 0.45) * a, 0.06)
   if opts.sub then
-    UI.body(opts.sub, x + 21 + slide, ly + size + 5, UI.bs.small,
-            UI.c(P.inkFaint, enabled and (0.55 + f * 0.4) or 0.3))
+    UI.body(opts.sub, x + 21 + slide, ly + size + 7, UI.bs.small,
+            UI.c(P.inkFaint, (enabled and (0.55 + f * 0.4) or 0.3) * a))
   end
   if opts.badge then
     UI.caption(opts.badge, x + w - 18, y + (h - UI.ts.micro) * 0.5, UI.ts.micro,
-               acc, "right", 0.8)
+               acc, "right", 0.8 * a)
   end
 
-  UI.focusRing(x, y, w, h, f, acc, ctx.time, UI.r)
+  UI.focusRing(x, y, w, h, f * a, acc, ctx.time, UI.r)
   return activated, s
 end
 

@@ -22,6 +22,7 @@ local Post     = Opt.require("src.engine.postfx")
 local HUD      = Opt.require("src.game.hud")
 local BuildMenu = Opt.require("src.game.buildmenu")
 local Story    = Opt.require("src.game.story")
+local Minimap  = require("src.game.minimap")
 local Dialogue = Opt.require("src.game.dialogue")
 local Touch    = require("src.engine.touch")
 local Settings = require("src.game.settings")
@@ -41,6 +42,7 @@ function Game:enter(opts)
   if Post.init then Post.init(w, h) end
   if Lighting.init then Lighting.init(w, h) end
   if HUD.init then HUD.init(self.world) end
+  Minimap.build(self.world)
   if BuildMenu.init then BuildMenu.init(self.world) end
 
   self.buildSel = 1
@@ -51,6 +53,7 @@ function Game:enter(opts)
     self.showPerf = true
   end
   self.speed = tonumber(os.getenv("BOTS_SPEED") or "") or 1
+  self.telemetryT = 0
 
   Touch.setAimContext(function()
     local p = self.world.player
@@ -113,12 +116,15 @@ function Game:update(dt, realDt)
     if Input.pressed("build" .. i) then self:build(TU.bots.order[i]) end
   end
   if BuildMenu.update then BuildMenu.update(dt, self.camera) end
+  Minimap.update(realDt)
 
   world:update(dt)
 
   local p = world.player
   self.camera:follow(p.x, p.y, p.vx, p.vy, realDt)
   self.camera.zoomTarget = TU.camera.zoom * (world.phase == "extraction" and 0.94 or 1)
+
+  if self.world.player.agent then self:telemetry(dt) end
 
   DayNight.update(realDt)
   self:syncDayNight()
@@ -127,6 +133,23 @@ function Game:update(dt, realDt)
   if HUD.update then HUD.update(dt, world) end
   if Audio.update then Audio.update(realDt, p.x, p.y) end
   if Music.update then Music.update(realDt) end
+end
+
+--- Autoplay only: a CSV trace of the run, so balance can be read from data
+--- instead of guessed from screenshots.
+function Game:telemetry(dt)
+  self.telemetryT = self.telemetryT - dt
+  if self.telemetryT > 0 then return end
+  self.telemetryT = 5
+  local w = self.world
+  if not self.telemetryHeader then
+    self.telemetryHeader = true
+    print("TRACE,t,cycle,phase,trees,mature,elders,bots,blight,o2,cobalt,planted,lost,botsLost,fps")
+  end
+  print(string.format("TRACE,%.0f,%d,%s,%d,%d,%d,%d,%d,%.2f,%d,%d,%d,%d,%d",
+    w.time, w.cycle, w.phase, w.treeCount, w.matureTrees or 0, w.elderTrees or 0,
+    w:botCount(), #w.enemies, w.o2, w.cobalt,
+    w.stats.planted, w.stats.lost, w.stats.botsLost, love.timer.getFPS()))
 end
 
 --- Map the world's phase clock onto the visual day/night cycle.
@@ -181,6 +204,7 @@ function Game:draw()
 
   if HUD.draw then HUD.draw(world, cam) end
   if BuildMenu.draw then BuildMenu.draw(cam) end
+  Minimap.draw(world, cam)
   if Story.draw then Story.draw() end
   if Dialogue.draw then Dialogue.draw() end
   if Touch.active then Touch.draw() end

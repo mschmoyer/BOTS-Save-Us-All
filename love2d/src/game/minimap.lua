@@ -1,0 +1,146 @@
+-- A corner map of the island. The play area is 3400x2400 and the camera sees a
+-- tenth of it, so without this the player has no idea where anything is.
+local U   = require("src.core.util")
+local P   = require("src.engine.palette")
+local Opt = require("src.core.optional")
+local TU  = require("src.game.tuning")
+local Input = require("src.engine.input")
+
+local Draw = Opt.require("src.engine.draw")
+local Text = Opt.require("src.engine.text")
+
+local M = {
+  canvas = nil, scale = 1, w = 0, h = 0,
+  open = 0,          -- 0 = corner map, 1 = full-screen map
+  target = 0,
+}
+
+local PAD = 18
+
+--- Bake the terrain tiles down into a small image, once.
+function M.build(world)
+  local t = world.terrain
+  M.world = world
+  if not t or not t.tiles then return end
+  local maxW = 260
+  local s = maxW / t.w
+  M.scale = s
+  M.w, M.h = math.floor(t.w * s), math.floor(t.h * s)
+  M.canvas = love.graphics.newCanvas(M.w, M.h)
+  local prev = love.graphics.getCanvas()
+  love.graphics.setCanvas(M.canvas)
+  love.graphics.clear(0, 0, 0, 0)
+  local pb, pa = love.graphics.getBlendMode()
+  love.graphics.setBlendMode("alpha", "premultiplied")
+  love.graphics.setColor(1, 1, 1, 1)
+  for i = 1, #t.tiles do
+    local tile = t.tiles[i]
+    love.graphics.draw(tile.canvas, tile.x * s, tile.y * s, 0, s, s)
+  end
+  love.graphics.setBlendMode(pb, pa)
+  love.graphics.setCanvas(prev)
+end
+
+function M.update(dt)
+  if Input.pressed("map") then M.target = M.target > 0.5 and 0 or 1 end
+  M.open = U.damp(M.open, M.target, 14, dt)
+end
+
+function M.isOpen() return M.target > 0.5 end
+
+local function dot(x, y, r, c, a)
+  love.graphics.setColor(c[1], c[2], c[3], a or 1)
+  love.graphics.circle("fill", x, y, r)
+end
+
+function M.draw(world, cam)
+  if not M.canvas then return end
+  local sw, sh = love.graphics.getDimensions()
+  local g = love.graphics
+
+  -- corner placement, growing toward the centre when opened
+  local k = U.ease.inOutCubic(M.open)
+  local scale = U.lerp(1, math.min(sw * 0.62 / M.w, sh * 0.68 / M.h), k)
+  local w, h = M.w * scale, M.h * scale
+  local cx = U.lerp(sw - PAD - M.w, (sw - w) / 2, k)
+  local cy = U.lerp(sh - PAD - M.h - 96, (sh - h) / 2, k)
+  local a = U.lerp(0.72, 0.97, k)
+
+  if k > 0.02 then
+    g.setColor(P.black[1], P.black[2], P.black[3], 0.55 * k)
+    g.rectangle("fill", 0, 0, sw, sh)
+  end
+
+  -- sea plate behind the island
+  g.setColor(P.ramp.water[1][1], P.ramp.water[1][2], P.ramp.water[1][3], a * 0.9)
+  if Draw.roundRect then Draw.roundRect("fill", cx - 6, cy - 6, w + 12, h + 12, 8)
+  else g.rectangle("fill", cx - 6, cy - 6, w + 12, h + 12, 8) end
+
+  g.setColor(1, 1, 1, a)
+  g.draw(M.canvas, cx, cy, 0, scale, scale)
+
+  local s = M.scale * scale
+  local function px(x, y) return cx + x * s, cy + y * s end
+
+  -- trees read as a mass, not as individuals
+  local trees = world.trees
+  local step = math.max(1, math.floor(#trees / 700))
+  g.setColor(P.ramp.leaf[4][1], P.ramp.leaf[4][2], P.ramp.leaf[4][3], 0.55 * a)
+  for i = 1, #trees, step do
+    local t = trees[i]
+    if t.alive then
+      local x, y = px(t.x, t.y)
+      g.circle("fill", x, y, 1.6 * scale)
+    end
+  end
+
+  for i = 1, #world.cobalts do
+    local c = world.cobalts[i]
+    if c.alive and c.node then
+      local x, y = px(c.x, c.y)
+      dot(x, y, 1.8 * scale, P.ramp.cobalt[3], 0.85 * a)
+    end
+  end
+
+  for i = 1, #world.bots do
+    local b = world.bots[i]
+    if b.alive and b.state ~= "dead" then
+      local x, y = px(b.x, b.y)
+      dot(x, y, 2 * scale, b.state == "down" and P.eyeDown or P.eye, 0.95 * a)
+    end
+  end
+
+  for i = 1, #world.enemies do
+    local e = world.enemies[i]
+    if e.alive then
+      local x, y = px(e.x, e.y)
+      dot(x, y, 2.2 * scale, P.ramp.blight[4], 0.95 * a)
+    end
+  end
+
+  -- home rig
+  local hx, hy = px(world.homeX, world.homeY)
+  g.setColor(P.accent[1], P.accent[2], P.accent[3], 0.9 * a)
+  g.circle("line", hx, hy, 4 * scale)
+
+  -- the player, always legible
+  local p = world.player
+  local ppx, ppy = px(p.x, p.y)
+  dot(ppx, ppy, 3.4 * scale, P.white, a)
+  g.setColor(P.accent[1], P.accent[2], P.accent[3], 0.9 * a)
+  g.circle("line", ppx, ppy, 5.4 * scale + math.sin(world.time * 3) * 1.2)
+
+  -- what the camera can see
+  local vx, vy, vw, vh = cam:viewRect(0)
+  g.setColor(P.ink[1], P.ink[2], P.ink[3], 0.32 * a)
+  g.setLineWidth(1)
+  g.rectangle("line", cx + vx * s, cy + vy * s, vw * s, vh * s)
+
+  if k > 0.35 and Text.display then
+    Text.display("THE ISLAND", cx, cy - 34 * scale, 22 * scale,
+                 { color = P.ink, alpha = k, tracking = 0.28 })
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+return M

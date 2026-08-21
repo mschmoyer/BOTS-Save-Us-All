@@ -439,6 +439,13 @@ local function subscribe()
 
   Signal.on("bot:lost", function(bot, peaceful)
     if peaceful then return end
+    -- the world clears lostNames at every dawn tally, so keep the whole roll
+    -- of the dead here: the ending reads names, not a number
+    local w = Story.world
+    if w and bot.name then
+      w.allLostNames = w.allLostNames or {}
+      w.allLostNames[#w.allLostNames + 1] = bot.name
+    end
     react("loss", bot.x, bot.y)
     queue("firstLoss", { lostName = bot.name, lostX = bot.x, lostY = bot.y,
                          lostType = bot.type })

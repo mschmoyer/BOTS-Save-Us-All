@@ -57,7 +57,7 @@ T.bots = {
 
   planter = {
     label = "PLANTER", prefix = "SEED", cost = 10, hp = 3, radius = 12, speed = 78,
-    plantEvery = 9.0, minTreeGap = 46, wanderRetarget = { 1.2, 3.4 },
+    plantEvery = 12.0, minTreeGap = 46, wanderRetarget = { 1.2, 3.4 },
     desc = "Wanders and plants saplings, forever.",
   },
   builder = {
@@ -95,9 +95,9 @@ T.bots = {
 T.tree = {
   growTime      = 26,          -- sapling -> mature
   elderTime     = 150,         -- mature -> elder (with the Old Growth chip)
-  spreadEvery   = { 34, 58 },  -- seconds between seedling attempts
+  spreadEvery   = { 88, 155 }, -- seconds between seedling attempts
   spreadRange   = { 70, 190 },
-  spreadReject  = 62,          -- min distance to another tree
+  spreadReject  = 56,          -- min distance to another tree
   chewTime      = 9.0,         -- seconds a chomper needs to fell a tree
   o2Sapling     = 0.35,
   o2Mature      = 1.0,
@@ -107,11 +107,18 @@ T.tree = {
 }
 
 ----------------------------------------------------------------------- oxygen
+-- Oxygen is not an accumulator: it is a reading of the forest that is standing
+-- right now. Plant a tree and the needle moves; lose a grove overnight and it
+-- falls. That is what makes defending trees legible.
 T.o2 = {
-  target        = 100,          -- percent
-  perTreeSecond = 0.0125,       -- % per mature tree per second
-  decayPerSec   = 0.006,        -- the atmosphere leaks; forests must out-run it
-  siphonDrain   = 0.42,         -- % per second per feeding siphon
+  target      = 100,            -- percent
+  fullForest  = 380,            -- tree-points that read as a fully restored sky
+  rise        = 0.42,           -- how fast the reading climbs toward the forest
+  fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
+  weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 2.0 },
+  siphonDrain = 0.9,            -- debt added per second per feeding siphon
+  debtCap     = 22,             -- a swarm of siphons cannot zero you out
+  debtRecover = 1.1,            -- debt bled off per second once they stop
 }
 
 ------------------------------------------------------------------------ cycles

@@ -75,8 +75,8 @@ local function buildTrees(rng, ridge, count, scale, w)
     local y = ridge.pts[idx + 1] or ridge.base
     out[i] = {
       x = x, y = y + 2,
-      h = rng:range(34, 62) * scale,
-      r = rng:range(17, 27) * scale,
+      h = rng:range(26, 48) * scale,
+      r = rng:range(21, 33) * scale,
       seed = rng:int(1, 9999),
       phase = rng:range(0, TAU),
       lean = rng:range(-0.10, 0.10),
@@ -92,10 +92,10 @@ local function build(w, h)
   BG.built, BG.w, BG.h = true, w, h
   local rng = U.rng(20190101)
 
-  BG.horizon = floor(h * 0.615)
+  BG.horizon = floor(h * 0.575)
   BG.sunX = floor(w * 0.705)
-  BG.sunY = BG.horizon - floor(h * 0.045)
-  BG.sunR = floor(min(w, h) * 0.062)
+  BG.sunY = BG.horizon - floor(h * 0.052)
+  BG.sunR = floor(min(w, h) * 0.058)
 
   -- stars, thinning toward the horizon
   BG.stars = {}
@@ -126,10 +126,13 @@ local function build(w, h)
   -- three parallax ridges, far to near
   local step = 26
   BG.ridges = {}
+  -- Aerial perspective: the far ridge is the haziest and the near one is nearly
+  -- a silhouette, and each sits low enough that the land is three readable
+  -- bands rather than one black slab.
   local specs = {
-    { base = BG.horizon + 8,  amp = h * 0.075, shade = 0.42, tilt = -h * 0.02 },
-    { base = BG.horizon + 56, amp = h * 0.105, shade = 0.66, tilt = h * 0.03 },
-    { base = BG.horizon + 128, amp = h * 0.13, shade = 0.86, tilt = -h * 0.04 },
+    { base = BG.horizon + h * 0.030, amp = h * 0.105, shade = 0.42, tilt = -h * 0.030 },
+    { base = BG.horizon + h * 0.110, amp = h * 0.130, shade = 0.64, tilt =  h * 0.045 },
+    { base = BG.horizon + h * 0.235, amp = h * 0.150, shade = 0.84, tilt = -h * 0.055 },
   }
   for i = 1, 3 do
     local sp = specs[i]
@@ -139,17 +142,17 @@ local function build(w, h)
   end
 
   BG.trees = {
-    buildTrees(rng, BG.ridges[2], 26, 0.62, w),
-    buildTrees(rng, BG.ridges[3], 20, 1.05, w),
+    buildTrees(rng, BG.ridges[2], 30, 0.60, w),
+    buildTrees(rng, BG.ridges[3], 22, 1.00, w),
   }
 
   -- foreground grass, on the very bottom edge
   BG.grass = {}
-  for i = 1, 170 do
+  for i = 1, 320 do
     BG.grass[i] = {
       x = rng:range(-20, w + 20),
-      y = h - rng:range(0, h * 0.055),
-      len = rng:range(10, 30), lean = rng:range(-0.5, 0.5),
+      y = h - rng:range(0, h * 0.085),
+      len = rng:range(14, 46), lean = rng:range(-0.55, 0.55),
       ph = rng:range(0, TAU),
     }
   end
@@ -185,21 +188,25 @@ local function drawAurora(t, a)
   for band = 1, 2 do
     local col = band == 1 and P.accent or P.accentCool
     local ph = t * (0.09 + band * 0.035) + band * 2.2
-    local yb = h * (0.13 + band * 0.075)
+    local yb = h * (0.15 + band * 0.075)
     local amp = h * (0.045 + band * 0.012)
-    local segs = 26
-    local prevX, prevTop, prevBot
+    local segs = 30
+    local px, pTop, pMid, pBot, pFade
     for i = 0, segs do
       local x = w * i / segs
       local u = i / segs
       local yy = yb + sin(u * 5.2 + ph * 3.1) * amp + sin(u * 2.1 - ph * 1.7) * amp * 0.6
-      local hh = h * 0.085 * (0.4 + 0.6 * (0.5 + 0.5 * sin(u * 3.3 + ph * 2.3)))
-      local fade = (1 - (2 * u - 1) ^ 2) * a * 0.16
-      if prevX then
-        Draw.quad(prevX, prevTop, x, yy - hh, x, yy, prevX, prevBot,
-                  UI.c(col, 0), UI.c(col, 0), UI.c(col, fade), UI.c(col, fade))
+      local hh = h * 0.09 * (0.4 + 0.6 * (0.5 + 0.5 * sin(u * 3.3 + ph * 2.3)))
+      local fade = (1 - (2 * u - 1) ^ 2) ^ 1.3 * a * 0.16
+      local top, bot = yy - hh, yy + hh * 0.45
+      if px then
+        -- upper half fades in, lower half fades out: a curtain, not a slab
+        Draw.quad(px, pTop, x, top, x, yy, px, pMid,
+                  UI.c(col, 0), UI.c(col, 0), UI.c(col, fade), UI.c(col, pFade))
+        Draw.quad(px, pMid, x, yy, x, bot, px, pBot,
+                  UI.c(col, pFade), UI.c(col, fade), UI.c(col, 0), UI.c(col, 0))
       end
-      prevX, prevTop, prevBot = x, yy - hh, yy
+      px, pTop, pMid, pBot, pFade = x, top, yy, bot, fade
     end
   end
   lg.setBlendMode(bm, am)
@@ -211,11 +218,21 @@ local function drawSun(t, a)
   Draw.glow(x, y, r * 2.6, P.ramp.ember[4], 0.55 * a, 3)
   Draw.setColor(UI.mix(P.ramp.ember[4], P.white, 0.45, a))
   lg.circle("fill", x, y, r, 48)
-  -- the horizon streak: the sun smeared along the haze
+  -- the horizon streak: the sun smeared along the haze. Soft in both axes, or
+  -- it reads as a drawn rule across the middle of the picture.
   local bm, am = lg.getBlendMode()
   lg.setBlendMode("add", "alphamultiply")
-  UI.hgrad(x - BG.w, BG.horizon - 5, BG.w, 10, P.ramp.ember[4], P.ramp.ember[4], 0, 0.30 * a)
-  UI.hgrad(x, BG.horizon - 5, BG.w, 10, P.ramp.ember[4], P.ramp.ember[4], 0.30 * a, 0)
+  local hz, sp = BG.horizon, BG.h * 0.035
+  local c = P.ramp.ember[4]
+  for i = 1, 2 do
+    local x0 = (i == 1) and (x - BG.w) or x
+    local k1 = (i == 1) and 0 or 0.22 * a
+    local k2 = (i == 1) and 0.22 * a or 0
+    Draw.quad(x0, hz - sp, x0 + BG.w, hz - sp, x0 + BG.w, hz, x0, hz,
+              UI.c(c, 0), UI.c(c, 0), UI.c(c, k2), UI.c(c, k1))
+    Draw.quad(x0, hz, x0 + BG.w, hz, x0 + BG.w, hz + sp, x0, hz + sp,
+              UI.c(c, k1), UI.c(c, k2), UI.c(c, 0), UI.c(c, 0))
+  end
   lg.setBlendMode(bm, am)
 end
 
@@ -234,14 +251,19 @@ local function drawClouds(t, a)
 end
 
 --- A ridge, drawn as a strip of quads so it can carry a vertical gradient.
+--- The haze band above the crest is what sells the depth: each layer sits in a
+--- little pool of the layer behind it.
 local function drawRidge(r, t, a, k)
   local pts = r.pts
   local h = BG.h
-  local top = UI.mix(P.ramp.rock[1], P.black, r.shade)
-  local bot = UI.mix(P.ramp.rock[1], P.black, min(1, r.shade + 0.16))
+  local drop0 = (1 - k) * 40
+  UI.vgrad(0, r.base - h * 0.10 + drop0, BG.w, h * 0.115,
+           P.tod.dusk.fog, P.ramp.ember[3], 0, 0.20 * a * (1 - r.shade))
+  local top = UI.mix(P.tod.dusk.fog, P.black, r.shade)
+  local bot = UI.mix(P.tod.dusk.fog, P.black, min(1, r.shade + 0.26))
   local t1, t2, t3 = top[1], top[2], top[3]
   local b1, b2, b3 = bot[1], bot[2], bot[3]
-  local drop = (1 - k) * 40
+  local drop = drop0
   for i = 1, #pts - 3, 2 do
     local x0, y0 = pts[i], pts[i + 1] + drop
     local x1, y1 = pts[i + 2], pts[i + 3] + drop
@@ -255,7 +277,7 @@ local function drawRidge(r, t, a, k)
     local x1, y1 = pts[i + 2], pts[i + 3] + drop
     local lit = U.saturate(1 - math.abs((x0 + x1) * 0.5 - BG.sunX) / (BG.w * 0.42))
     if lit > 0.01 and y1 < y0 then
-      Draw.setColor(UI.mix(P.ramp.ember[4], P.ink, 0.2, lit * 0.5 * a * (1 - r.shade)))
+      Draw.setColor(UI.mix(P.ramp.ember[4], P.ink, 0.2, lit * 0.55 * a))
       lg.setLineWidth(1.6)
       lg.line(x0, y0, x1, y1)
     end
@@ -271,7 +293,7 @@ local function drawTreeRow(list, t, a, k, shade, rim)
     local lean = tr.lean + sway
     local bx, by = tr.x, tr.y + drop
     local tx, ty = bx + lean * tr.h, by - tr.h
-    local col = UI.mix(P.ramp.leaf[1], P.black, shade)
+    local col = UI.mix(P.tod.dusk.fog, P.black, shade)
     local c1, c2, c3 = col[1], col[2], col[3]
     -- trunk
     Draw.setColor(UI.rgba(c1, c2, c3, a))
@@ -283,19 +305,26 @@ local function drawTreeRow(list, t, a, k, shade, rim)
     Draw.blob(tx - tr.r * 0.62, ty + tr.r * 0.34, tr.r * 0.62, 9, tr.seed + 7, 0.24, 0.9, "fill")
     Draw.blob(tx + tr.r * 0.6, ty + tr.r * 0.28, tr.r * 0.66, 9, tr.seed + 13, 0.24, 0.9, "fill")
     if rim then
-      local lit = U.saturate(1 - math.abs(tx - BG.sunX) / (BG.w * 0.5))
+      -- rim light: the same canopy blob, nudged toward the sun, in warm ink.
+      -- Only the sliver that pokes out reads, which is exactly the effect.
+      local lit = U.saturate(1 - math.abs(tx - BG.sunX) / (BG.w * 0.62))
       if lit > 0.02 then
-        Draw.setColor(UI.mix(P.ramp.ember[4], P.ramp.leafHi[4], 0.35, lit * 0.35 * a))
-        lg.setLineWidth(1.4)
-        Draw.blob(tx + tr.r * 0.1, ty - tr.r * 0.06, tr.r * 1.0, 11, tr.seed, 0.2, 0.86, "line")
+        local side = tx < BG.sunX and 1 or -1
+        Draw.setColor(UI.mix(P.ramp.ember[4], P.tod.dusk.fog, 0.35,
+                             lit * lit * 0.30 * a))
+        Draw.blob(tx + side * 2.2, ty - 1.6, tr.r, 11, tr.seed, 0.2, 0.86, "fill")
+        Draw.setColor(UI.rgba(c1, c2, c3, a))
+        Draw.blob(tx, ty, tr.r, 11, tr.seed, 0.2, 0.86, "fill")
       end
     end
   end
 end
 
 local function drawGrass(t, a)
-  Draw.setColor(UI.mix(P.ramp.leaf[1], P.black, 0.9, a))
-  lg.setLineWidth(1.6)
+  local h = BG.h
+  UI.vgrad(0, h * 0.80, BG.w, h * 0.20, P.black, P.black, 0, 0.55 * a)
+  Draw.setColor(UI.mix(P.tod.dusk.fog, P.black, 0.94, a))
+  lg.setLineWidth(1.8)
   for i = 1, #BG.grass do
     local g = BG.grass[i]
     local sw = sin(t * 1.1 + g.ph) * 0.2 + g.lean
@@ -326,12 +355,17 @@ end
 
 ------------------------------------------------------------------------ menu
 local MENU = {}
-local PROMPTS_KB  = { { "confirm", "SELECT" }, { "back", "QUIT" } }
+local PROMPTS = { { "confirm", "SELECT" }, { "back", "QUIT" } }
+local VFX_FIRE   = { area = 1.7, rate = 0.55 }
+local VFX_POLLEN = { area = 1.5, rate = 0.5 }
+
+-- One reused option table: the menu is redrawn every frame and must not churn.
+local BOPT = { size = UI.ts.h3 }
 
 local function rebuildMenu()
   for i = #MENU, 1, -1 do MENU[i] = nil end
   if Settings.hasRun() then
-    local c = select(1, Settings.best())
+    local c = Settings.best()
     MENU[#MENU + 1] = { id = "continue", label = "CONTINUE",
                         sub = "Return to the island.", badge = "CYCLE " .. tostring(c) }
   end
@@ -357,9 +391,7 @@ function S:enter()
 end
 
 function S:resume()
-  -- coming back from Options: the roster may have changed, the layout has not
-  rebuildMenu()
-  self.ctx.focusId = self.ctx.focusId or nil
+  rebuildMenu()          -- a finished run may have added CONTINUE while we were away
 end
 
 function S:resize(w, h)
@@ -383,6 +415,9 @@ local function choose(self, id)
   end
 end
 
+-- The widget pass runs once, inside `draw`: an immediate-mode context wants a
+-- single registration per frame, and drawing is the only place the rows are
+-- laid out. `update` opens the frame and consumes whatever the last one chose.
 function S:update(dt, realDt)
   realDt = realDt or dt
   self.t = self.t + realDt
@@ -391,21 +426,22 @@ function S:update(dt, realDt)
   if Music.update then Music.update(realDt) end
 
   local top = (Screen.current() == self)
-  local ctx = self.ctx
-  ctx.enabled = top
+  self.top = top
   if not top then return end
+
+  if self.pending then
+    local id = self.pending
+    self.pending = nil
+    choose(self, id)
+    return
+  end
 
   -- a whisper of parallax, so the cover is never quite still
   local mx, my = love.mouse.getPosition()
-  local w, h = BG.w, BG.h
-  self.parX = U.damp(self.parX, (mx / w - 0.5) * 14, 4, realDt)
-  self.parY = U.damp(self.parY, (my / h - 0.5) * 8, 4, realDt)
+  self.parX = U.damp(self.parX, (mx / BG.w - 0.5) * 14, 4, realDt)
+  self.parY = U.damp(self.parY, (my / BG.h - 0.5) * 8, 4, realDt)
 
-  ctx:beginFrame(realDt)
-  self.pending = nil
-  self:layout(true)
-  ctx:endFrame()
-  if self.pending then choose(self, self.pending) end
+  self.ctx:beginFrame(realDt)
 end
 
 ------------------------------------------------------------------------ layout
@@ -423,8 +459,8 @@ function S:layout(interactive)
   UI.o.tracking = nil
   local colW = max(logoW, 336)
 
-  local menuY = logoY + logoSize + 152
-  local rowH = 56
+  local menuY = logoY + logoSize + 160
+  local rowH = 64
   local gap = UI.u
 
   if interactive then
@@ -432,13 +468,12 @@ function S:layout(interactive)
     for i = 1, #MENU do
       local m = MENU[i]
       local k = UI.stagger(t, i, SEQ.menu, SEQ.menuStep, SEQ.menuDur)
-      local y = menuY + (i - 1) * (rowH + gap)
-      if k > 0.5 then
-        local act = UI.button(ctx, m.id, x0, y, colW, rowH, m.label,
-                              { sub = m.sub, badge = m.badge, size = UI.ts.h3,
-                                danger = m.id == "quit" and false or nil })
-        if act then self.pending = m.id end
-      end
+      BOPT.sub, BOPT.badge = m.sub, m.badge
+      BOPT.alpha = k
+      BOPT.slide = (1 - k) * -20
+      local act = UI.button(ctx, m.id, x0, menuY + (i - 1) * (rowH + gap),
+                            colW, rowH, m.label, BOPT)
+      if act then self.pending = m.id end
     end
     return
   end
@@ -486,13 +521,13 @@ function S:drawBackdrop()
 
   -- fireflies over the near treeline, pollen in the sun
   if VFX.stream and skyK > 0.5 then
-    VFX.stream("fireflies", w * 0.5, h * 0.80, 1 / 60, VFXOPT_F)
-    VFX.stream("pollen", BG.sunX, BG.horizon + h * 0.06, 1 / 60, VFXOPT_P)
+    VFX.stream("fireflies", w * 0.5, h * 0.80, 1 / 60, VFX_FIRE)
+    VFX.stream("pollen", BG.sunX, BG.horizon + h * 0.06, 1 / 60, VFX_POLLEN)
   end
   if VFX.drawAll then VFX.drawAll() end
 
   -- the type column needs a floor to sit on
-  UI.hgrad(0, 0, w * 0.46, h, P.black, P.black, 0.52 * skyK, 0)
+  UI.hgrad(0, 0, w * 0.52, h, P.black, P.black, 0.58 * skyK, 0)
   UI.vignette(0.5 * skyK)
 end
 
@@ -505,8 +540,8 @@ function S:drawLogo()
   if k > 0.001 then
     local tr = U.lerp(0.42, 0.02, k)
     local a = U.saturate(k * 1.6)
-    UI.o.glow = logoSize * 0.16 * k
-    UI.o.shadow = logoSize * 0.05
+    UI.o.glow = logoSize * 0.035 * k       -- wide strokes spike at the miters
+    UI.o.shadow = logoSize * 0.045
     UI.text("BOTS", x0, logoY + (1 - k) * 10, logoSize, P.ink, "left", a, tr, UI.o)
   end
 
@@ -530,8 +565,8 @@ function S:drawLogo()
     if k3 > 0.45 then
       local a = U.saturate((k3 - 0.45) / 0.5)
       UI.caption("REFOREST", x0, y + 14, UI.ts.label, UI.c(P.accent, a), "left")
-      UI.caption("SEVEN CYCLES", x0 + colW, y + 16, UI.ts.micro,
-                 UI.c(P.inkFaint, 0.8 * a), "right")
+      UI.caption("SEVEN CYCLES  ONE ISLAND", x0 + colW, y + 18, UI.ts.micro,
+                 UI.c(P.inkDim, 0.55 * a), "right")
     end
   end
 end
@@ -548,7 +583,7 @@ function S:drawFooter()
   local footY = h - UI.pad - 32
 
   -- device prompts, under the menu column
-  UI.promptRow(x0, footY, PROMPTS_KB, UI.ts.micro, P.inkDim, 0.8 * a, "left")
+  UI.promptRow(x0, footY, PROMPTS, UI.ts.micro, P.inkDim, 0.8 * a, "left")
   UI.caption(Input.schemeName():upper() .. " DETECTED", x0, footY + 26, UI.ts.micro,
              UI.c(P.inkFaint, 0.55 * a), "left")
 
@@ -576,8 +611,9 @@ function S:draw()
   local prevLW = lg.getLineWidth()
   self:drawBackdrop()
   self:drawLogo()
-  self:layout(true)          -- menu rows draw inside the same pass
+  self:layout(true)          -- registers and draws the menu in one pass
   self:drawFooter()
+  if self.top then self.ctx:endFrame() end
   lg.setLineWidth(prevLW)
   lg.setColor(1, 1, 1, 1)
 end
