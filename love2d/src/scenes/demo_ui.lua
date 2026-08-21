@@ -88,10 +88,15 @@ local function buildStub()
   return W
 end
 
+-- The HUD asks the camera what it can see (the bot pips and the off-screen
+-- threat markers both do). The stub answers "all of it": this demo draws the
+-- readouts over a flat stand-in island in screen space, so everything is.
 local CAM = {
   zoom = 1,
   toScreen = function(_, x, y) return x, y end,
   toWorld = function(_, x, y) return x, y end,
+  visible = function() return true end,
+  viewRect = function() return 0, 0, love.graphics.getWidth(), love.graphics.getHeight() end,
 }
 
 ----------------------------------------------------------------- stand-in island

@@ -53,8 +53,11 @@ local function dot(x, y, r, c, a)
   love.graphics.circle("fill", x, y, r)
 end
 
-function M.draw(world, cam)
-  if not M.canvas then return end
+--- `alpha` is the screen-chrome alpha the HUD is drawing at: the map is part of
+--- the same layer and hides under a cutscene's letterbox with the rest of it.
+function M.draw(world, cam, alpha)
+  alpha = alpha or 1
+  if not M.canvas or alpha <= 0.004 then return end
   local sw, sh = love.graphics.getDimensions()
   local g = love.graphics
 
@@ -69,17 +72,17 @@ function M.draw(world, cam)
   local w, h = M.w * scale, M.h * scale
   local cx = U.lerp(sw - PAD - M.w * corner, (sw - w) / 2, k)
   local cy = U.lerp(sh - PAD - 22 - M.h * corner, (sh - h) / 2, k)
-  local a = U.lerp(0.62, 0.97, k)
+  local a = U.lerp(0.62, 0.97, k) * alpha
 
   if k > 0.02 then
-    g.setColor(P.black[1], P.black[2], P.black[3], 0.55 * k)
+    g.setColor(P.black[1], P.black[2], P.black[3], 0.55 * k * alpha)
     g.rectangle("fill", 0, 0, sw, sh)
   end
 
   -- A soft pool under the plate rather than a hard bright rectangle sitting on
   -- the world: closed, the map should read as a quiet inset, not a window.
   if Draw.softShadow then
-    Draw.softShadow(cx + w * 0.5, cy + h * 0.5, w * 0.75, h * 0.9, 0.5)
+    Draw.softShadow(cx + w * 0.5, cy + h * 0.5, w * 0.75, h * 0.9, 0.5 * alpha)
   end
   g.setColor(P.ramp.water[1][1], P.ramp.water[1][2], P.ramp.water[1][3], a * 0.85)
   if Draw.roundRect then Draw.roundRect("fill", cx - 5, cy - 5, w + 10, h + 10, 7)
@@ -162,13 +165,13 @@ function M.draw(world, cam)
 
   if k > 0.35 and Text.display then
     Text.display("THE ISLAND", cx, cy - 34 * scale, 22 * scale,
-                 { color = P.ink, alpha = k, tracking = 0.28 })
+                 { color = P.ink, alpha = k * alpha, tracking = 0.28 })
   elseif Text.display and k < 0.3 then
     -- What opens it. Nothing else on the screen says so, so it is worth a line
     -- of type -- but only while the player is still learning the island, not
     -- for the whole run.
     local age = world.time or 0
-    local hint = (0.5 - k) * 1.2 * U.saturate((90 - age) / 20)
+    local hint = (0.5 - k) * 1.2 * U.saturate((90 - age) / 20) * alpha
     if hint > 0.01 then
       Text.display(Input.glyph("map") .. "  MAP", cx + w, cy + h + 8, 10,
                    { color = P.inkDim, alpha = hint, tracking = 0.24,

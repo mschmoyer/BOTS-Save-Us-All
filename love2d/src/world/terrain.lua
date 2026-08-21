@@ -80,6 +80,11 @@ local SD_MAX     = 420       -- signed shore distance encoded into 8 bits over +
 local BEACH_W    = 52        -- sand band width, world units
 local WET_W      = 20        -- darker wet-sand band nearest the water
 local RELIEF     = 62        -- world units of vertical relief for elevation 0..1
+-- A column of the grid counts as part of the main island once it holds this
+-- fraction of the fullest column's land. Generation scatters skerries right out
+-- to the edge of the shallow ring, and a raw min/max over every land cell is
+-- therefore the box around the *rocks*, not around the island.
+local ISLAND_K   = 0.10
 local SUN        = { -0.632, -0.775 }   -- 2D direction toward the sun (up and left)
 local SUN_Z      = 0.52
 local NORMAL_DIV = 4         -- normal canvas is 1/4 world resolution
@@ -679,6 +684,25 @@ function Terrain:_scars()
   end
 end
 
+--- The run of columns (or rows) that hold the island, given a per-column land
+--- count. Anything thinner than `ISLAND_K` of the fullest column is an offshore
+--- rock and is left out, so one skerry in the shallows cannot stretch the box
+--- to the far side of the world.
+local function mainSpan(counts, n)
+  local peak = 0
+  for i = 0, n - 1 do if counts[i] > peak then peak = counts[i] end end
+  if peak <= 0 then return nil end
+  local thr = max(1, peak * ISLAND_K)
+  local a, b
+  for i = 0, n - 1 do
+    if counts[i] >= thr then
+      if not a then a = i end
+      b = i
+    end
+  end
+  return a, b
+end
+
 function Terrain:_classify()
   local gw, gh, cell = self.gw, self.gh, self.cell
   local elev, moist, sd, scar = self.elev, self.moist, self.sd, self.scar
@@ -688,10 +712,12 @@ function Terrain:_classify()
   local kslope = RELIEF / (2 * cell)
 
   local landIdx, fertIdx = {}, {}
-  -- The island's own rectangle, in grid cells. The world rect is mostly ocean,
-  -- so anything that wants to know where the island *is* -- the camera clamp
-  -- above all -- has to be told here, while we are already visiting every cell.
-  local bx0, by0, bx1, by1 = gw, gh, -1, -1
+  -- Land per column and per row. The island's own rectangle falls out of these,
+  -- and the camera clamps to it -- so it is worth counting here, while we are
+  -- already visiting every cell.
+  local colN, rowN = {}, {}
+  for gx = 0, gw - 1 do colN[gx] = 0 end
+  for gy = 0, gh - 1 do rowN[gy] = 0 end
 
   for gy = 0, gh - 1 do
     local row = gy * gw
@@ -713,10 +739,8 @@ function Terrain:_classify()
         fert[i] = 0
       else
         local wx, wy = gx * cell, gy * cell
-        if gx < bx0 then bx0 = gx end
-        if gx > bx1 then bx1 = gx end
-        if gy < by0 then by0 = gy end
-        if gy > by1 then by1 = gy end
+        colN[gx] = colN[gx] + 1
+        rowN[gy] = rowN[gy] + 1
         local bw = BEACH_W * (0.60 + 0.85 * N.fbm(wx * 0.0115, wy * 0.0115, 3, sN))
         local sc = scar[i]
         local e, m = elev[i], moist[i]
@@ -751,11 +775,14 @@ function Terrain:_classify()
   self.gradx, self.grady = gradx, grady
   self.landIdx, self.fertIdx = landIdx, fertIdx
   self.landArea = #landIdx * cell * cell
-  if bx1 >= bx0 and by1 >= by0 then
-    -- one cell of slop on each side, because a cell is classified by its
-    -- centre and the coastline runs somewhere inside it
-    self.landBox = { x = (bx0 - 1) * cell, y = (by0 - 1) * cell,
-                     w = (bx1 - bx0 + 2) * cell, h = (by1 - by0 + 2) * cell }
+
+  local cx0, cx1 = mainSpan(colN, gw)
+  local cy0, cy1 = mainSpan(rowN, gh)
+  if cx0 and cy0 then
+    -- one cell of slop on each side: a cell is classified by its centre, and
+    -- the coastline runs somewhere inside it
+    self.landBox = { x = (cx0 - 1) * cell, y = (cy0 - 1) * cell,
+                     w = (cx1 - cx0 + 2) * cell, h = (cy1 - cy0 + 2) * cell }
   else
     self.landBox = nil
   end

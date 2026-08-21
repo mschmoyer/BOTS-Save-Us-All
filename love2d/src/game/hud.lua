@@ -31,6 +31,10 @@ local Draw   = require("src.engine.draw")
 local Text   = require("src.engine.text")
 local J      = require("src.engine.juice")
 local Audio  = Opt.require("src.engine.audio")
+local Script = require("src.game.script")
+-- Read-only, for the letterbox: the chrome hides under the bars rather than
+-- being sliced by them.
+local Dialogue = require("src.game.dialogue")
 
 local lg = love.graphics
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
@@ -108,6 +112,10 @@ HUD.tick      = 0        -- last whole second of the dusk countdown
 HUD.tickPunch = 0
 HUD.alpha     = 1
 HUD.hidden    = false
+-- 1 normally, 0 behind a cutscene's letterbox. Kept apart from HUD.alpha so the
+-- pause and draft screens, which own that, never fight the bars.
+HUD.chrome    = 1
+HUD.holdK     = 0        -- 0..1 presence of the HOLD THE DAWN offer
 HUD.botCount  = 0
 HUD.o2Rate    = 0        -- smoothed %/s, signed
 HUD.o2Cause   = nil      -- why it is moving, when it is moving down
@@ -270,6 +278,13 @@ local function layout(sw, sh)
   L.feedX = PAD
   L.feedY = sh - PAD - 76
 
+  -- the dawn offer hangs off the bottom of the cycle dial, right-aligned to the
+  -- same edge, because it is a decision about that clock
+  local HT = TU.hud.hold
+  L.holdW, L.holdH = HT.w, HT.h
+  L.holdX = sw - PAD - HT.w
+  L.holdY = L.dialY + L.dialR + HT.gap
+
   hits.oxygen.x, hits.oxygen.y = L.o2x, PAD
   hits.oxygen.w, hits.oxygen.h = w, 78
   hits.cycle.x, hits.cycle.y = L.dialX - L.dialR - 8, L.dialY - L.dialR - 8
@@ -282,7 +297,8 @@ local function layout(sw, sh)
 
   zone(1, 0, 0, PAD + 232, PAD + L.resH + 12)              -- resources
   zone(2, L.o2x - 44, 0, w + 88, L.o2y + 106)              -- oxygen
-  zone(3, L.dialX - L.dialR - 190, 0, L.dialR * 2 + 214, L.dialY + L.dialR + 20)
+  zone(3, L.dialX - L.dialR - 190, 0, L.dialR * 2 + 214,
+          L.holdY + L.holdH + 12)                          -- cycle dial + dawn offer
   zone(4, 0, sh - 246, 340, 246)                           -- feed + hearts
   zone(5, sw * 0.5 - 340, sh - 158, 680, 158)              -- build bar + boss bar
   zone(6, sw - 320, sh - 292, 320, 292)                    -- the minimap's corner
@@ -341,6 +357,11 @@ function HUD.init(world)
   Signal.on("bot:revived", function(b)
     HUD.toast(b.name, P.accent, "BACK ON ITS FEET", nil, RANK_PROGRESS)
   end)
+  -- The offer under the cycle dial disappears the instant it is taken, so the
+  -- feed is what confirms the trade actually happened.
+  Signal.on("world:heldDawn", function()
+    HUD.toast(Script.hud.holdTaken, P.warn, Script.hud.holdAfter, 5)
+  end)
   Signal.on("chip:added", function(c) HUD.toast(c.name, P.ramp.ember[4], c.f, 5.5) end)
   Signal.on("director:dawn", function() HUD.toast("NIGHT SURVIVED", P.accent, nil, 5) end)
   Signal.on("phase:dusk", function(cycle, sx, sy)
@@ -383,6 +404,16 @@ function HUD.update(dt, world)
   Text.odometer(HUD.cob, world.cobalt or 0, dt, 9)
   Text.odometer(HUD.trees, world.treeCount or 0, dt, 7)
   HUD.o2Shown = U.damp(HUD.o2Shown, world.o2 or 0, 5, dt)
+
+  -- Under the bars, not sliced by them. Driven straight off the letterbox
+  -- rather than damped on its own clock, so the readouts leave with the bars
+  -- and come back as the bars retract instead of popping in behind them.
+  HUD.chrome = U.saturate(1 - (Dialogue.bar or 0) * TU.hud.chromeHide)
+
+  -- the dawn offer, in and out on its own ease
+  local canHold = (world.canHoldDawn and world:canHoldDawn()) == true
+  HUD.holdK = U.damp(HUD.holdK, canHold and 1 or 0, TU.hud.hold.rate, dt)
+  if HUD.holdK < 0.002 then HUD.holdK = 0 end
 
   HUD.cobFlash  = max(0, HUD.cobFlash - dt * 2.4)
   HUD.cobShake  = max(0, HUD.cobShake - dt * 3.6)
@@ -760,6 +791,45 @@ local function drawCycleDial(w, a)
   -- so they are gone.
 end
 
+--------------------------------------------------------- hold the dawn
+-- The only standing offer in the game, and one of only two decisions a player
+-- makes in a run. It hangs under the cycle dial for the whole of dusk -- a
+-- decision about the clock, drawn beside the clock -- and it says what the
+-- trade costs as well as what it buys. Nothing new is invented for it: a
+-- label, a rule, a key prompt and a caption, which is what every other prompt
+-- in this game is made of.
+--
+-- The two strings are composed once. This file allocates nothing per frame and
+-- the numbers in them never move.
+local holdBuy, holdCost
+local function drawHoldOffer(w, a)
+  local k = HUD.holdK
+  if k < 0.01 then return end
+  if not holdBuy then
+    holdBuy  = string.format(Script.hud.holdBuy, TU.cycle.holdExtra)
+    holdCost = string.format(Script.hud.holdCost,
+                             floor((TU.cycle.holdBudget - 1) * 100 + 0.5))
+  end
+
+  local e = U.ease.outCubic(k)
+  local aa = a * e
+  local bw, bh = L.holdW, L.holdH
+  local x = L.holdX
+  local y = L.holdY + (1 - e) * TU.hud.hold.rise
+  local rx = x + bw - 14              -- the inner edge everything hangs off
+  -- a slow breath on the edge while the offer is open, so it reads as
+  -- something being held out rather than as one more readout
+  local pulse = 0.5 + 0.5 * sin(HUD.time * 2.4)
+
+  UI.seat(x, y, bw, bh, 0.40 * aa)
+  UI.panel(x, y, bw, bh, 0.70 * aa, 6, P.warn, (0.20 + 0.18 * pulse) * aa)
+  UI.text(Script.hud.holdLabel, rx, y + 12, UI.ts.small, P.warn, "right", aa, 0.12)
+  UI.rule(x + 14, y + 32, bw - 28, P.warn, 0.16 * aa)
+  UI.prompt(rx, y + 44, "commit", holdBuy, UI.ts.micro, P.ink, aa, "right")
+  UI.caption(holdCost, rx, y + 64, UI.ts.micro,
+             UI.c(P.inkDim, 0.9 * aa), "right", nil, 1)
+end
+
 ----------------------------------------------------------------- resources
 --- What you have: what you can spend, what you have grown, and how many of
 --- them there are. The last of those used to be a six-cell roster parked in the
@@ -1080,6 +1150,160 @@ local function drawPlayerPip(w, cam, a)
   Draw.chevron(sx, sy + bob, 11, pi * 0.5, 3, 0.8)
 end
 
+-------------------------------------------------------------------- bot pips
+-- The same idea as the player pip, aimed at the thing the game is actually
+-- about. By cycle four the island carries seven hundred mature trees and the
+-- canopy is a solid roof: a capture of an extraction with thirty-four bots
+-- alive did not show one of them. They have names, traits and epitaphs and at
+-- the climax they walk into the rig for you, and none of it lands if the player
+-- cannot see them work.
+--
+-- Rules, in the same visual language and with the same restraint as the player
+-- pip: screen space so no canopy can eat it, and it fades up only where there
+-- is genuinely something in the way, so an open meadow stays a meadow. Colour
+-- is the minimap's, so the two readouts never disagree -- P.eye for a bot at
+-- work, P.eyeDown for one on the ground, P.love for one that has left to take
+-- the rig. Shape carries the rest: a chevron for the bots that walk, a ring for
+-- the ones you bolted down, because a pylon that has never moved in its life
+-- should not read as somebody approaching.
+local BP = TU.hud.botPip
+-- Hoisted for the same reason countCover is: this file promises zero table
+-- allocations per frame, and a closure per bot per frame is forty of them.
+local botCoverN, botCoverY = 0, 0
+local function countBotCover(t)
+  if t.alive and t.growth > 0.35 and t.y > botCoverY then
+    botCoverN = botCoverN + 1
+  end
+end
+
+local function botCover(w, b)
+  if not w.hTree then return 0 end
+  botCoverN, botCoverY = 0, b.y - BP.coverBack
+  w.hTree:each(b.x, b.y - BP.coverUp, BP.coverR, countBotCover)
+  return botCoverN
+end
+
+local function drawBotPip(b, cam, a)
+  local f = b.pipFade or 0
+  if f < 0.02 then return end
+  local aa = f * a
+  local sx, sy = cam:toScreen(b.x, b.y - b.radius * BP.rise)
+
+  if b.state == "rebel" then
+    -- They are all walking the same way, so the mark walks with them: an
+    -- arrowhead on the heading, a short wake behind it, and a little light of
+    -- its own. Thirty of these converging on the rig under a closed canopy is
+    -- the procession the finale was written for, and this is the only way
+    -- anyone gets to watch it happen.
+    local ang = atan2(b.vy, b.vx)
+    local cx, cy = cos(ang), sin(ang)
+    local sz = BP.size * BP.rebelScale
+    Draw.glow(sx, sy, sz * 3.6, P.love, 0.45 * aa, 2)
+    for k = 1, BP.tailSteps do
+      local d = BP.tail * k / BP.tailSteps
+      local t = (k - 1) / BP.tailSteps
+      Draw.setColor(P.love, (0.50 - 0.38 * t) * aa)
+      lg.circle("fill", sx - cx * d, sy - cy * d, 2.6 - 1.6 * t, 8)
+    end
+    Draw.setColor(P.black, BP.haloA * aa)
+    Draw.chevron(sx, sy, sz, ang, BP.halo + 1.4, 0.72)
+    Draw.setColor(P.love, aa)
+    Draw.chevron(sx, sy, sz, ang, 2.8, 0.72)
+    return
+  end
+
+  if b.state == "down" then
+    -- The worst version of this bug was being unable to find a bot you were
+    -- supposed to carry, so the downed mark does not wait to be occluded and it
+    -- does not sit still. The ring is the rescue clock: it empties as the bot
+    -- does, and when it is gone so is the bot.
+    local r = BP.ringR * BP.downRing
+    local puls = 0.62 + 0.38 * sin(HUD.time * BP.downPulse + b.bob)
+    Draw.setColor(P.black, BP.haloA * aa)
+    lg.setLineWidth(BP.halo)
+    lg.circle("line", sx, sy + 1.4, r, 18)
+    Draw.setColor(P.eyeDown, 0.5 * aa)
+    lg.setLineWidth(1.6)
+    lg.circle("line", sx, sy, r, 18)
+    local ping = (HUD.time * BP.pingRate + b.bob * 0.16) % 1
+    Draw.setColor(P.eyeDown, 0.42 * (1 - ping) * aa)
+    lg.setLineWidth(2)
+    lg.circle("line", sx, sy, r * (1 + ping * BP.pingGrow), 20)
+    local frac = U.saturate((b.downT or 0) / (b.downMax or TU.bots.downedTime))
+    Draw.setColor(P.eyeDown, 0.95 * puls * aa)
+    lg.setLineWidth(2.4)
+    if frac > 0.004 then
+      lg.arc("line", "open", sx, sy, r, -pi * 0.5, -pi * 0.5 + TAU * frac, 22)
+    end
+    Draw.setColor(P.black, BP.haloA * aa)
+    Draw.chevron(sx, sy - r - 5, BP.size, pi * 0.5, BP.halo, 0.8)
+    Draw.setColor(P.eyeDown, 0.95 * puls * aa)
+    Draw.chevron(sx, sy - r - 5, BP.size, pi * 0.5, 2.2, 0.8)
+    return
+  end
+
+  -- The dark pass is a centred *outline*, not the player pip's dropped shadow.
+  -- At eleven pixels an offset shadow is enough to lift the mark off anything;
+  -- at seven it is not, and half of these sit over a sunlit crown the same
+  -- value as they are. Drawing the black first at a heavier width gives every
+  -- mark its own ground to stand on, whatever it is standing on.
+  if b.static then
+    Draw.setColor(P.black, BP.haloA * aa)
+    lg.setLineWidth(BP.halo)
+    lg.circle("line", sx, sy, BP.ringR, 14)
+    Draw.setColor(P.eye, 0.95 * aa)
+    lg.setLineWidth(1.8)
+    lg.circle("line", sx, sy, BP.ringR, 14)
+  else
+    -- the bob is per-bot out of phase, so a crowd shimmers instead of pulsing
+    -- as one animatronic block
+    local bob = sin(HUD.time * BP.bob + b.bob) * 1.7
+    Draw.setColor(P.black, BP.haloA * aa)
+    Draw.chevron(sx, sy + bob, BP.size, pi * 0.5, BP.halo, 0.8)
+    Draw.setColor(P.eye, 0.95 * aa)
+    Draw.chevron(sx, sy + bob, BP.size, pi * 0.5, 2.2, 0.8)
+  end
+end
+
+local function drawBotPips(w, cam, a)
+  local bots = w.bots
+  if not cam or not bots then return end
+  local dt = love.timer.getDelta()
+  local n = #bots
+
+  -- Two passes over the list rather than a sorted shortlist, because sorting
+  -- means a table. The first pass owns the fades -- every bot gets one whether
+  -- or not it is drawn, so nothing pops when the cap moves -- and draws the
+  -- ones that cannot be allowed to miss out: the down and the rebelling. Only
+  -- then does the working crew spend what is left of the budget.
+  for i = 1, n do
+    local b = bots[i]
+    if b.alive and not b.carried then
+      local want = 0
+      if cam:visible(b.x, b.y, 70) and b.state ~= "dead" then
+        if b.state == "down" or b.state == "rebel" then
+          want = 1
+        elseif b.state ~= "boot" then
+          want = min(1, botCover(w, b) / BP.cover)
+        end
+      end
+      b.pipFade = U.damp(b.pipFade or 0, want, BP.fade, dt)
+      if b.state == "down" or b.state == "rebel" then drawBotPip(b, cam, a) end
+    end
+  end
+
+  local budget = BP.max
+  for i = 1, n do
+    if budget <= 0 then break end
+    local b = bots[i]
+    if b.alive and not b.carried and b.state ~= "down" and b.state ~= "rebel"
+       and (b.pipFade or 0) >= 0.02 then
+      drawBotPip(b, cam, a)
+      budget = budget - 1
+    end
+  end
+end
+
 ------------------------------------------------------------------ off-screen threats
 -- A tree being eaten off the edge of the screen was previously only visible on
 -- the minimap. These point at it.
@@ -1182,12 +1406,27 @@ local function drawBossBar(w, a)
   end
 end
 
+--- What the rest of the screen furniture -- the build bar, the minimap -- should
+--- be drawn at. They belong to the same layer as the readouts and have to leave
+--- with them when a cutscene closes the bars over the top.
+function HUD.chromeAlpha() return HUD.alpha * HUD.chrome end
+
+--- The lowest screen y a world-anchored overlay may reach. The bottom band is
+--- the build bar's, and during the extraction it is the boss's health: a
+--- tutorial hint drawn across HARVESTER PRIME is worse than no hint at all.
+function HUD.overlayFloor()
+  local _, sh = lg.getDimensions()
+  return sh - TU.hud.overlayFloor
+end
+
 function HUD.draw(w, cam)
   w = w or HUD.world
   if not w or HUD.hidden then return end
   local sw, sh = lg.getDimensions()
   layout(sw, sh)
-  local a = HUD.alpha
+  -- One multiplier for the whole layer: HUD.alpha is the pause and draft
+  -- screens' dimmer, HUD.chrome is the cutscene letterbox.
+  local a = HUD.alpha * HUD.chrome
   if a <= 0.004 then return end
 
   local prevLW = lg.getLineWidth()
@@ -1201,7 +1440,9 @@ function HUD.draw(w, cam)
   drawResources(w, a)
   drawOxygen(w, a)
   drawCycleDial(w, a)
+  drawHoldOffer(w, a)
   drawHearts(w, a)
+  drawBotPips(w, cam, a)     -- under the player's own mark: he is never lost in the crowd
   drawPlayerPip(w, cam, a)
   drawChewMarkers(w, cam, a)
   drawBossBar(w, a)

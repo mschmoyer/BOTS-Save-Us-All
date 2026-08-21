@@ -44,7 +44,7 @@ function Game:enter(opts)
   self.world = World.new(opts.seed or envSeed or math.random(1, 999999), opts)
   self.world.camera = self.camera
   self.world.post = Post
-  self.camera:setBounds(0, 0, TU.world.w, TU.world.h)
+  self:setCameraBounds()
   self.camera:snapTo(self.world.player.x, self.world.player.y)
 
   if Post.init then Post.init(w, h) end
@@ -72,6 +72,29 @@ function Game:enter(opts)
 
   -- Dev jump: start a session near a late beat so the finale can be iterated on
   -- without playing thirteen minutes of it first.
+  -- BOTS_TUNE=tree.frontierMax=7;cycle.budgetPerTree=0.31 -- override numeric
+  -- tuning for one headless run. Balance work on this game means running the
+  -- same seed a dozen times with one number moved; editing tuning.lua between
+  -- runs loses the comparison and risks leaving the edit in.
+  local tune = cfg("BOTS_TUNE")
+  if tune and tune ~= "" then
+    for pair in string.gmatch(tune, "[^;,]+") do
+      local path, val = string.match(pair, "^%s*([%w_.]+)%s*=%s*([-%d.]+)%s*$")
+      if path and val then
+        local node = TU
+        local last
+        for key in string.gmatch(path, "[^.]+") do
+          if last then node = node[last] end
+          last = key
+        end
+        if node and last and node[last] ~= nil then
+          node[last] = tonumber(val)
+          print(string.format("TUNE,%s,%s", path, val))
+        end
+      end
+    end
+  end
+
   -- BOTS_CHIPS=brittle,pinBreaker: hand the run a specific loadout, so a chip
   -- interaction can be reproduced instead of drafted for.
   local chips = cfg("BOTS_CHIPS")
@@ -86,6 +109,27 @@ function Game:enter(opts)
   if Story.begin then Story.begin(self.world, "prologue") end
 
   self:bindSignals()
+end
+
+--- Fence the camera in around the island rather than around the world.
+---
+--- The world rectangle is 3400x2400 and the island inside it is a good deal
+--- smaller, so a player at the shore used to get 45-55% of the screen filled
+--- with flat, empty ocean. The terrain knows where the land actually is; pad
+--- that box by `landPad` so a beach still reads as a beach -- wet sand, surf,
+--- a band of sea -- and clamp the result to the world so the view never leaves
+--- the baked terrain either. Camera:clampToBounds centres on the box by itself
+--- when the box is narrower than the viewport, which small islands are.
+function Game:setCameraBounds()
+  local t = self.world and self.world.terrain
+  local x, y, w, h = 0, 0, TU.world.w, TU.world.h
+  if t and t.landBounds then x, y, w, h = t:landBounds() end
+  local pad = TU.camera.landPad
+  local x0 = U.clamp(x - pad, 0, TU.world.w)
+  local y0 = U.clamp(y - pad, 0, TU.world.h)
+  local x1 = U.clamp(x + w + pad, x0, TU.world.w)
+  local y1 = U.clamp(y + h + pad, y0, TU.world.h)
+  self.camera:setBounds(x0, y0, x1 - x0, y1 - y0)
 end
 
 --- Populate the world as if a run had already been played.
@@ -156,6 +200,11 @@ function Game:bindSignals()
     -- wait for a quiet moment: an order the player cannot give yet, delivered
     -- over the prologue, is just noise
     local function tell()
+      local ph = self.world.phase
+      -- ...and never during the finale. Once the rig is down there is nowhere
+      -- to send anybody, and this is the one screen in the game with no room
+      -- left on it: the boss's name and health own the bottom band.
+      if ph == "extraction" or ph == "ending" then return end
       if self.world.cutscene then Timer.global:after(1.5, tell) return end
       if HUD.toast then
         HUD.toast(Input.glyph("rally") .. "   SEND THEM SOMEWHERE",
@@ -342,13 +391,17 @@ function Game:draw()
   if Post.endScene then Post.endScene() end
   if Post.render then Post.render() end
 
+  -- Everything from here down is screen chrome, and all of it leaves together:
+  -- a cutscene closes the letterbox over the top, and readouts sliced in half
+  -- by a cinematic bar are the loudest possible way to say "this is a game".
+  local chrome = (HUD.chromeAlpha and HUD.chromeAlpha()) or 1
   if self.photoHide and self.photoHide > 0 then
     self.photoHide = self.photoHide - 1
   else
     if HUD.draw then HUD.draw(world, cam) end
-    if BuildMenu.draw then BuildMenu.draw(cam) end
+    if BuildMenu.draw then BuildMenu.draw(cam, chrome) end
   end
-  Minimap.draw(world, cam)
+  Minimap.draw(world, cam, chrome)
   if Story.draw then Story.draw() end
   if Dialogue.draw then Dialogue.draw() end
   if Touch.active then Touch.draw() end

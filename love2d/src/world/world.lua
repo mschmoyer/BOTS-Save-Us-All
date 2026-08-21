@@ -1046,6 +1046,21 @@ function World:draw(camera)
   -- exact x-ray target: canopies clear around the player, not the camera
   if Tree.setFocus and self.player then
     Tree.setFocus(self.player.x, self.player.y, 78)
+    -- ...and a second hole over anyone lying on the ground. The HUD pip says
+    -- where a downed bot fell, which is most of the problem, but it does not
+    -- let you see the thing you have to walk onto and pick up: under a closed
+    -- canopy that last ten feet was a guess. Only the downed get one. A focus
+    -- per bot would open the whole forest, which is the other way to lose it.
+    local BP, opened = TU.hud.botPip, 0
+    for i = 1, #self.bots do
+      if opened >= BP.xrayMax then break end
+      local b = self.bots[i]
+      if b.alive and b.state == "down" and not b.carried
+         and camera:visible(b.x, b.y, 90) then
+        Tree.addFocus(b.x, b.y, BP.xrayRadius)
+        opened = opened + 1
+      end
+    end
   end
   if VFX.setViewport then
     local vx, vy, vw, vh = camera:viewRect(0)
@@ -1100,7 +1115,6 @@ function World:draw(camera)
   end
   if self.rig then addDraw(dl, self.rig) end
   if self.player then addDraw(dl, self.player) end
-  if self.boss and self.boss.alive then addDraw(dl, self.boss) end
   table.sort(dl, bySortKey)
 
   local sx, sy = math.cos(sunA), math.sin(sunA)
@@ -1119,6 +1133,12 @@ function World:draw(camera)
   end
   love.graphics.setBlendMode(prevB)
   if Tree.endPass then Tree.endPass() end
+
+  -- The rig goes last, over the canopy and over the canopy's backlight. It is
+  -- standing on the trees, and it was being washed out by the additive rim
+  -- pass above -- a hundred-foot machine with leaf highlights painted across
+  -- its hull, at the climax of the run.
+  if self.boss and self.boss.alive then self.boss:draw() end
 
   if VFX.draw then VFX.draw("world") end
   if VFX.draw then VFX.draw("additive") end

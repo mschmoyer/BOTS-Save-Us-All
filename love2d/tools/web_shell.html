@@ -226,7 +226,9 @@
   /* --- emscripten module -------------------------------------------------- */
   // ?dev=jump:night,trees:600 forwards flags into the game, for testing a late
   // state without playing thirteen minutes of it first.
-  var argv = ['./game.love'];
+  // The game asks whether it is running in a page: there is no QUIT on the web,
+  // and a menu row that cannot do anything is worse than no row.
+  var argv = ['./game.love', '--BOTS_WEB=1'];
   try {
     var dev = new URLSearchParams(location.search).get('dev');
     if (dev) {

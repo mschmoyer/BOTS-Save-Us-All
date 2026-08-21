@@ -389,6 +389,10 @@ function Bot:onDeath()
   end
   self.state = "down"
   self.downT = T.downedTime * (self.world and self.world.chips and self.world.chips:get("downedTime", 1) or 1)
+  -- what the window started at, so the HUD's rescue ring can read as a fraction
+  -- rather than pretending every bot has the same twenty seconds a chip may
+  -- have just extended
+  self.downMax = self.downT
   self.reviveT = 0
   self.vx, self.vy = 0, 0
   Audio.play("bot_down", { x = self.x, y = self.y })

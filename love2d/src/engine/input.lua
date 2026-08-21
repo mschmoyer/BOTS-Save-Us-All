@@ -104,6 +104,13 @@ function Input.load()
   end
   local os = love.system and love.system.getOS() or ""
   if os == "iOS" or os == "Android" then Input.setScheme("touch") end
+  -- BOTS_INPUT=touch|pad|kb forces a scheme. A desktop capture cannot fake a
+  -- finger, and the touch layout is the one thing in this game that can only
+  -- be judged by looking at it on a phone-shaped frame.
+  local forced = _G.BOTS_CFG and _G.BOTS_CFG("BOTS_INPUT")
+  if forced == "touch" or forced == "pad" or forced == "kb" then
+    Input.setScheme(forced)
+  end
 end
 
 ------------------------------------------------------------------------ polling

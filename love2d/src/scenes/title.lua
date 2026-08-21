@@ -111,13 +111,16 @@ local function build(w, h)
     end
   end
 
-  -- clouds: flat lozenges that drift and catch the sun
+  -- Clouds. One flat lozenge each read as a placeholder ellipse against a
+  -- painted sky, so each cloud is now a short run of lobes with its own
+  -- silhouette, lit along the top edge from wherever the sun is standing.
   BG.clouds = {}
   for i = 1, 9 do
+    local cw, ch = rng:range(140, 430), rng:range(9, 26)
     BG.clouds[i] = {
       x = rng:range(-200, w + 200),
       y = rng:range(BG.horizon * 0.28, BG.horizon * 0.94),
-      w = rng:range(120, 420), h = rng:range(6, 17),
+      w = cw, h = ch,
       sp = rng:range(2.5, 9), a = rng:range(0.10, 0.30),
       seed = rng:int(1, 9999),
     }
@@ -247,9 +250,14 @@ local function drawClouds(t, a)
     local lit = U.saturate(1 - math.abs(x - BG.sunX) / (w * 0.45))
     local col = UI.mix(P.tod.dusk.fog, P.ramp.ember[4], lit * 0.7, c.a * a)
     Draw.setColor(col)
-    lg.ellipse("fill", x, c.y, c.w * 0.5, c.h * 0.5, 20)
-    Draw.setColor(UI.mix(P.tod.dusk.fog, P.ramp.ember[4], lit * 0.9, c.a * a * 0.55))
-    lg.ellipse("fill", x + c.w * 0.14, c.y - c.h * 0.3, c.w * 0.3, c.h * 0.4, 16)
+    -- One irregular silhouette, not a row of ellipses: overlapping lobes at
+    -- cloud alpha stack into a visible chain of discs, and a single flat
+    -- lozenge reads as a placeholder. A blob is one fill and one outline.
+    Draw.blob(x, c.y, c.w * 0.5, 13, c.seed, 0.34, c.h / c.w, "fill")
+    -- the top edge, catching the light: warmer, tighter, and lifted a little
+    Draw.setColor(UI.mix(P.tod.dusk.fog, P.ramp.ember[4], lit * 0.9, c.a * a * 0.6))
+    Draw.blob(x + c.w * 0.04, c.y - c.h * 0.30, c.w * 0.40, 11, c.seed + 7, 0.30,
+              c.h / c.w * 0.9, "fill")
   end
 end
 
@@ -336,29 +344,44 @@ local function drawGrass(t, a)
 end
 
 --- Volumetric-ish shafts falling out of the sun, additive and very faint.
+---
+--- These used to start at the sun's centre, sixteen pixels wide and at full
+--- strength, which stamped a hard-edged trapezoid across the middle of the disc
+--- -- the one thing on the title screen that read as a bug rather than a sky.
+--- They now leave from the limb and are soft across their width as well as
+--- along their length, which is what a shaft of light actually is.
 local function drawShafts(t, a)
   if a <= 0.01 then return end
   local bm, am = lg.getBlendMode()
   lg.setBlendMode("add", "alphamultiply")
-  local x, y = BG.sunX, BG.sunY
+  local x, y, r = BG.sunX, BG.sunY, BG.sunR
+  local c = P.ramp.ember[4]
   for i = 1, 5 do
     local ang = pi * 0.5 + (i - 3) * 0.10 + sin(t * 0.11 + i) * 0.02
     local len = BG.h * 0.34
-    local wdt = 14 + i * 5
-    local ex, ey = x + cos(ang) * len, y + sin(ang) * len
-    local nx, ny = -sin(ang), cos(ang)
+    local ca, sa = cos(ang), sin(ang)
+    -- leave from the limb of the disc, not from its centre
+    local x0, y0 = x + ca * r * 0.82, y + sa * r * 0.82
+    local ex, ey = x + ca * len, y + sa * len
+    local nx, ny = -sa, ca
     local k = (0.055 - math.abs(i - 3) * 0.013) * a
-    Draw.quad(x - nx * 8, y - ny * 8, x + nx * 8, y + ny * 8,
-              ex + nx * wdt, ey + ny * wdt, ex - nx * wdt, ey - ny * wdt,
-              UI.c(P.ramp.ember[4], k), UI.c(P.ramp.ember[4], k),
-              UI.c(P.ramp.ember[4], 0), UI.c(P.ramp.ember[4], 0))
+    -- two quads per shaft, mirrored about the axis, each fading to nothing at
+    -- its outer edge: the seam falls on the bright centre line where it cannot
+    -- be seen, instead of on the silhouette where it could
+    local w0, w1 = r * 0.16, 16 + i * 6
+    for side = -1, 1, 2 do
+      Draw.quad(x0, y0, x0 + nx * w0 * side, y0 + ny * w0 * side,
+                ex + nx * w1 * side, ey + ny * w1 * side, ex, ey,
+                UI.c(c, k), UI.c(c, 0), UI.c(c, 0), UI.c(c, k * 0.25))
+    end
   end
   lg.setBlendMode(bm, am)
 end
 
 ------------------------------------------------------------------------ menu
 local MENU = {}
-local PROMPTS = { { "confirm", "SELECT" }, { "back", "QUIT" } }
+local PROMPTS     = { { "confirm", "SELECT" }, { "back", "QUIT" } }
+local PROMPTS_WEB = { { "confirm", "SELECT" } }
 local VFX_FIRE   = { area = 1.7, rate = 0.55 }
 local VFX_POLLEN = { area = 1.5, rate = 0.5 }
 
@@ -373,11 +396,18 @@ local function rebuildMenu()
   MENU[#MENU + 1] = { id = "begin", label = "BEGIN",
                       sub = "Seven cycles. One island. No help coming." }
   MENU[#MENU + 1] = { id = "options", label = "OPTIONS" }
-  MENU[#MENU + 1] = { id = "quit", label = "QUIT" }
+  -- There is no quitting a browser tab from inside it, and a row that does
+  -- nothing when you press it is the cheapest thing a menu can do.
+  if not S.web then MENU[#MENU + 1] = { id = "quit", label = "QUIT" } end
 end
 
 --------------------------------------------------------------------- lifecycle
 function S:enter()
+  -- The web shell passes --BOTS_WEB=1; love.system.getOS() is not reliable
+  -- under love.js, so the page tells the game where it is running rather than
+  -- the game trying to guess.
+  S.web = (_G.BOTS_CFG and _G.BOTS_CFG("BOTS_WEB")) ~= nil
+     or (love.system and love.system.getOS() == "Web")
   self.t = 0
   self.ctx = UI.context({ accent = P.accent })
   self.leaving = false
@@ -609,7 +639,8 @@ function S:drawFooter()
   -- that tells a returning player the game remembered their best run.
   Draw.softShadow(w * 0.5, footY + 22, w * 0.62, 74, 0.45 * a)
 
-  UI.promptRow(x0, footY, PROMPTS, UI.ts.micro, P.inkDim, 0.8 * a, "left")
+  UI.promptRow(x0, footY, S.web and PROMPTS_WEB or PROMPTS, UI.ts.micro, P.inkDim,
+               0.8 * a, "left")
   UI.caption(Input.schemeName():upper() .. " DETECTED", x0, footY + 26, UI.ts.micro,
              UI.c(P.inkDim, 0.8 * a), "left", nil, 1)
 
@@ -646,7 +677,7 @@ function S:draw()
 end
 
 function S:keypressed(k)
-  if k == "escape" then
+  if k == "escape" and not S.web then
     self.ctx:setFocus("quit")
   end
 end

@@ -32,6 +32,9 @@ local Dialogue = require("src.game.dialogue")
 local Draw = Opt.require("src.engine.draw")
 local Text = Opt.require("src.engine.text")
 local UI   = Opt.require("src.engine.ui")
+-- Only for the two things a hint has to keep off: the bottom band, and the
+-- screen during a cutscene.
+local HUD  = Opt.require("src.game.hud")
 
 local lg = love.graphics
 local floor, max, min = math.floor, math.max, math.min
@@ -293,18 +296,10 @@ local TUT = {
     anchor = playerOf,
     color = P.accent,
   },
-  {
-    -- Dusk offers a trade with no UI attached to it anywhere else in the game:
-    -- half a minute more daylight for a heavier night. A player who is never
-    -- told cannot make the decision, and it is one of the two decisions in the
-    -- run. It arms only while the offer is live, so it can never nag.
-    id = "hold",
-    arm  = function(w) return w.canHoldDawn ~= nil and w:canHoldDawn() == true end,
-    done = function(w) return w.heldThisCycle == true end,
-    anchor = playerOf,
-    color = P.warn,
-    maxT = 11.0,
-  },
+  -- HOLD THE DAWN used to be a step here. It is a decision the player makes
+  -- again every cycle, and a hint that shows twice and then gives up is the
+  -- wrong shape for that: game/hud.lua stands the offer under the cycle dial
+  -- for as long as it is open instead.
   {
     id = "shove",
     arm  = function(w)
@@ -632,13 +627,31 @@ local function updateBeats(dt, world)
   end
 end
 
+--- Is this a moment that can carry a hint at all?
+---
+--- Hints are for a player who is still learning the game, and they are not for
+--- the last three minutes of it. During the extraction the screen belongs to
+--- the rig, to the bar with its name on it and to the bots walking into it --
+--- a hint reading WALK over the player's head in the middle of that is an
+--- insult, and one drawn across HARVESTER PRIME is worse. Cutscenes are out
+--- for the same reason: the letterbox is down and nothing else may be on top
+--- of it.
+local function hintsAllowed(world)
+  if not world then return false end
+  if world.cutscene or Dialogue.isActive() then return false end
+  local ph = world.phase
+  return ph ~= "extraction" and ph ~= "ending"
+end
+Story.hintsAllowed = hintsAllowed
+
 local function updateTutorial(dt, world)
   local tu = Story.tut
+  local allowed = hintsAllowed(world)
   if tu.active then
     local s = tu.active
     tu.t = tu.t + dt
     local isDone = s.done(world) == true
-    if isDone or tu.t > s.maxT or s.arm(world) ~= true then tu.fading = true end
+    if isDone or not allowed or tu.t > s.maxT or s.arm(world) ~= true then tu.fading = true end
     tu.a = U.approach(tu.a, tu.fading and 0 or 1, dt * (tu.fading and 2.6 or 1.8))
     if tu.fading and tu.a <= 0.002 then
       tu.shown[s.id] = (tu.shown[s.id] or 0) + 1
@@ -651,7 +664,7 @@ local function updateTutorial(dt, world)
 
   tu.gap = (tu.gap or 0) - dt
   if tu.gap > 0 then return end
-  if world.cutscene or Dialogue.isActive() then return end
+  if not allowed then return end
   local p = world.player
   if not p or (p.state and p.state ~= "alive") then return end
 
@@ -719,7 +732,11 @@ local function drawHint(step, alpha, world)
   local sx, sy = cam:toScreen(ax, ay - (a.radius or 14) * 1.9)
   local pad = 92
   sx = U.clamp(sx, pad, sw - pad)
-  sy = U.clamp(sy, 96, sh - 150)
+  -- the HUD owns the bottom band: the build bar sits in it, and so does the
+  -- boss's name and health. A hint anchored to something off the bottom of the
+  -- screen stops above it rather than being drawn through it.
+  local floorY = (HUD.overlayFloor and HUD.overlayFloor()) or (sh - 150)
+  sy = U.clamp(sy, 96, min(sh - 150, floorY))
 
   local e = U.ease.outCubic(alpha)
   local rise = (1 - e) * 12
@@ -773,7 +790,7 @@ end
 function Story.draw()
   local world = Story.world
   if not world or not world.camera then return end
-  if world.cutscene then return end
+  if not hintsAllowed(world) then return end
   local tu = Story.tut
   if tu.active and tu.a > 0.004 then drawHint(tu.active, tu.a, world) end
 end

@@ -233,7 +233,7 @@ for i = 1, #Script.order do
   SLOTS[#SLOTS + 1] = { kind = "beat", id = id, title = Script.titles[id] or id }
 end
 SLOTS[#SLOTS + 1] = { kind = "tut", title = "9  TUTORIAL  GROWTH",
-                      ids = { "move", "cobalt", "planter", "hold" } }
+                      ids = { "move", "cobalt", "planter" } }
 SLOTS[#SLOTS + 1] = { kind = "tut", title = "10  TUTORIAL  DANGER",
                       ids = { "shove", "dash", "rescue" } }
 

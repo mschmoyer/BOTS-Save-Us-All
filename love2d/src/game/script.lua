@@ -278,6 +278,19 @@ S.ending = {
   },
 }
 
+-------------------------------------------------------------------------- hud
+-- Words the interface says for itself. There is only one of them, because
+-- there is only one standing offer in the game: the dawn. It is written here
+-- with its numbers left blank -- how much day it buys and how much worse the
+-- night gets are tuning's business, not the script's.
+S.hud = {
+  holdLabel = "HOLD THE DAWN",
+  holdBuy   = "+%dS OF DAY",
+  holdCost  = "%d%% HEAVIER NIGHT",
+  holdTaken = "DAWN HELD",
+  holdAfter = "THE NIGHT WILL BE WORSE FOR IT",
+}
+
 --------------------------------------------------------------------- tutorial
 -- Diegetic, non-blocking, one at a time, anchored to the thing they are about,
 -- and every one of them dismisses itself the moment the player does it.
@@ -289,8 +302,10 @@ S.tutorial = {
   { id = "move",    label = "WALK",            hint = "WASD", pad = "L-STICK", touch = "DRAG" },
   { id = "cobalt",  label = "COBALT",          hint = "WALK OVER IT" },
   { id = "planter", label = "BUILD A PLANTER", action = "build1" },
-  { id = "hold",    label = "HOLD THE DAWN",   action = "commit",
-                    hint = "MORE DAY. WORSE NIGHT." },
+  -- HOLD THE DAWN was a step here and is not one any more. A decision the
+  -- player makes every cycle cannot be taught by a hint that shows twice and
+  -- then never again: it lives in the HUD now, for as long as the offer is
+  -- open. See S.hud above and game/hud.lua's drawHoldOffer.
   { id = "shove",   label = "SHOVE IT OFF",    action = "shove" },
   { id = "dash",    label = "GET OUT OF THE WAY", action = "dash" },
   { id = "rescue",  label = "IT IS STILL LIT", action = nil, hint = "CARRY IT TO A BEACON" },

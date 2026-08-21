@@ -481,7 +481,12 @@ end
 --- Nothing is built once the rig arrives; the bar fades out rather than
 --- offering six purchases the world will refuse.
 local lockFade = 1
-function BuildMenu.draw(cam)
+--- `a` is the screen-chrome alpha the HUD is drawing at, so the bar goes under
+--- a cutscene's letterbox with the rest of the interface instead of poking out
+--- past the bars.
+function BuildMenu.draw(cam, a)
+  a = a or 1
+  if a <= 0.004 then return end
   local w = BuildMenu.world
   local locked = w and (w.phase == "extraction" or w.phase == "ending")
   lockFade = require("src.core.util").damp(lockFade, locked and 0 or 1, 5,
@@ -489,8 +494,8 @@ function BuildMenu.draw(cam)
   BuildMenu.lockFade = lockFade
   BuildMenu.camera = cam or BuildMenu.camera
   local prev = lg.getLineWidth()
-  BuildMenu.drawBar(1)
-  BuildMenu.drawWheel(1)
+  BuildMenu.drawBar(a)
+  BuildMenu.drawWheel(a)
   lg.setLineWidth(prev)
   lg.setColor(1, 1, 1, 1)
 end
