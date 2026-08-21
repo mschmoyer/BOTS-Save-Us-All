@@ -16,6 +16,12 @@ local Audio = Opt.require("src.engine.audio")
 
 local Player = Class("Player", Entity)
 
+-- Light options, hoisted. `Lighting.addLight` reads the table and copies what
+-- it needs into its parallel arrays -- it never keeps a reference -- so a
+-- constant options table is a constant, and building one per light per frame
+-- was pure garbage. Same idiom as `demo_light.lua`'s OPT_ tables.
+local OPT_LAMP = { flicker = 0.05 }
+
 function Player:init(x, y, world)
   Player.super.init(self, x, y)
   self.kind    = "player"
@@ -389,8 +395,28 @@ end
 -- on top and he vanished into the ground the moment the forest got busy.
 -- Dark-and-cool separates by value *and* by hue, and it leaves the only bright
 -- marks on him -- visor, chest lamp, one hard rim -- reading as him.
-local function suit(t, a) return P.shade(P.ramp.suit, t, a) end
-local function bare(t, a) return P.shade(P.ramp.sand, t, a) end
+--
+-- Both look-ups are cached on the ramp position they are asked for. `P.shade`
+-- blends two stops into a *fresh table* every time it is called, and the body
+-- asks for a dozen of them a frame at positions that never change -- every
+-- call site below passes a literal, so the cache holds a dozen entries and
+-- then stops growing. The colour returned is shared: read it, never keep it or
+-- edit it. An explicit alpha still takes the fresh-table path, because that is
+-- the one argument a caller does vary.
+local SUIT_C, BARE_C = {}, {}
+local BOOT   -- the darkest thing he owns, resolved below once `suit` exists
+local function suit(t, a)
+  if a then return P.shade(P.ramp.suit, t, a) end
+  local c = SUIT_C[t]
+  if not c then c = P.shade(P.ramp.suit, t) SUIT_C[t] = c end
+  return c
+end
+local function bare(t, a)
+  if a then return P.shade(P.ramp.sand, t, a) end
+  local c = BARE_C[t]
+  if not c then c = P.shade(P.ramp.sand, t) BARE_C[t] = c end
+  return c
+end
 
 function Player:drawShadow()
   -- Two shadows, not one. The wide soft one is the body occluding the sky; the
@@ -445,7 +471,8 @@ function Player:draw()
     local k = step * i * 3.4
     Draw.setColor(suit(1.7), flicker)
     Draw.capsule("fill", i * r * 0.30, r * 0.36, i * r * 0.30, r * 0.96 + k, r * 0.185)
-    Draw.setColor(P.darken(suit(1), 0.3), flicker)
+    BOOT = BOOT or P.darken(suit(1), 0.3)
+    Draw.setColor(BOOT, flicker)
     Draw.capsule("fill", i * r * 0.30 - r * 0.10, r * 1.00 + k,
                         i * r * 0.30 + r * 0.16, r * 1.00 + k, r * 0.19)
   end
@@ -628,7 +655,7 @@ function Player:emitLight(Lighting)
   -- the Blight lights it red, so the one warm pool on a night island is you --
   -- which is the whole of how you find yourself in a crowded frame.
   local warm = P.lightPlayer
-  Lighting.addLight(self.x, self.y, T.lamp.radius, warm, T.lamp.warm, { flicker = 0.05 })
+  Lighting.addLight(self.x, self.y, T.lamp.radius, warm, T.lamp.warm, OPT_LAMP)
   if self.charging then
     Lighting.addLight(self.x, self.y, 120 * (0.4 + self.chargeT), P.accent, 1.2)
   end

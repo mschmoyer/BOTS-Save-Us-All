@@ -15,6 +15,13 @@ local Audio = Opt.require("src.engine.audio")
 
 local Boss = Class("Boss", Entity)
 
+-- Light options, hoisted. `Lighting.addLight` reads the table and copies what
+-- it needs into its parallel arrays -- it never keeps a reference -- so a
+-- constant options table is a constant, and building one per light per frame
+-- was pure garbage. Same idiom as `demo_light.lua`'s OPT_ tables.
+local OPT_KEY  = { flicker = 0.04, softness = 1 }
+local OPT_WIDE = { softness = 1 }
+
 function Boss:init(x, y, world, botCount)
   Boss.super.init(self, x, y)
   self.kind   = "boss"
@@ -1938,17 +1945,17 @@ function Boss:emitLight(Lighting)
   -- bright disc the size of the deck right in the middle of the machine and no
   -- amount of drawing survives a hotspot sitting on top of it.
   Lighting.addLight(self.x, self.y + r * 0.60, AR.keyRadius, P.ramp.metal[3], AR.keyGain,
-                    { flicker = 0.04, softness = 1 })
+                    OPT_KEY)
   -- Amber, matching the beacon: see drawFootprint. Red on this machine is the
   -- beam and nothing else.
   local strobe = math.max(0, math.sin(self.age * TAU * AR.strobeHz)) ^ 2
   Lighting.addLight(self.x, self.y + r * 0.55, AR.strobeRadius, C.hazard,
-                    AR.strobeGain * (0.35 + 0.65 * strobe), { softness = 1 })
+                    AR.strobeGain * (0.35 + 0.65 * strobe), OPT_WIDE)
   Lighting.addLight(self.x, self.y + r * A.mouthY, AR.throatRadius, P.o2,
                     AR.throatGain * (0.75 + 0.25 * math.sin(self.age * 3.4)))
   if (self.coreOpen or 0) > 0 then
     Lighting.addLight(self.x, self.y + r * 0.30, AR.moltenRadius, P.ramp.ember[3],
-                      AR.moltenGain * (0.8 + 0.2 * math.sin(self.age * 3)), { softness = 1 })
+                      AR.moltenGain * (0.8 + 0.2 * math.sin(self.age * 3)), OPT_WIDE)
   end
   if self.state == "beam" then
     Lighting.addLight(self.x, self.y, 700, P.danger, 1.4)

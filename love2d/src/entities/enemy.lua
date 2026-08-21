@@ -25,6 +25,14 @@ local Audio = Opt.require("src.engine.audio")
 
 local Enemy = Class("Enemy", Entity)
 
+-- Light options, hoisted. `Lighting.addLight` reads the table and copies what
+-- it needs into its parallel arrays -- it never keeps a reference -- so a
+-- constant options table is a constant, and building one per light per frame
+-- was pure garbage. Same idiom as `demo_light.lua`'s OPT_ tables.
+local OPT_BODY = { flicker = 0.05 }
+local OPT_MAW  = { flicker = 0.12 }
+local OPT_SCAR = { flicker = 0.09 }
+
 function Enemy:init(x, y, kind, world, rng)
   Enemy.super.init(self, x, y)
   local def = T[kind]
@@ -801,7 +809,7 @@ function Enemy:emitLight(Lighting)
   -- what you need at night is to know where they are from across the island.
   local wide = (self.type == "maw" or self.type == "scar") and LIGHT.rooted or 1
   Lighting.addLight(self.x, self.y + oy, r * LIGHT.radius * wide, c,
-                    k * flick, { flicker = 0.05 })
+                    k * flick, OPT_BODY)
   -- a hot little core so the body reads as lit rather than as a glow behind it
   Lighting.addLight(self.x, self.y + oy, r * LIGHT.core, c, k * LIGHT.coreGain, nil)
 end
@@ -1047,10 +1055,10 @@ end
 function Enemy:emitLight(Lighting)
   if self.type == "maw" then
     Lighting.addLight(self.x, self.y, 260, P.ramp.rift[3],
-                      self.dormant and 0.35 or 1.1, { flicker = 0.12 })
+                      self.dormant and 0.35 or 1.1, OPT_MAW)
   elseif self.type == "scar" then
     Lighting.addLight(self.x, self.y, (self.creep or 120) * 0.8, P.ramp.rift[3], 0.55,
-                      { flicker = 0.09 })
+                      OPT_SCAR)
   elseif self.type == "warden" then
     Lighting.addLight(self.x, self.y - 22, self.def.wardRadius * 0.8, P.ramp.blight[4], 0.7)
   elseif self.type == "siphon" then

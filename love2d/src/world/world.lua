@@ -60,6 +60,12 @@ function World:init(seed, opts)
   self.cobalts, self.projectiles = {}, {}
   self.speeches = {}
   self.drawList = {}
+  -- Everything that moves, in the order the draw passes want it. The four
+  -- lists are created here and compacted in place forever after, so this array
+  -- of them is built once instead of twice a frame -- `World:draw` and
+  -- `World:emitLights` each made their own, and a table a frame is a table a
+  -- frame.
+  self.mobileLists = { self.bots, self.enemies, self.cobalts, self.projectiles }
   -- the same trees as `self.trees`, in depth order, and the slice of that the
   -- camera can see: see World:addTree
   self.treesZ, self.visTrees = {}, {}
@@ -279,38 +285,99 @@ function World:refreshVisibleTrees()
 end
 
 ------------------------------------------------------------------------ queries
+--- The query filters live up here, one shared function each, rather than being
+--- built fresh at every call.
+---
+--- A filter closure is not free: LOVE's Lua boxes every upvalue as its own heap
+--- object, so `function(b) ... filter ... end` is a function plus a box per
+--- captured local. The spatial queries below run about a hundred times a frame
+--- between the bots, the enemies and the spread cursor, and rebuilding their
+--- filters was the second-largest allocator in the game after `Spatial:nearest`
+--- built one of its own.
+---
+--- What a filter needs to know goes in the slots below. Every caller saves the
+--- slot it uses and puts it back afterwards, because a *caller-supplied* filter
+--- may itself query the world -- a bot's "is this one mine?" test asking for the
+--- nearest tree -- and the inner query would otherwise walk off with the outer
+--- one's state. Two stores against a hundred closures a frame.
+local qUnmarked          -- nearestTree: skip trees another bot has claimed
+local qFilter            -- the caller's own extra test, if it passed one
+local qX, qY             -- the query point, where the test needs it
+local qSelf              -- an entity to exclude from its own neighbourhood
+local qCount             -- counting filters accumulate here
+
+local function fTree(t)
+  if not t.alive or t.stage == "dead" then return false end
+  if qUnmarked and t.markedBy and t.markedBy.alive then return false end
+  return true
+end
+
+local function fBot(b)
+  if b.state == "dead" or b.state == "down" or not b.alive then return false end
+  if qFilter and not qFilter(b) then return false end
+  return true
+end
+
+local function fBotDowned(b)
+  return b.alive and b.state == "down" and not b.carried
+end
+
+local function fEnemy(e)
+  if not e.alive or e.fleeing then return false end
+  if qFilter and not qFilter(e) then return false end
+  return true
+end
+
+local function fCobaltNode(c) return c.alive and c.node end
+local function fAlive(e) return e.alive end
+local function fBeacon(b) return b.type == "beacon" and b.state == "work" end
+local function fEnemyHittable(e) return e.alive and not e.fleeing end
+
+--- Blight creep is a radius per scar, so this one has to know where it is being
+--- asked about.
+local function fScarCreep(e)
+  return e.alive and e.type == "scar" and U.dist(e.x, e.y, qX, qY) < (e.creep or 0)
+end
+
+--- Neighbour counting: `qSelf` is the tree asking, and never counts itself.
+local function fCountNeighbours(o)
+  if o ~= qSelf and o.alive then qCount = qCount + 1 end
+end
+
+local function fCountAlive(e)
+  if e.alive then qCount = qCount + 1 end
+end
+
 function World:nearestTree(x, y, r, unmarkedOnly)
-  return self.hTree:nearest(x, y, r, function(t)
-    if not t.alive or t.stage == "dead" then return false end
-    if unmarkedOnly and t.markedBy and t.markedBy.alive then return false end
-    return true
-  end)
+  local prev = qUnmarked
+  qUnmarked = unmarkedOnly
+  local t, d = self.hTree:nearest(x, y, r, fTree)
+  qUnmarked = prev
+  return t, d
 end
 
 function World:nearestBot(x, y, r, filter)
-  return self.hBot:nearest(x, y, r, function(b)
-    if b.state == "dead" or b.state == "down" or not b.alive then return false end
-    if filter and not filter(b) then return false end
-    return true
-  end)
+  local prev = qFilter
+  qFilter = filter
+  local b, d = self.hBot:nearest(x, y, r, fBot)
+  qFilter = prev
+  return b, d
 end
 
 function World:nearestDownedBot(x, y, r)
-  return self.hBot:nearest(x, y, r, function(b)
-    return b.alive and b.state == "down" and not b.carried
-  end)
+  return self.hBot:nearest(x, y, r, fBotDowned)
 end
 
 function World:nearestEnemy(x, y, r, filter)
-  return self.hEnemy:nearest(x, y, r, function(e)
-    if not e.alive or e.fleeing then return false end
-    if filter and not filter(e) then return false end
-    return true
-  end)
+  local prev = qFilter
+  qFilter = filter
+  local e, d = self.hEnemy:nearest(x, y, r, fEnemy)
+  qFilter = prev
+  return e, d
 end
 
 function World:nearestCobalt(x, y, r)
-  return self.hCobalt:nearest(x, y, r, function(c) return c.alive and c.node end)
+  return self.hCobalt:nearest(x, y, r, fCobaltNode)
 end
 
 function World:enemyCount() return #self.enemies end
@@ -329,7 +396,7 @@ end
 --- Beacon field helpers, used by bots and enemies.
 function World:beaconAt(x, y)
   local b = self.hBot:nearest(x, y, TU.bots.beacon.radius_field * self.chips:get("beaconRadius", 1),
-    function(bb) return bb.type == "beacon" and bb.state == "work" end)
+    fBeacon)
   return b
 end
 
@@ -374,7 +441,7 @@ end
 --- (which keep the chunk themselves) and by the player, who gets a loose chunk
 --- that flies back to them.
 function World:consumeCobaltNear(x, y, r, dropLoose)
-  local c = self.hCobalt:nearest(x, y, r, function(cc) return cc.alive and cc.node end)
+  local c = self.hCobalt:nearest(x, y, r, fCobaltNode)
   if not c or not c:mine() then return false end
   if dropLoose then
     local loose = CobaltE.new(c.x, c.y, self, self.rng, false)
@@ -389,9 +456,11 @@ end
 function World:blightedAt(x, y)
   local r = TU.enemy.scar and TU.enemy.scar.creepMax or 0
   if r <= 0 then return false end
-  return self.hEnemy:nearest(x, y, r, function(e)
-    return e.alive and e.type == "scar" and U.dist(e.x, e.y, x, y) < (e.creep or 0)
-  end) ~= nil
+  local px, py = qX, qY
+  qX, qY = x, y
+  local e = self.hEnemy:nearest(x, y, r, fScarCreep)
+  qX, qY = px, py
+  return e ~= nil
 end
 
 function World:plantTree(x, y, by)
@@ -410,7 +479,7 @@ function World:plantTree(x, y, by)
     end
   end
   local gap = TU.tree.spreadReject * 0.74
-  if self.hTree:nearest(x, y, gap, function(t) return t.alive end) then return false end
+  if self.hTree:nearest(x, y, gap, fAlive) then return false end
 
   local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000)) or nil
   if not t then return false end
@@ -673,7 +742,7 @@ function World:areaShove(x, y, radius, force, damage, stun, includeBots)
 end
 
 function World:hitEnemyAt(x, y, r, damage, vx, vy)
-  local e = self.hEnemy:nearest(x, y, r, function(ee) return ee.alive and not ee.fleeing end)
+  local e = self.hEnemy:nearest(x, y, r, fEnemyHittable)
   if not e then return false end
   local dmg = damage
   if self.chips:has("brittle") and (e.stun or 0) > 0 then dmg = dmg * 2 end
@@ -1290,9 +1359,9 @@ function World:updateSpread(dt)
       -- growth speed: beacons, rain and chips all feed the same multiplier
       local m = growMul * rainMul * (1 + self:beaconBoostAt(t.x, t.y))
       if self.chips:has("canopy") then
-        local near = 0
-        self.hTree:each(t.x, t.y, 90, function(o) if o ~= t and o.alive then near = near + 1 end end)
-        if near >= 3 then m = m * 1.35 end
+        qSelf, qCount = t, 0
+        self.hTree:each(t.x, t.y, 90, fCountNeighbours)
+        if qCount >= 3 then m = m * 1.35 end
       end
       -- eldering rides the same multiplier, with its own chip on top
       if t.stage == "mature" or t.stage == "elder" then
@@ -1305,11 +1374,9 @@ function World:updateSpread(dt)
       -- what turned the island into a uniform mat.
       local onFrontier = true
       if t.stage == "mature" or t.stage == "elder" then
-        local near = 0
-        self.hTree:each(t.x, t.y, TU.tree.frontierRadius, function(o)
-          if o ~= t and o.alive then near = near + 1 end
-        end)
-        onFrontier = near < self.chips:get("frontierMax", TU.tree.frontierMax)
+        qSelf, qCount = t, 0
+        self.hTree:each(t.x, t.y, TU.tree.frontierRadius, fCountNeighbours)
+        onFrontier = qCount < self.chips:get("frontierMax", TU.tree.frontierMax)
       end
       if onFrontier and (t.stage == "mature" or t.stage == "elder") then
         if not t.nextSpread then
@@ -1334,7 +1401,9 @@ function World:threat()
   local close = 0
   local p = self.player
   if p then
-    self.hEnemy:each(p.x, p.y, 420, function(e) if e.alive then close = close + 1 end end)
+    qCount = 0
+    self.hEnemy:each(p.x, p.y, 420, fCountAlive)
+    close = qCount
   end
   return U.saturate(n / 22 * 0.6 + close / 8 * 0.4)
 end
@@ -1392,7 +1461,7 @@ function World:draw(camera)
     if t.drawShadow then t:drawShadow(sunA, sunL) end
   end
   if Tree.endPass then Tree.endPass() end
-  local lists = { self.bots, self.enemies, self.cobalts, self.projectiles }
+  local lists = self.mobileLists
   for l = 1, #lists do
     local list = lists[l]
     for i = 1, #list do
@@ -1547,7 +1616,7 @@ function World:emitLights(Light)
   if self.player and self.player.emitLight then self.player:emitLight(Light) end
   if self.rig then self.rig:emitLight(Light) end
   local cam = self.camera
-  local lists = { self.bots, self.enemies, self.cobalts, self.projectiles }
+  local lists = self.mobileLists
   for l = 1, #lists do
     local list = lists[l]
     for i = 1, #list do

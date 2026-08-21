@@ -11,6 +11,12 @@ local VFX  = Opt.require("src.engine.vfx")
 
 local Rig = Class("HomeRig", Entity)
 
+-- Light options, hoisted. `Lighting.addLight` reads the table and copies what
+-- it needs into its parallel arrays -- it never keeps a reference -- so a
+-- constant options table is a constant, and building one per light per frame
+-- was pure garbage. Same idiom as `demo_light.lua`'s OPT_ tables.
+local OPT_RIGLAMP = { flicker = 0.04 }
+
 function Rig:init(x, y, world)
   Rig.super.init(self, x, y)
   self.kind   = "rig"
@@ -40,7 +46,16 @@ function Rig:drawShadow()
   Draw.softShadow(self.x, self.y + 8, self.radius * 1.25, self.radius * 0.5, 0.4)
 end
 
-local function metal(t) return P.shade(P.ramp.metal, t) end
+--- The hull's shades, cached on the ramp position. `P.shade` returns a fresh
+--- table per call and the rig asks for six fixed ones every frame; the call
+--- sites all pass literals, so this holds six entries. Shared: read, do not
+--- keep or edit.
+local METAL_C = {}
+local function metal(t)
+  local c = METAL_C[t]
+  if not c then c = P.shade(P.ramp.metal, t) METAL_C[t] = c end
+  return c
+end
 
 function Rig:draw()
   local g = love.graphics
@@ -88,7 +103,7 @@ end
 function Rig:emitLight(Lighting)
   local pulse = 0.6 + math.sin(self.spin * 2.4) * 0.4
   Lighting.addLight(self.x + self.radius * 0.42, self.y - self.radius * 1.58,
-                    260, P.accent, 0.75 + pulse * 0.35, { flicker = 0.04 })
+                    260, P.accent, 0.75 + pulse * 0.35, OPT_RIGLAMP)
   Lighting.addLight(self.x, self.y, 150, P.eye, 0.35)
 end
 
