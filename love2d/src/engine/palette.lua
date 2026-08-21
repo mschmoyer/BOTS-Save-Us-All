@@ -27,6 +27,12 @@ P.ramp = {
   soil   = { hex "#261a12", hex "#452e1d", hex "#6b4c2d", hex "#957044" },
   sand   = { hex "#5e4527", hex "#a08049", hex "#d6b374", hex "#f6e2ad" },
   rock   = { hex "#161d27", hex "#2b3a4b", hex "#4a5a6b", hex "#7a8b9b" },
+  -- Bedded stone: the spines the forest cannot close. `rock` above stays the
+  -- cold blue-grey of loose pebbles, machine-struck craters and gravel; a
+  -- standing cliff face needs a ramp that *warms* as it rises, or the sun has
+  -- nothing to land on and the whole headland reads as slate. Lower in value
+  -- than `rock` too, so a spine does not glow through a night grade.
+  stone  = { hex "#15161a", hex "#2f3134", hex "#55534e", hex "#8a8375" },
   water  = { hex "#031321", hex "#093c5b", hex "#0f86a3", hex "#a9f0f2" },
   bark   = { hex "#26170f", hex "#412b1a", hex "#634427", hex "#8c6339" },
   leaf   = { hex "#0f3a2a", hex "#1d7047", hex "#37a95a", hex "#6ed861" },
@@ -61,6 +67,9 @@ P.eyeDown    = hex "#ff6a4d"
 P.love       = hex "#ff7ba8"
 P.acid       = hex "#b6ff3d"
 P.o2         = hex "#6fe4ff"
+-- Sun-bleached sage. The only thing that lives on bare rock, and deliberately
+-- outside every green ramp so a lichen patch never reads as grass or moss.
+P.lichen     = hex "#7f8f68"
 
 --------------------------------------------------------- time-of-day ambients
 -- Each entry: ambient light colour, exposure, and the fog/atmosphere tint.

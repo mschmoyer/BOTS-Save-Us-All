@@ -20,6 +20,33 @@ local TAU = pi * 2
 --- generation cost and the memory the web build has to hold.
 Synth.rate = 22050
 
+------------------------------------------------------------------- noise source
+-- Every noise-bearing generator used to call math.random(), which meant the
+-- bank was a different bank on every boot: the same spec rendered differently
+-- run to run, so no two captures of the game were comparable and no audio
+-- change could be verified by re-rendering. The parameter RNGs in audio.lua
+-- were carefully seeded while the samples underneath them were not.
+--
+-- The same Lehmer generator the rest of the codebase uses (core/util), kept
+-- local so it costs one multiply and one modulo per sample and never touches
+-- the global random state. Synth.render re-seeds it per buffer, so each variant
+-- still gets its own stream -- the variety is kept, the randomness is not.
+local nz = 12345
+
+--- Seed the noise stream. Any integer; 0 is remapped.
+function Synth.noiseSeed(v)
+  local s = floor(abs(v or 12345)) % 2147483647
+  if s == 0 then s = 12345 end
+  nz = s
+end
+
+--- Uniform noise in -1..1.
+local function nrand()
+  nz = (nz * 48271) % 2147483647
+  return nz * 9.3132258e-10 - 1        -- 2/2147483647
+end
+Synth.noise = nrand
+
 -------------------------------------------------------------------- music maths
 local NOTE = { c = 0, d = 2, e = 4, f = 5, g = 7, a = 9, b = 11 }
 
@@ -314,6 +341,12 @@ function Buf:osc(opts)
   local aFn = Synth.env(envSpec or 1, dur)
   local detune = opts.detune and 2 ^ (opts.detune / 1200) or 1
   local duty  = opts.duty or 0.5
+  -- A pulse of width d has a mean of 2d-1. Left in, that offset is multiplied
+  -- by the layer's envelope, which turns every attack and release into a
+  -- low-frequency step -- a thump on a percussive layer and a click on a fast
+  -- one. Subtracting it makes the pulse DC-free at every width, and is exactly
+  -- zero at 0.5 so nothing that used the default changes at all.
+  local dcOff = 2 * duty - 1
   local rate  = self.rate
   local inv   = 1 / rate
   local ph    = opts.phase or 0
@@ -357,16 +390,17 @@ function Buf:osc(opts)
       local p2 = ph + (1 - duty)
       if p2 >= 1 then p2 = p2 - 1 end
       v = v - polyblep(p2, dt)
+      v = v - dcOff
     elseif wave == "noise" then
-      v = random() * 2 - 1
+      v = nrand()
     elseif wave == "pink" then
-      local w = random() * 2 - 1
+      local w = nrand()
       b0 = 0.99765 * b0 + w * 0.0990460
       b1 = 0.96300 * b1 + w * 0.2965164
       b2 = 0.57000 * b2 + w * 1.0526913
       v = (b0 + b1 + b2 + w * 0.1848) * 0.32
     elseif wave == "brown" then
-      last = last + (random() * 2 - 1) * 0.08
+      last = last + nrand() * 0.08
       if last > 1 then last = 1 elseif last < -1 then last = -1 end
       v = last
     else
@@ -422,7 +456,7 @@ function Buf:pluck(opts)
   local excite = opts.excite or "noise"
   for i = 1, len do
     if excite == "saw" then d[i] = (i / len) * 2 - 1
-    else d[i] = random() * 2 - 1 end
+    else d[i] = nrand() end
   end
   -- low-pass the excitation a little so it is not all fizz
   local prev = 0
@@ -549,6 +583,17 @@ function Buf:svf(opts)
   return self
 end
 
+-- Reusable per-stage scratch. Every resonator bank and every reverb tank used to
+-- allocate a fresh n-element table per channel, and the bank runs about two
+-- hundred of those at load: on a 70k-sample buffer that is a megabyte of garbage
+-- per call for the collector to walk. Neither stage is re-entrant (an fx chain
+-- runs one entry at a time, and a `sub` layer finishes rendering before its
+-- parent's chain starts) so one array each is enough. They are never shrunk --
+-- indexing is explicit, `#` is never taken -- so the pool settles at the size of
+-- the largest buffer in the bank and stays there.
+local resScratch = {}
+local revScratch = {}
+
 --- Parallel bank of tuned 2-pole resonators -- the material of a sound.
 --- opts: modes = { {hz, q, amp, decay}, ... }, mix (0..1, 1 = wet only), gain.
 ---
@@ -566,7 +611,7 @@ function Buf:resonate(opts)
   local nyq = rate * 0.48
   local function run(ch)
     local n = self.n
-    local wet = {}
+    local wet = resScratch
     for i = 1, n do wet[i] = 0 end
     for k = 1, #modes do
       local md = modes[k]
@@ -719,16 +764,28 @@ end
 --- Turn a decaying buffer into a seamless loop by crossfading its tail over its
 --- head and trimming. Without this a "looping" source ticks or breathes once per
 --- period, which is exactly the tell that a drone was faked.
-function Buf:loopify(xfade)
+---
+--- `shape` picks the crossfade law, and it is not a detail:
+---   nil / "power"  equal-power (cos/sin). Right for *uncorrelated* material --
+---                  noise beds, anything whose head and tail are unrelated.
+---   "lin"          equal-gain. Right for material deliberately built so its
+---                  partials complete a whole number of cycles in the loop body,
+---                  because then head and tail are the *same signal* and an
+---                  equal-power fade sums them coherently to +3 dB: a drone that
+---                  swells once per loop instead of ticking once per loop. The
+---                  rig bed is built that way; its crossfade measured +1.5 dB
+---                  through the splice before this existed.
+function Buf:loopify(xfade, shape)
   local xf = max(2, floor((xfade or 0.25) * self.rate))
   if xf * 2 >= self.n then return self end
   local n = self.n - xf
+  local lin = (shape == "lin")
   local function run(ch)
     for i = 1, xf do
       local f = (i - 1) / (xf - 1)
-      -- equal-power so the sum keeps its level through the splice
-      local a = cos(f * pi * 0.5)
-      local b = sin(f * pi * 0.5)
+      local a, b
+      if lin then a, b = 1 - f, f
+      else a, b = cos(f * pi * 0.5), sin(f * pi * 0.5) end
       ch[i] = ch[i] * b + ch[n + i] * a
     end
     for i = n + 1, self.n do ch[i] = nil end
@@ -814,7 +871,7 @@ function Buf:reverb(opts)
 
   local function run(ch, off)
     local n = self.n
-    local wet = {}
+    local wet = revScratch
     for i = 1, n do wet[i] = 0 end
     for c = 1, #COMB do
       local dl = max(4, floor(COMB[c] * scale) + off)
@@ -842,6 +899,27 @@ function Buf:reverb(opts)
         line[p] = input + bufout * g
         p = p % dl + 1
         wet[i] = bufout - input * g
+      end
+    end
+    -- Low-cut on the wet return, which is what a send bus has and what this did
+    -- not. A Schroeder comb is a resonator: these four ring at 32.5, 34.6, 37.1
+    -- and 39.5 Hz whatever the sample rate, because their delays are fixed in
+    -- *time*. Anything with sub content in it -- an impact, a footstep, a rig
+    -- landing -- excites those modes, and they have the longest decay in the
+    -- tank because the damping filter only damps the top. rift_close measured
+    -- 86% of its total energy in a 7 Hz band around 65 Hz, and it was the
+    -- reverb's second mode, not the sound.
+    --
+    -- The dry path keeps all its weight; only the tail is cut. This is what a
+    -- 120 Hz high-pass on a reverb send is for, and every sound in the bank
+    -- gets headroom back from it.
+    local lc = opts.lowcut or 115
+    if lc > 0 then
+      local a = 1 - exp(-TAU * lc / self.rate)
+      local z = 0
+      for i = 1, n do
+        z = z + (wet[i] - z) * a
+        wet[i] = wet[i] - z
       end
     end
     for i = 1, n do ch[i] = ch[i] * (1 - mix * 0.4) + wet[i] * mix * 1.6 end
@@ -1046,7 +1124,7 @@ local FX = {
   shelf     = function(b, o) return b:shelf(o) end,
   limit     = function(b, o) return b:limit(o.ceiling, o.look) end,
   loudness  = function(b, o) return b:loudness(o.rms, o.win, o.ceiling) end,
-  loopify   = function(b, o) return b:loopify(o.xfade) end,
+  loopify   = function(b, o) return b:loopify(o.xfade, o.shape) end,
   bitcrush  = function(b, o) return b:bitcrush(o.bits, o.rateDiv) end,
   delay     = function(b, o) return b:delay(o) end,
   reverb    = function(b, o) return b:reverb(o) end,
@@ -1061,8 +1139,18 @@ local FX = {
 }
 Synth.fx = FX
 
+-- Bumped once per render (sub-buffers included), so every buffer in the bank
+-- gets its own noise stream and the whole bank is a pure function of the specs
+-- and the order they are built in.
+local renderSeq = 0
+
+--- Reset the render counter, so a reload rebuilds the identical bank.
+function Synth.resetSeq(v) renderSeq = v or 0 end
+
 function Synth.render(spec)
   local rate = spec.rate or Synth.rate
+  renderSeq = (renderSeq * 48271 + 7919) % 2147483647
+  Synth.noiseSeed(renderSeq)
   local b = Synth.buffer(spec.dur or 0.5, spec.ch or 1, rate)
   local layers = spec.layers or {}
   for i = 1, #layers do
@@ -1093,7 +1181,7 @@ function Synth.render(spec)
   if spec.trim ~= false then b:trim(0.0006, spec.tail or 0.015) end
   if spec.loop then
     -- a loop must not be faded or trimmed at its edges, only spliced
-    b:loopify(spec.xfade or 0.3)
+    b:loopify(spec.xfade or 0.3, spec.xfadeShape)
     if spec.loudness then b:loudness(spec.loudness, spec.loudWin, spec.ceiling)
     elseif spec.normalize ~= false then b:normalize(spec.normalize or 0.88) end
     b:dcBlock()

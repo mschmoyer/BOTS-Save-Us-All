@@ -85,6 +85,14 @@ local RELIEF     = 62        -- world units of vertical relief for elevation 0..
 -- to the edge of the shallow ring, and a raw min/max over every land cell is
 -- therefore the box around the *rocks*, not around the island.
 local ISLAND_K   = 0.10
+-- Vector marks are generated per *world* block rather than per canvas tile, and
+-- a tile draws every block that reaches into it. Two neighbouring tiles
+-- therefore emit the same mark at the same place, and the bake carries no seam
+-- along its own edges -- which it did, as a hard cross of value stepping the
+-- full width and height of the island wherever two canvases met.
+local MARK_BLOCK  = 100      -- world units per block of marks
+local MARK_MARGIN = 48       -- furthest any mark reaches from its origin
+local MARK_DENS   = 112      -- one mark candidate per this many square units
 local SUN        = { -0.632, -0.775 }   -- 2D direction toward the sun (up and left)
 local SUN_Z      = 0.52
 local NORMAL_DIV = 4         -- normal canvas is 1/4 world resolution
@@ -115,7 +123,9 @@ extern vec3  cSoil[4];
 extern vec3  cBlight[4];
 extern vec3  cAsh[4];
 extern vec3  cWater[4];
+extern vec3  cStone[4];
 extern vec3  cFlora;
+extern vec3  cLichen;
 
 float hsh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
@@ -155,6 +165,39 @@ float rdg3(vec2 p) {
     s += v * v * a; n += a; a *= 0.5; p *= 2.07;
   }
   return s / n;
+}
+
+// Jittered-grid cells, with the distance to the nearest cell border. Bedded
+// stone seen from above is *slabs*: flat shapes of one tone, tessellating,
+// with a hard edge between them. No amount of quantised fbm gives you that --
+// it gives bands, and bands read as marbled paper. This gives real cells.
+// Two passes: the first finds the cell, the second the distance to the
+// bisector between it and its neighbours.
+vec3 cells(vec2 p) {
+  vec2 ip = floor(p);
+  vec2 fp = p - ip;
+  vec2 bid = vec2(0.0);
+  vec2 bpt = vec2(0.0);
+  float bd = 9.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 o = g + vec2(hsh(ip + g), hsh(ip + g + 37.0)) - fp;
+      float d = dot(o, o);
+      if (d < bd) { bd = d; bpt = o; bid = ip + g; }
+    }
+  }
+  float be = 9.0;
+  for (int j = -1; j <= 1; j++) {
+    for (int i = -1; i <= 1; i++) {
+      vec2 g = vec2(float(i), float(j));
+      vec2 o = g + vec2(hsh(ip + g), hsh(ip + g + 37.0)) - fp;
+      vec2 dv = o - bpt;
+      float l = length(dv);
+      if (l > 0.0001) { be = min(be, dot(0.5 * (o + bpt), dv / l)); }
+    }
+  }
+  return vec3(bid, be);
 }
 
 vec3 ramp(vec3 a, vec3 b, vec3 c, vec3 d, float t) {
@@ -264,31 +307,92 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   col = mix(col, sandC, beachT);
 
   // ---- rock ------------------------------------------------------------
+  // Bare stone is the one surface nothing roots in, so the spines are the
+  // permanent clearings the forest can never close. They have to look chosen.
   float rk = rockMask(slope, elev);
-  float rockT = smoothstep(0.42, 0.66, rk + (d2 - 0.5) * 0.34 + (d1 - 0.5) * 0.30);
-  rockT *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);   // sand wins at the tideline
-  // Faceted stone. A continuous fracture field, however many octaves it has,
-  // renders as combed brushstrokes -- grey fur on the headland. Quantising it
-  // into discrete bedding planes is what turns it into flat-vector rock with
-  // planes you can read the light on.
-  float strata = rdg3(w * 0.0225 + vec2(0.0, elev * 14.0));
-  float joints = rdg3(w * 0.0700 + 7.0);
-  float band   = strata * 5.0 + joints * 0.9 + (d3 - 0.5) * 0.30;
-  float terr   = floor(band) * 0.2;
-  vec3 rockC = ramp(cRock[0], cRock[1], cRock[2], cRock[3],
-                    0.20 + terr * 2.20 + elev * 0.72);
-  // a lit lip along the top of each plane and a dark seam beneath it
-  float bf = fract(band);
-  rockC *= 1.0 + smoothstep(0.18, 0.0, bf) * 0.36 - smoothstep(0.82, 1.0, bf) * 0.32;
+  // A wide, slow edge: the stone does not stop at a line, it goes to rubble
+  // first. `rockT` is the bedrock, `screeT` the apron of broken stone at its
+  // feet, and the two together are what makes the join to soil read.
+  float rkw = rk + (d1 - 0.5) * 0.26 + (d2 - 0.5) * 0.16;
+  float rockT  = smoothstep(0.46, 0.70, rkw);
+  float screeT = smoothstep(0.20, 0.52, rkw) * (1.0 - rockT);
+  rockT  *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);   // sand wins at the tideline
+  screeT *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);
+
+  // Bedded stone. The beds are elevation contours, so they follow the shape of
+  // the land, crowd where it is steep and open out where it is not -- which is
+  // what makes a headland read as strata rather than as grey fur. A slow noise
+  // wanders each boundary so it is geology and not a contour map.
+  // A formation has a strike, and it holds it across a headland before it turns.
+  // Reading the direction off the local gradient instead makes the frame spin
+  // as fast as the elevation noise does, and the stone comes out marbled like
+  // brushed metal. One very slow angle field, turning over about a thousand
+  // pixels, is what gives the spine a direction you can see.
+  float strike = fbm3(w * 0.00062 + 601.0) * 4.2;
+  vec2 td = vec2(cos(strike), sin(strike));
+  vec2 gd = vec2(-td.y, td.x);
+  // A fracture field stretched along the strike, then *quantised into plates*.
+  // The quantisation is the geology: flat slabs with hard edges, roughly
+  // 140 x 45 px, which is a form you can read from across the screen. A
+  // continuous field at any octave count renders as combed grey fur, which is
+  // what this used to be.
+  float broad = fbm3(w * 0.0016 + 149.0);           // ~600 px: which end is dark
+  // Into the strike frame, then warped, so the slabs are laid along the bedding
+  // and their edges are broken rather than ruled.
+  vec2 pw = vec2(dot(w, td), dot(w, gd))
+          + vec2((fbm3(w * 0.0072 + 313.0) - 0.5) * 66.0,
+                 (fbm3(w * 0.0072 +  91.0) - 0.5) * 46.0);
+  vec2 sw = vec2(dot(uSun, td), dot(uSun, gd)) * 7.0;
+  // Slabs are about 68 x 46 px, and a slow field swells and shrinks them so a
+  // headland has coarse ground and fine ground rather than one repeating tile.
+  vec2 cs = vec2(0.0147, 0.0217) * (0.76 + 0.58 * fbm3(w * 0.0011 + 77.0));
+  vec3 ca = cells(pw * cs);
+  vec3 cb = cells((pw + sw) * cs);
+  float tone = hsh(ca.xy + 11.3);                 // this slab's own value
+  float ha   = hsh(ca.xy * 1.7 + 3.0);            // ...and how high it stands
+  float hb   = hsh(cb.xy * 1.7 + 3.0);
+  vec3 rockC = ramp(cStone[0], cStone[1], cStone[2], cStone[3],
+                    0.30 + tone * 1.35 + broad * 0.90 + elev * 0.28);
+  // shadowed stone runs cool and lit stone runs warm: without the temperature
+  // split a grey ramp is just grey, and the sun has nothing to land on
+  rockC *= mix(vec3(0.93, 0.97, 1.06), vec3(1.06, 1.01, 0.93), tone);
+  // Light the step: if the slab seven pixels up-sun stands higher we are in its
+  // shadow, if it stands lower we are the lit lip over it. Only inside the band
+  // where the two samples disagree, so it is an edge and not a gradient.
+  float onEdge = step(0.001, length(cb.xy - ca.xy));
+  float rise = clamp((hb - ha) * 2.6, -1.0, 1.0);
+  rockC *= 1.0 - onEdge * max(rise, 0.0) * 0.44;
+  rockC *= 1.0 + onEdge * max(-rise, 0.0) * 0.24;
+  // and the fissure itself, always there, always thin
+  rockC *= 1.0 - smoothstep(0.050, 0.004, ca.z) * 0.34;
+  // A rare through-going fault, crossing several slabs at once.
+  float jnt = rdg3(w * 0.0062 + vec2(0.0, elev * 26.0) + 7.0);
+  rockC *= 1.0 - smoothstep(0.93, 0.995, jnt) * 0.36;
 
   // sun-side rim and down-sun drop shadow, sampled from the neighbouring field
   vec4 As = Texel(fieldA, fuv(w + uSun * 30.0));
   vec4 Bs = Texel(fieldB, fuv(w + uSun * 30.0));
   float rkN = rockMask(Bs.a, As.r);
-  float rkNs = smoothstep(0.40, 0.60, rkN);
+  float rkNs = smoothstep(0.44, 0.66, rkN);
   float shadow = clamp(rkNs - rockT, 0.0, 1.0);
   float rim    = clamp(rockT - rkNs, 0.0, 1.0);
-  rockC = mix(rockC, cRock[3], smoothstep(0.22, 0.90, rim) * 0.55);
+  rockC = mix(rockC, cStone[3], smoothstep(0.30, 0.95, rim) * 0.45);
+
+  // Lichen: never a fringe on everything. It takes the damp, shaded, low ground
+  // and it takes it in patches, so where it turns up it says something about
+  // the face it is on.
+  float lichF = fbm3(w * 0.0031 + 401.0);
+  float lich = smoothstep(0.56, 0.80, lichF)
+             * smoothstep(0.30, 0.62, moist)
+             * (1.0 - smoothstep(0.62, 0.88, elev));
+  rockC = mix(rockC, mix(rockC, cLichen, 0.62), lich * 0.55);
+
+  // The scree apron: broken stone half-buried in the soil it is sliding over.
+  vec3 screeC = mix(ramp(cStone[0], cStone[1], cStone[2], cStone[3],
+                         0.70 + broad * 0.90 + (d2 - 0.5) * 0.70),
+                    ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.85 + d1 * 1.10),
+                    0.40 - screeT * 0.22);
+  col = mix(col, screeC, screeT * 0.80);
   col = mix(col, rockC, rockT);
   col *= 1.0 - shadow * 0.42 * (1.0 - rockT * 0.5);
 
@@ -306,25 +410,56 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float scarT = smoothstep(0.30, 0.50, scarN) * (1.0 - beachT * 0.75);
   float scarEdge = smoothstep(0.15, 0.33, scarN) * (1.0 - smoothstep(0.29, 0.45, scarN));
   if (scarT > 0.002 || scarEdge > 0.002) {
-    // Dead ground is *ash over cinder*, and carries the whole value structure.
-    // The violet is a stain down in the fissures; it is never the local colour
-    // of the dirt, because poisoned earth is not a sweet.
-    float plates = rdg3(w * 0.0335 + 131.0);        // cracked-earth crazing
-    float coarse = fbm3(w * 0.0074 + 57.0);
+    // Dead ground is *ash over cinder*, and the value structure carries all of
+    // it: pale dust on the plates, near-black down the fissures, the middle of
+    // a scar burnt out and the rim still dusty. The violet is a stain in the
+    // cracks and never the local colour of the dirt -- poisoned earth is a
+    // bruise, not a sweet, and hard magenta veins on brown read as lines drawn
+    // on wallpaper.
+    float deep   = smoothstep(0.30, 0.86, scarN);   // toward the heart of it
+    float form   = fbm3(w * 0.0021 + 211.0);        // ~480 px: the big shapes
+
+    // Cracked ground is *cells*: flat plates of dried ash with a fissure
+    // between them. Two scales, big plates broken down into small ones, warped
+    // so no edge is ruled. Everything about a scar has to read by value and
+    // texture first -- veins painted on a brown field read as wallpaper.
+    vec2 cwp = w + vec2((fbm3(w * 0.0105 +  5.0) - 0.5) * 26.0,
+                        (fbm3(w * 0.0105 + 61.0) - 0.5) * 26.0);
+    vec3 pa  = cells(cwp * 0.0132);                 // ~76 px plates
+    vec3 pas = cells((cwp + uSun * 5.0) * 0.0132);
+    vec3 pb  = cells(cwp * 0.0395);                 // ~25 px crazing
+    float tA = hsh(pa.xy + 5.7);
+    float tB = hsh(pb.xy + 19.3);
+    float crackA = smoothstep(0.080, 0.012, pa.z);
+    float crackB = smoothstep(0.095, 0.022, pb.z);
+    float crack  = clamp(crackA + crackB * 0.55, 0.0, 1.0);
+
     vec3 dead = ramp(cAsh[0], cAsh[1], cAsh[2], cAsh[3],
-                     0.40 + coarse * 1.75 + (d2 - 0.5) * 0.95 + (d3 - 0.5) * 0.35);
-    dead = mix(dead, ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.45 + d2 * 1.2), 0.34);
-    float fis = smoothstep(0.50, 0.80, plates);     // fissures between the plates
-    dead *= 1.0 - fis * 0.50;
-    dead += cAsh[3] * smoothstep(0.85, 0.99, plates) * 0.16;  // dust on the lips
-    float core = smoothstep(0.40, 0.88, scarN);
-    dead = mix(dead, mix(dead, cBlight[1], 0.72), fis * core);
-    dead += cBlight[3] * smoothstep(0.93, 0.999, plates) * core * 0.34;
+                     0.70 + tA * 1.30 + tB * 0.60 + (d2 - 0.5) * 0.40);
+    // a little dead soil under the ash: warm, but never enough to make the
+    // whole scar brown
+    dead = mix(dead, ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.45 + d2 * 0.90), 0.18);
+    // the heart of a scar is burnt out; the rim is still dust
+    dead *= 0.58 + 0.56 * (1.0 - deep) + 0.30 * form;
+    // a plate standing proud of its neighbour catches the light on its up-sun
+    // lip and throws a shadow off the other side
+    float lift = clamp((hsh(pa.xy * 1.7 + 3.0) - hsh(pas.xy * 1.7 + 3.0)) * 2.6, -1.0, 1.0);
+    float pEdge = step(0.001, length(pas.xy - pa.xy));
+    dead *= 1.0 + pEdge * max(lift, 0.0) * 0.26 - pEdge * max(-lift, 0.0) * 0.30;
+    dead *= 1.0 - crack * 0.60;
+    // The stain, and only in the fissures: a cold bruise where the ground has
+    // opened. Poisoned earth is a bruise, not a sweet.
+    dead = mix(dead, mix(dead, cBlight[1], 0.66), crackA * deep);
+    // the one hairline allowed to be hot -- the floor of the deepest fissures
+    // at the heart of the scar, and nowhere else on the island
+    dead += cBlight[3] * smoothstep(0.026, 0.0, pa.z) * deep * deep * 0.24;
     col = mix(col, dead, scarT);
-    // a narrow rot rim: grass going grey-violet a few metres before it dies,
-    // tight enough to read as an edge rather than as a wash
-    vec3 rot = mix(col * 0.70, cBlight[1], 0.45);
-    col = mix(col, rot, scarEdge * 0.85);
+    // The rot rim: living ground going grey a few metres before it dies. Value
+    // and saturation, not hue -- a violet halo round every scar was the tell.
+    vec3 rot = col * 0.60;
+    rot = mix(rot, vec3(dot(rot, vec3(0.299, 0.587, 0.114))), 0.55);
+    rot = mix(rot, cBlight[1], 0.20);
+    col = mix(col, rot, scarEdge * 0.80);
   }
 
   // ---- macro value composition -----------------------------------------
@@ -985,7 +1120,9 @@ function Terrain:_makeShaders()
   sendRamp("cBlight", R.blight)
   sendRamp("cAsh", R.ash)
   sendRamp("cWater", R.water)
+  sendRamp("cStone", R.stone)
   put(g, "cFlora", { R.leaf[2][1], R.leaf[2][2], R.leaf[2][3] })
+  put(g, "cLichen", { P.lichen[1], P.lichen[2], P.lichen[3] })
 
   local nsh = self._normalSh
   put(nsh, "fieldA", self.fieldA)
@@ -1145,177 +1282,279 @@ local function tuft(x, y, hgt, lean, wide, cBase, cTip)
   end
 end
 
+--- An irregular n-gon around (x, y). `sy` squashes it toward the ground plane.
+local function shardPts(x, y, r, ang, n, jitter, sy, rng)
+  local o = {}
+  for k = 0, n - 1 do
+    local a = ang + k / n * U.TAU + (rng:next() - 0.5) * jitter
+    local rr = r * (1 - jitter * 0.35 + rng:next() * jitter * 0.9)
+    o[#o + 1] = x + cos(a) * rr
+    o[#o + 1] = y + sin(a) * rr * sy
+  end
+  return o
+end
+
+--- A block of stone: cast shadow, body, one lit top facet. Three flat shapes,
+--- no gradient -- big enough to have a silhouette, which is the whole point.
+--- A field of these is what reads as broken bedrock; a field of round pebbles
+--- reads as television static, which is what the rock used to be.
+local function stoneBlock(x, y, r, rng, cShade, cBody, cTop)
+  local pts = shardPts(x, y, r, rng:angle(), 5, 0.55, 0.76, rng)
+  local sh = {}
+  for k = 1, #pts, 2 do
+    sh[k]     = pts[k]     - SUN[1] * r * 0.34
+    sh[k + 1] = pts[k + 1] - SUN[2] * r * 0.34
+  end
+  love.graphics.setColor(cShade)
+  love.graphics.polygon("fill", unpack(sh))
+  love.graphics.setColor(cBody)
+  love.graphics.polygon("fill", unpack(pts))
+  local tp = {}
+  for k = 1, #pts, 2 do
+    tp[k]     = x + (pts[k]     - x) * 0.58 + SUN[1] * r * 0.30
+    tp[k + 1] = y + (pts[k + 1] - y) * 0.58 + SUN[2] * r * 0.30
+  end
+  love.graphics.setColor(cTop)
+  love.graphics.polygon("fill", unpack(tp))
+end
+
+--- The same shape at chip scale: no top facet, just a body and its shadow.
+local function stoneChip(x, y, r, rng, cShade, cBody)
+  local pts = shardPts(x, y, r, rng:angle(), 4, 0.7, 0.72, rng)
+  local sh = {}
+  for k = 1, #pts, 2 do
+    sh[k]     = pts[k]     + 0.9
+    sh[k + 1] = pts[k + 1] + 0.8
+  end
+  love.graphics.setColor(cShade)
+  love.graphics.polygon("fill", unpack(sh))
+  love.graphics.setColor(cBody)
+  love.graphics.polygon("fill", unpack(pts))
+end
+
+--- The bake's own rock mask, in Lua, so the marks land where the stone is
+--- rather than merely where the classifier said "rock".
+local function rockMaskAt(slope, elev)
+  return U.saturate(U.smoothstep(0.38, 0.60, slope) + U.smoothstep(0.56, 0.78, elev))
+end
+
+--- Marks for one canvas tile. `part`/`parts` split the work so a slow machine
+--- can breathe between slices; the split is by world block, so every block is
+--- drawn exactly once however the work is divided.
 function Terrain:_scatterMarks(tile, part, parts)
   local R = P.ramp
-  local rng = U.rng(self.seed * 131 + (tile.x * 7 + tile.y) * 977 + part * 31)
-  local cell = self.cell
-  local per = floor(TILE_W * TILE_H / 112 / parts)   -- ~6000 candidates per tile
   local x0, y0 = tile.x, tile.y
+  local bx0 = floor((x0 - MARK_MARGIN) / MARK_BLOCK)
+  local bx1 = floor((x0 + tile.w + MARK_MARGIN) / MARK_BLOCK)
+  local by0 = floor((y0 - MARK_MARGIN) / MARK_BLOCK)
+  local by1 = floor((y0 + tile.h + MARK_MARGIN) / MARK_BLOCK)
+  local nPer = floor(MARK_BLOCK * MARK_BLOCK / MARK_DENS)
+  local sBlk = self.seed % 4093
+  local sClump = self.seed % 307 + 11
+  local sBloom = self.seed % 401 + 60
+  local sField = self.seed % 251 + 5
 
   local grassShadow = R.grass[1]
   local sandShadow  = P.mix(R.sand[1], R.soil[1], 0.35)
+  local stoneShade  = P.alpha(P.darken(R.stone[1], 0.25), 0.26)
+  local screeShade  = P.alpha(P.darken(R.stone[1], 0.15), 0.34)
 
-  for _ = 1, per do
-    local wx = x0 + rng:next() * TILE_W
-    local wy = y0 + rng:next() * TILE_H
-    if wx <= self.w and wy <= self.h then
-      local i = self:_idx(wx, wy)
-      local d = self.sd[i]
-      if d > 18 then
-        local b = self.biome[i]
-        local lx, ly = wx - x0, wy - y0
-        local fert = self.fert[i]
-        local sc = U.saturate(self.scar[i] - self.heal[i])
-        local shade = 0.75 + 0.5 * rng:next()
+  for by = by0, by1 do
+    for bx = bx0, bx1 do
+      if (bx * 3 + by * 5) % parts == part then
+        -- hash the block coordinates before seeding: consecutive MINSTD seeds
+        -- produce near-identical first draws, and adjacent blocks would then
+        -- scatter their marks in visibly matching positions
+        local rng = U.rng(floor(hash2(bx, by, sBlk) * 2147483000) + 1)
+        for _ = 1, nPer do
+  local wx = bx * MARK_BLOCK + rng:next() * MARK_BLOCK
+  local wy = by * MARK_BLOCK + rng:next() * MARK_BLOCK
+  if wx >= 0 and wy >= 0 and wx <= self.w and wy <= self.h then
+    local i = self:_idx(wx, wy)
+    local d = self.sd[i]
+    if d > 18 then
+      local b = self.biome[i]
+      local lx, ly = wx - x0, wy - y0
+      local fert = self.fert[i]
+      local sc = U.saturate(self.scar[i] - self.heal[i])
+      local shade = 0.75 + 0.5 * rng:next()
 
-        if b == B_MEADOW or (b == B_MARSH and rng:chance(0.35)) then
-          -- Uniform scatter reads as television static. Gate the density on a
-          -- slow field so ground cover grows in drifts and leaves bare clearings.
-          local clump = N.fbm(wx * 0.0038 + 811.0, wy * 0.0038 - 411.0, 3,
-                              self.seed % 307 + 11)
-          clump = U.saturate((clump - 0.34) * 2.6)
-          local roll = rng:next()
-          if roll < 0.62 and rng:next() > 0.22 + clump * 0.92 then roll = 0.995 end
-          -- flowers grow in drifts, not evenly sprinkled
-          local bloom = N.fbm(wx * 0.0055 + 301.0, wy * 0.0055 - 77.0, 3, self.seed % 401 + 60)
-          if roll >= 0.62 and roll < 0.80 and bloom < 0.56 then roll = 0.30 end
-          if roll < 0.62 then
-            local hgt = (5 + rng:next() * 8) * (0.55 + fert * 0.75)
-            local base = P.shade(R.grass, 1.0 + rng:next() * 0.7, 0.85)
-            local tip  = P.shade(R.grass, 2.6 + rng:next() * 1.2 + fert, 0.9)
-            love.graphics.setColor(P.alpha(grassShadow, 0.30))
-            love.graphics.ellipse("fill", lx + 1.2, ly + 1.0, 2.4, 1.1, 6)
-            tuft(lx, ly, hgt, (rng:next() - 0.5) * 5, 1.1 + rng:next() * 0.9, base, tip)
-          elseif roll < 0.80 then
-            -- flower speck
-            local pick = rng:next()
-            local fc = (pick < 0.40 and P.love) or (pick < 0.80 and P.warn) or P.accent
-            love.graphics.setColor(P.alpha(P.darken(fc, 0.45), 0.40))
-            love.graphics.circle("fill", lx + 0.7, ly + 0.7, 1.1 + rng:next() * 0.7, 5)
-            love.graphics.setColor(P.alpha(fc, 0.52 + rng:next() * 0.20))
-            love.graphics.circle("fill", lx, ly, 0.9 + rng:next() * 0.9, 5)
-          elseif roll < 0.93 then
-            -- pebble with a sun-side highlight
-            local r = 1.6 + rng:next() * 3.2
-            love.graphics.setColor(P.alpha(P.darken(R.rock[1], 0.2), 0.4))
-            love.graphics.ellipse("fill", lx + 1.4, ly + 1.2, r, r * 0.72, 6)
-            love.graphics.setColor(P.shade(R.rock, 1.4 + rng:next() * 1.2, 0.9))
-            love.graphics.ellipse("fill", lx, ly, r, r * 0.78, 6)
-            love.graphics.setColor(P.alpha(R.rock[4], 0.5))
-            love.graphics.ellipse("fill", lx - r * 0.3, ly - r * 0.3, r * 0.42, r * 0.3, 5)
-          else
-            -- bare earth showing through, low and wide
-            love.graphics.setColor(P.alpha(P.shade(R.soil, 1.4 + rng:next() * 0.8), 0.07 + rng:next() * 0.09))
-            love.graphics.ellipse("fill", lx, ly, 9 + rng:next() * 22, 4 + rng:next() * 9, 10)
+      if b == B_MEADOW or (b == B_MARSH and rng:chance(0.35)) then
+        -- Uniform scatter reads as television static. Gate the density on a
+        -- slow field so ground cover grows in drifts and leaves bare clearings.
+        local clump = N.fbm(wx * 0.0038 + 811.0, wy * 0.0038 - 411.0, 3, sClump)
+        clump = U.saturate((clump - 0.34) * 2.6)
+        local roll = rng:next()
+        if roll < 0.62 and rng:next() > 0.22 + clump * 0.92 then roll = 0.995 end
+        -- flowers grow in drifts, not evenly sprinkled
+        local bloom = N.fbm(wx * 0.0055 + 301.0, wy * 0.0055 - 77.0, 3, sBloom)
+        if roll >= 0.62 and roll < 0.80 and bloom < 0.56 then roll = 0.30 end
+        if roll < 0.62 then
+          local hgt = (5 + rng:next() * 8) * (0.55 + fert * 0.75)
+          local base = P.shade(R.grass, 1.0 + rng:next() * 0.7, 0.85)
+          local tip  = P.shade(R.grass, 2.6 + rng:next() * 1.2 + fert, 0.9)
+          love.graphics.setColor(P.alpha(grassShadow, 0.30))
+          love.graphics.ellipse("fill", lx + 1.2, ly + 1.0, 2.4, 1.1, 6)
+          tuft(lx, ly, hgt, (rng:next() - 0.5) * 5, 1.1 + rng:next() * 0.9, base, tip)
+        elseif roll < 0.80 then
+          -- flower speck
+          local pick = rng:next()
+          local fc = (pick < 0.40 and P.love) or (pick < 0.80 and P.warn) or P.accent
+          love.graphics.setColor(P.alpha(P.darken(fc, 0.45), 0.40))
+          love.graphics.circle("fill", lx + 0.7, ly + 0.7, 1.1 + rng:next() * 0.7, 5)
+          love.graphics.setColor(P.alpha(fc, 0.52 + rng:next() * 0.20))
+          love.graphics.circle("fill", lx, ly, 0.9 + rng:next() * 0.9, 5)
+        elseif roll < 0.93 then
+          -- A field stone. Warm, half-buried: cut from `stone` and pushed
+          -- toward soil, because the cold blue of `rock` on green grass read
+          -- as a scattering of blueberries.
+          local r = 1.8 + rng:next() * 3.4
+          local body = P.mix(P.shade(R.stone, 2.5 + rng:next() * 0.9), R.soil[3], 0.26)
+          love.graphics.setColor(P.alpha(P.darken(R.soil[1], 0.15), 0.30))
+          love.graphics.ellipse("fill", lx + 1.3, ly + 1.1, r, r * 0.7, 6)
+          love.graphics.setColor(body)
+          love.graphics.ellipse("fill", lx, ly, r, r * 0.76, 6)
+          love.graphics.setColor(P.alpha(R.stone[3], 0.32))
+          love.graphics.ellipse("fill", lx - r * 0.28, ly - r * 0.30, r * 0.38, r * 0.26, 5)
+        else
+          -- bare earth showing through, low and wide
+          love.graphics.setColor(P.alpha(P.shade(R.soil, 1.4 + rng:next() * 0.8), 0.07 + rng:next() * 0.09))
+          love.graphics.ellipse("fill", lx, ly, 9 + rng:next() * 22, 4 + rng:next() * 9, 10)
+        end
+
+      elseif b == B_MARSH then
+        if rng:chance(0.55) then
+          local hgt = 9 + rng:next() * 16
+          local lean = (rng:next() - 0.5) * 7
+          love.graphics.setColor(P.shade(R.moss, 1.0 + rng:next() * 0.8, 0.8))
+          love.graphics.polygon("fill", lx - 1, ly, lx + 1, ly, lx + lean, ly - hgt)
+          love.graphics.setColor(P.shade(R.moss, 2.7 + rng:next(), 0.75))
+          love.graphics.polygon("fill", lx + lean, ly - hgt, lx + lean * 0.6, ly - hgt * 0.55,
+                                lx + lean + 0.9, ly - hgt + 1.6)
+        else
+          local r = 3 + rng:next() * 6
+          love.graphics.setColor(P.alpha(P.shade(R.moss, 2.2 + rng:next()), 0.55))
+          love.graphics.ellipse("fill", lx, ly, r, r * 0.7, 8)
+          love.graphics.setColor(P.alpha(R.moss[4], 0.3))
+          love.graphics.ellipse("fill", lx - r * 0.2, ly - r * 0.25, r * 0.45, r * 0.3, 6)
+        end
+
+      elseif b == B_BEACH then
+        local roll = rng:next()
+        if roll < 0.45 then
+          local r = 1.2 + rng:next() * 2.6
+          love.graphics.setColor(P.alpha(sandShadow, 0.32))
+          love.graphics.ellipse("fill", lx + 1.0, ly + 0.9, r, r * 0.7, 6)
+          love.graphics.setColor(P.shade(R.sand, 1.2 + rng:next() * 1.6, 0.9))
+          love.graphics.ellipse("fill", lx, ly, r, r * 0.75, 6)
+        elseif roll < 0.62 then
+          -- driftwood / shell fleck
+          love.graphics.setColor(P.alpha(P.shade(R.bark, 1.6 + rng:next()), 0.55))
+          local a = rng:angle()
+          local l = 3 + rng:next() * 9
+          love.graphics.setLineWidth(1)
+          love.graphics.line(lx, ly, lx + cos(a) * l, ly + sin(a) * l)
+        elseif d < 62 then
+          -- Ripple ridges in the sand. Long straight one-pixel lines read as
+          -- scratches on the lens, so these are short, bowed three-point
+          -- ridges that only exist inside the tide band where they belong.
+          local gx = self.gradx[i] or 0
+          local gy = self.grady[i] or 0
+          local a = atan2(gy, gx) + 1.5707963
+          local l = 4 + rng:next() * 9
+          local ca_, sa_ = cos(a), sin(a)
+          local bow = (rng:next() - 0.5) * l * 0.45
+          love.graphics.setColor(P.alpha(R.sand[4], 0.07 + rng:next() * 0.07))
+          love.graphics.setLineWidth(1)
+          love.graphics.line(lx - ca_ * l, ly - sa_ * l,
+                             lx - sa_ * bow, ly + ca_ * bow,
+                             lx + ca_ * l, ly + sa_ * l)
+        end
+
+      elseif b == B_ROCK then
+        -- Nothing roots in bare stone, so the spines are the one clearing the
+        -- forest can never close and they have to look deliberate. The bake
+        -- carries the bedding; these marks are here for scale and for the foot
+        -- of the face, and most candidates deliberately draw nothing at all.
+        local rk = rockMaskAt(self.slope[i], self.elev[i])
+        local foot = U.saturate((0.88 - rk) * 2.4)      -- 1 at the apron
+        local field = U.saturate((N.fbm(wx * 0.0026 + 517.0, wy * 0.0026 - 233.0,
+                                        2, sField) - 0.32) * 2.6)
+        local roll = rng:next()
+        if roll < 0.050 * field * (1 - foot * 0.60) then
+          -- broken bedrock, in fields rather than evenly over the whole spine
+          local r = 6 + rng:next() * 11
+          stoneBlock(lx, ly, r, rng, stoneShade,
+                     P.shade(R.stone, 1.7 + rng:next() * 0.7),
+                     P.shade(R.stone, 2.3 + rng:next() * 0.6))
+        elseif roll < 0.050 + 0.30 * foot then
+          -- scree, collecting where the face runs out into soil
+          local r = 1.4 + rng:next() * 3.2
+          stoneChip(lx, ly, r, rng, screeShade,
+                    P.mix(P.shade(R.stone, 1.4 + rng:next() * 1.3), R.soil[1], 0.22))
+        elseif roll < 0.500 then
+          -- bare face: the bake already said everything there is to say
+        elseif roll < 0.545 then
+          -- a fracture lying along the bedding, with a lit lip on the sun side
+          local gx = self.gradx[i] or 0
+          local gy = self.grady[i] or 0
+          local a = atan2(gy, gx) + 1.5707963 + (rng:next() - 0.5) * 0.40
+          local l = (9 + rng:next() * 20) * 0.5
+          local ca_, sa_ = cos(a), sin(a)
+          local bow = (rng:next() - 0.5) * l * 0.5
+          love.graphics.setLineWidth(1)
+          love.graphics.setColor(P.alpha(R.stone[3], 0.16))
+          love.graphics.line(lx - ca_ * l + SUN[1], ly - sa_ * l + SUN[2],
+                             lx - sa_ * bow + SUN[1], ly + ca_ * bow + SUN[2],
+                             lx + ca_ * l + SUN[1], ly + sa_ * l + SUN[2])
+          love.graphics.setColor(P.alpha(P.darken(R.stone[1], 0.25), 0.34))
+          love.graphics.line(lx - ca_ * l, ly - sa_ * l,
+                             lx - sa_ * bow, ly + ca_ * bow,
+                             lx + ca_ * l, ly + sa_ * l)
+        elseif roll < 0.590 then
+          -- Lichen, on the same slow field the bake uses, so a patch of marks
+          -- lands on a patch of colour instead of fringing the whole headland
+          -- with mint. It wants damp, shaded, low stone and nowhere else.
+          local lf = N.fbm(wx * 0.0031 + 401.0, wy * 0.0031 + 401.0, 3, 0)
+          local lo = U.saturate((lf - 0.56) / 0.24)
+                   * U.saturate((self.moist[i] - 0.30) / 0.32)
+                   * (1 - U.smoothstep(0.62, 0.88, self.elev[i]))
+          if lo > 0.20 then
+            local r = 3 + rng:next() * 7
+            love.graphics.setColor(P.alpha(P.lichen, (0.09 + rng:next() * 0.09) * lo))
+            love.graphics.polygon("fill",
+              unpack(shardPts(lx, ly, r, rng:angle(), 7, 0.75, 0.85, rng)))
           end
+        end
 
-        elseif b == B_MARSH then
-          if rng:chance(0.55) then
-            local hgt = 9 + rng:next() * 16
-            local lean = (rng:next() - 0.5) * 7
-            love.graphics.setColor(P.shade(R.moss, 1.0 + rng:next() * 0.8, 0.8))
-            love.graphics.polygon("fill", lx - 1, ly, lx + 1, ly, lx + lean, ly - hgt)
-            love.graphics.setColor(P.shade(R.moss, 2.7 + rng:next(), 0.75))
-            love.graphics.polygon("fill", lx + lean, ly - hgt, lx + lean * 0.6, ly - hgt * 0.55,
-                                  lx + lean + 0.9, ly - hgt + 1.6)
-          else
-            local r = 3 + rng:next() * 6
-            love.graphics.setColor(P.alpha(P.shade(R.moss, 2.2 + rng:next()), 0.55))
-            love.graphics.ellipse("fill", lx, ly, r, r * 0.7, 8)
-            love.graphics.setColor(P.alpha(R.moss[4], 0.3))
-            love.graphics.ellipse("fill", lx - r * 0.2, ly - r * 0.25, r * 0.45, r * 0.3, 6)
-          end
-
-        elseif b == B_BEACH then
-          local roll = rng:next()
-          if roll < 0.45 then
-            local r = 1.2 + rng:next() * 2.6
-            love.graphics.setColor(P.alpha(sandShadow, 0.32))
-            love.graphics.ellipse("fill", lx + 1.0, ly + 0.9, r, r * 0.7, 6)
-            love.graphics.setColor(P.shade(R.sand, 1.2 + rng:next() * 1.6, 0.9))
-            love.graphics.ellipse("fill", lx, ly, r, r * 0.75, 6)
-          elseif roll < 0.62 then
-            -- driftwood / shell fleck
-            love.graphics.setColor(P.alpha(P.shade(R.bark, 1.6 + rng:next()), 0.55))
-            local a = rng:angle()
-            local l = 3 + rng:next() * 9
-            love.graphics.setLineWidth(1)
-            love.graphics.line(lx, ly, lx + cos(a) * l, ly + sin(a) * l)
-          elseif d < 62 then
-            -- Ripple ridges in the sand. Long straight one-pixel lines read as
-            -- scratches on the lens, so these are short, bowed three-point
-            -- ridges that only exist inside the tide band where they belong.
-            local gx = self.gradx[i] or 0
-            local gy = self.grady[i] or 0
-            local a = atan2(gy, gx) + 1.5707963
-            local l = 4 + rng:next() * 9
-            local ca_, sa_ = cos(a), sin(a)
-            local bow = (rng:next() - 0.5) * l * 0.45
-            love.graphics.setColor(P.alpha(R.sand[4], 0.07 + rng:next() * 0.07))
-            love.graphics.setLineWidth(1)
-            love.graphics.line(lx - ca_ * l, ly - sa_ * l,
-                               lx - sa_ * bow, ly + ca_ * bow,
-                               lx + ca_ * l, ly + sa_ * l)
-          end
-
-        elseif b == B_ROCK then
-          if rng:chance(0.55) then
-            local r = 2 + rng:next() * 6
-            local n = 5
-            local pts = {}
-            local a0 = rng:angle()
-            for k = 0, n - 1 do
-              local a = a0 + k / n * U.TAU
-              local rr = r * (0.65 + rng:next() * 0.6)
-              pts[#pts + 1] = lx + cos(a) * rr
-              pts[#pts + 1] = ly + sin(a) * rr * 0.8
-            end
-            love.graphics.setColor(P.alpha(R.rock[1], 0.45))
-            love.graphics.polygon("fill", (function()
-              local o = {}
-              for k = 1, #pts, 2 do o[k] = pts[k] + 1.6 o[k + 1] = pts[k + 1] + 1.4 end
-              return unpack(o)
-            end)())
-            love.graphics.setColor(P.shade(R.rock, 1.5 + rng:next() * 1.4, 0.95))
-            love.graphics.polygon("fill", unpack(pts))
-            love.graphics.setColor(P.alpha(R.rock[4], 0.30))
-            love.graphics.polygon("fill", lx - r * 0.2, ly - r * 0.5,
-                                  lx + r * 0.5, ly - r * 0.2, lx - r * 0.4, ly)
-          else
-            -- lichen
-            love.graphics.setColor(P.alpha(P.shade(R.moss, 2.2 + rng:next()), 0.22))
-            love.graphics.circle("fill", lx, ly, 2 + rng:next() * 5, 7)
-          end
-
-        elseif b == B_SCAR and sc > 0.2 then
-          -- Two crossed strokes per mark read as a scattering of little letters,
-          -- not as debris. One stroke, combed by a slow flow field so the litter
-          -- lies the way the wind left it, reads as a dead place instead.
-          local roll = rng:next()
-          if roll < 0.30 then
-            local flow = N.fbm(wx * 0.0021 + 17.0, wy * 0.0021 - 9.0, 2, 71) * U.TAU
-            local a = flow + rng:gauss() * 0.34
-            local l = 5 + rng:next() * 11
-            local dx, dy = cos(a) * l, sin(a) * l * 0.7
-            love.graphics.setLineWidth(1)
-            love.graphics.setColor(P.alpha(P.darken(R.ash[1], 0.25), 0.34 * sc))
-            love.graphics.line(lx - dx * 0.5 + 1, ly - dy * 0.5 + 1,
-                               lx + dx * 0.5 + 1, ly + dy * 0.5 + 1)
-            love.graphics.setColor(P.alpha(P.shade(R.ash, 2.6 + rng:next() * 1.2), 0.42 * sc))
-            love.graphics.line(lx - dx * 0.5, ly - dy * 0.5, lx + dx * 0.5, ly + dy * 0.5)
-          elseif roll < 0.72 then
-            -- soot: a soft dark fleck that breaks up the ash without adding hue
-            love.graphics.setColor(P.alpha(R.ash[1], 0.13 * sc * shade))
-            love.graphics.ellipse("fill", lx, ly, 2 + rng:next() * 7, 1.4 + rng:next() * 4, 8)
-          elseif roll < 0.94 then
-            -- pale grit catching the light on the raised lips of the crazing
-            love.graphics.setColor(P.alpha(R.ash[3], 0.20 * sc * shade))
-            love.graphics.circle("fill", lx, ly, 0.8 + rng:next() * 1.9, 5)
-          else
-            -- the only violet allowed at mark scale: a rare live spore bead
-            love.graphics.setColor(P.alpha(R.blight[3], 0.30 * sc * shade))
-            love.graphics.circle("fill", lx, ly, 0.9 + rng:next() * 1.4, 5)
-          end
+      elseif b == B_SCAR and sc > 0.2 then
+        -- Two crossed strokes per mark read as a scattering of little letters,
+        -- not as debris. One stroke, combed by a slow flow field so the litter
+        -- lies the way the wind left it, reads as a dead place instead.
+        local roll = rng:next()
+        if roll < 0.24 then
+          local flow = N.fbm(wx * 0.0021 + 17.0, wy * 0.0021 - 9.0, 2, 71) * U.TAU
+          local a = flow + rng:gauss() * 0.34
+          local l = 4 + rng:next() * 9
+          local dx, dy = cos(a) * l, sin(a) * l * 0.7
+          love.graphics.setLineWidth(1)
+          love.graphics.setColor(P.alpha(P.darken(R.ash[1], 0.25), 0.30 * sc))
+          love.graphics.line(lx - dx * 0.5 + 1, ly - dy * 0.5 + 1,
+                             lx + dx * 0.5 + 1, ly + dy * 0.5 + 1)
+          love.graphics.setColor(P.alpha(P.shade(R.ash, 2.1 + rng:next() * 0.9), 0.26 * sc))
+          love.graphics.line(lx - dx * 0.5, ly - dy * 0.5, lx + dx * 0.5, ly + dy * 0.5)
+        elseif roll < 0.72 then
+          -- soot: a soft dark fleck that breaks up the ash without adding hue
+          love.graphics.setColor(P.alpha(R.ash[1], 0.15 * sc * shade))
+          love.graphics.ellipse("fill", lx, ly, 2 + rng:next() * 7, 1.4 + rng:next() * 4, 8)
+        else
+          -- pale grit catching the light on the raised lips of the crazing
+          love.graphics.setColor(P.alpha(R.ash[3], 0.16 * sc * shade))
+          love.graphics.circle("fill", lx, ly, 0.8 + rng:next() * 1.7, 5)
+        end
+      end
+    end
+  end
         end
       end
     end

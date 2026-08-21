@@ -34,6 +34,13 @@ local MAX_PER_SOUND  = 6       -- clones kept per sound; beyond this we steal
 -- the score vanished exactly when it was carrying the most weight.
 local MUSIC_RESERVE  = 11
 local SFX_CEILING    = MAX_VOICES - MUSIC_RESERVE
+-- ...and the reciprocal. MUSIC_RESERVE is only a floor: nothing stopped the
+-- score from taking thirty of the forty voices and starving the sfx side in the
+-- other direction. At the boss the sequencer runs six layers with 2.5 s pads and
+-- 2.2 s choir over a 2.3 s bar, so a dozen voices are always in flight -- and
+-- the finale is exactly the moment the game needs headroom for forty bots
+-- arriving. The score gets a generous ceiling and steals from itself past it.
+local MUSIC_CEILING  = 22
 local NEAR, FAR      = 260, 1500
 local PAN_WIDTH      = 820     -- world units mapped to full pan
 
@@ -126,6 +133,35 @@ local function glassModes(hz)
   return { { hz, 44, 1.0 }, { hz * 2.02, 36, 0.46 }, { hz * 3.83, 30, 0.26 },
            { hz * 6.41, 22, 0.13 } }
 end
+
+--   COLD   -- the rig. Harvester Prime is drawn as a third material on purpose
+--             (see the note in entities/boss.lua: the bots are warm brass, the
+--             Blight is a bruise, the rig is cold metal) and it needs to *sound*
+--             like a third material or the climax is one more purple monster.
+--             Big welded plate: stretched, low-Q, deliberately non-integer
+--             partials with none of the bots' clean bar ratios and none of the
+--             Blight's fluid detune. Wide and flat, the way a ship's hull rings.
+local function coldModes(hz, q, spread)
+  q = q or 1
+  spread = spread or 1
+  return { { hz, 7 * q, 1.0 },
+           { hz * (1 + 0.427 * spread), 9 * q, 0.66 },
+           { hz * (1 + 1.196 * spread), 8 * q, 0.42 },
+           { hz * (1 + 2.083 * spread), 6 * q, 0.24 },
+           { hz * (1 + 3.771 * spread), 5 * q, 0.11 } }
+end
+
+-- The rig is tuned. The boss cue is Phrygian dominant with its root a semitone
+-- above C (engine/music.lua, STATES.boss), so the machine holds that tonic as a
+-- pedal and beats its intake whine against the flat second -- the interval the
+-- whole cue is built on, sounded by the antagonist itself. 208/3 Hz rather than
+-- a true C#2 (69.296) so that the pedal and every harmonic of it complete a
+-- whole number of cycles in the 3-second loop body, which is what makes the
+-- crossfade splice inaudible: 2.5 s of loop body is 173 cycles of the pedal and a
+-- whole number of every harmonic of it. Two cents flat of a true C#2; nobody
+-- will write in.
+local RIG_HZ = 173 / 2.5
+local TAU = 6.283185307179586
 
 ------------------------------------------------------------------- the bank
 -- PLANT -- the star of the show. The player hears this four hundred times a
@@ -394,21 +430,53 @@ def("bot_boot", {
 -- short contour, resonated through the speaker's own chassis so a field of bots
 -- murmurs in one material. Hard-limited to four at once: forty bots talking over
 -- each other is not charm, it is noise.
+--
+-- The eight old variants all said the same *shape* of thing -- one wobble, one
+-- monotonic slide, a coin toss for its direction -- so a field of bots sounded
+-- like one bot with eight throats. There are now three contours, three takes
+-- each: a STATEMENT that falls and settles, a QUESTION that lifts at the end and
+-- is loudest there, and a CHUCKLE of three short bumps with air between them.
+-- Speech is rhythm and cadence before it is timbre; nothing else in the cue
+-- needed changing.
+local CHAT_SHAPES = { "statement", "question", "chuckle" }
 def("bot_chatter", {
-  gain = 0.3, variants = 8, pitchVar = 0.11, gainVar = 0.22, limit = 4, minGap = 0.07,
+  gain = 0.3, variants = 9, pitchVar = 0.11, gainVar = 0.22, limit = 4, minGap = 0.07,
   build = function(v, n, r)
+    local shape = CHAT_SHAPES[(v - 1) % 3 + 1]
     local base = Synth.noteToHz(58 + r:int(0, 12))
     local wob = r:range(9, 17)
     local dep = r:range(0.05, 0.14)
     local seg = r:range(0.08, 0.16)
-    local up = r:chance(0.5) and 1 or -1
     local chassis = r:range(600, 1500)
-    return { dur = seg * 3 + 0.24, layers = {
+    local dur, bend, env2
+    local pts
+    if shape == "question" then
+      -- lifts, and leans on the last syllable
+      dur  = seg * 3 + 0.24
+      bend = function(t) return 1 + 0.1 * t + 0.34 * (t / (seg * 3)) ^ 2.2 end
+      pts  = { { 0, 0 }, { 0.02, 0.72 }, { seg, 0.58 }, { seg * 1.9, 0.8 },
+               { seg * 2.7, 1 }, { seg * 3, 0 } }
+    elseif shape == "chuckle" then
+      -- three bumps with real gaps: the gaps are the joke
+      dur  = seg * 3.1 + 0.24
+      bend = function(t) return 1 + 0.06 * math.sin(t * 21) - 0.1 * t end
+      local g = seg * 0.34
+      pts  = { { 0, 0 }, { 0.014, 1 }, { g, 0.05 }, { seg, 0.06 },
+               { seg + 0.014, 0.88 }, { seg + g, 0.05 }, { seg * 2, 0.06 },
+               { seg * 2 + 0.014, 0.7 }, { seg * 2 + g, 0.04 }, { seg * 3, 0 } }
+    else
+      -- falls away and settles: the default register of a machine that is busy
+      dur  = seg * 3 + 0.24
+      bend = function(t) return 1 - 0.16 * (t / (seg * 3)) ^ 1.4 end
+      pts  = { { 0, 0 }, { 0.02, 1 }, { seg, 0.82 }, { seg * 2, 0.62 },
+               { seg * 2.6, 0.3 }, { seg * 3, 0 } }
+    end
+    return { dur = dur, layers = {
       { osc = "square", duty = 0.34,
-        freq = function(t) return base * (1 + dep * math.sin(t * wob)) * (1 + up * 0.18 * t) end,
-        env = { type = "bp", points = { { 0, 0 }, { 0.02, 1 }, { seg, 0.8 }, { seg * 2, 0.9 },
-                                        { seg * 3, 0 } } }, amp = 0.3 },
-      { osc = "sine", freq = function(t) return base * 2 * (1 + dep * math.sin(t * wob)) end,
+        freq = function(t) return base * (1 + dep * math.sin(t * wob)) * bend(t) end,
+        env = { type = "bp", points = pts }, amp = 0.3 },
+      { osc = "sine",
+        freq = function(t) return base * 2 * (1 + dep * math.sin(t * wob)) * bend(t) end,
         env = { type = "bp", points = { { 0, 0 }, { 0.03, 0.5 }, { seg * 3, 0 } } }, amp = 0.12 },
     }, fx = {
       { "svf", type = "bp", cutoff = r:range(700, 1500), q = 2.4 },
@@ -707,11 +775,17 @@ def("enemy_step", {
       { osc = "noise", env = { type = "perc", a = 0.001, d = r:range(0.03, 0.09), curve = 3 },
         amp = 0.4 },
       { osc = "brown", env = { type = "perc", a = 0.002, d = r:range(0.05, 0.11), curve = 2.4 },
-        amp = 0.35 },
-      { osc = "sine", freq = { from = body, to = 60, tau = 0.02 },
-        env = { type = "perc", a = 0.001, d = 0.07, curve = 3 }, amp = 0.4 },
+        amp = 0.2 },
+      { osc = "sine", freq = { from = body, to = 108, tau = 0.02 },
+        env = { type = "perc", a = 0.001, d = 0.07, curve = 3 }, amp = 0.32 },
     }, fx = { { "resonate", mix = 0.5, gain = 1.4, modes = wetModes(r:range(240, 430)) },
-              { "svf", type = "lp", cutoff = r:range(900, 1800), q = 1.3 } },
+              { "svf", type = "lp", cutoff = r:range(900, 1800), q = 1.3 },
+              -- 93% of this sound used to sit under 80 Hz: a footstep you could
+              -- only hear on a subwoofer, played four hundred times a night. The
+              -- brown noise and a 60 Hz landing point did it. Loudness matching
+              -- then gives back, in the band a laptop reproduces, everything the
+              -- high-pass takes away below it.
+              { "svf", type = "hp", cutoff = 82, q = 0.7 } },
       loudness = 0.1, loudWin = 0.1 }
   end,
 })
@@ -743,11 +817,11 @@ def("enemy_die", {
     local form = r:range(260, 520)
     local pop = r:range(0.1, 0.18)
     return { dur = 0.95, layers = {
-      { osc = "saw", freq = { from = r:range(260, 360), to = 40, tau = r:range(0.09, 0.16) },
+      { osc = "saw", freq = { from = r:range(260, 360), to = 96, tau = r:range(0.09, 0.16) },
         env = { type = "perc", a = 0.001, d = 0.35, curve = 2 }, amp = 0.42 },
-      { osc = "noise", env = { type = "perc", a = 0.001, d = 0.3, curve = 2.5 }, amp = 0.35 },
+      { osc = "noise", env = { type = "perc", a = 0.001, d = 0.3, curve = 2.5 }, amp = 0.4 },
       { osc = "brown", env = { type = "bp", points = { { 0, 0 }, { pop, 0.6 }, { 0.7, 0 } } },
-        amp = 0.4 },
+        amp = 0.22 },
       -- the burst: a wet pop, not a chip-tune explosion
       { osc = "sub", at = 0, amp = 0.8, spec = { dur = 0.4, layers = {
         { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.02, curve = 3 }, amp = 1 } },
@@ -755,7 +829,13 @@ def("enemy_die", {
         normalize = 0.85, trim = false } },
     }, fx = {
       { "resonate", mix = 0.34, gain = 1.3, modes = wetModes(form) },
-      { "svf", type = "lp", cutoff = { from = 4500, to = 400, tau = 0.25 }, q = 1.1 },
+      { "svf", type = "lp", cutoff = { from = 4500, to = 900, tau = 0.25 }, q = 1.1 },
+      -- The Blight is wet and low; it is not *only* wet and low. This measured
+      -- 95% of its energy under 80 Hz -- brown noise plus a saw gliding to 40 --
+      -- so the most frequently heard sound in the game was, on every speaker the
+      -- game will actually ship to, a soft click. The family character lives in
+      -- the wet resonator, not in the sub.
+      { "svf", type = "hp", cutoff = 88, q = 0.7 },
       { "softclip", drive = 1.7, mix = 0.5 },
       { "reverb", mix = 0.2 },
     }, loudness = 0.16, loudWin = 0.25 }
@@ -796,7 +876,7 @@ def("tree_fall", {
     return { dur = 2.3, layers = {
       { osc = "noise", env = { type = "bp", points = { { 0, 0 }, { 0.06, 0.55 }, { 0.5, 0.3 },
                                                        { 0.75, 0.1 } } }, amp = 0.4 },
-      { osc = "saw", freq = { from = 190 * r:range(0.9, 1.1), to = 46, tau = 0.35 },
+      { osc = "saw", freq = { from = 190 * r:range(0.9, 1.1), to = 82, tau = 0.35 },
         env = { type = "bp", points = { { 0, 0 }, { 0.03, 0.5 }, { 0.8, 0.1 }, { 1.0, 0 } } },
         amp = 0.22 },
       { osc = "sub", at = hit, amp = 1, spec = { dur = 1.2, layers = {
@@ -804,12 +884,17 @@ def("tree_fall", {
             env = { type = "perc", a = 0.001, d = 0.5, curve = 2 }, amp = 0.9 },
           { osc = "noise", env = { type = "perc", a = 0.002, d = 0.25, curve = 2.5 }, amp = 0.5 },
         }, fx = { { "svf", type = "lp", cutoff = 900, q = 1 } }, normalize = 0.9, trim = false } },
-      { osc = "sub", at = hit + 0.18, amp = 0.5, spec = { dur = 1.1, layers = {
+      { osc = "sub", at = hit + 0.18, amp = 0.66, spec = { dur = 1.1, layers = {
           { osc = "pink", env = { type = "bp", points = { { 0, 0.6 }, { 0.5, 0.2 }, { 1.0, 0 } } },
             amp = 0.4 } },
         fx = { { "svf", type = "bp", cutoff = 2600, q = 1.2 } }, normalize = 0.7, trim = false } },
     }, fx = {
-      { "svf", type = "lp", cutoff = { from = 3600, to = 1400, tau = 1.0 }, q = 0.8 },
+      { "svf", type = "lp", cutoff = { from = 3600, to = 1900, tau = 1.0 }, q = 0.8 },
+      -- The loss sound. 90% of it lived under 80 Hz, which meant the moment the
+      -- player is supposed to *feel* was the one moment a laptop could not
+      -- reproduce. The weight is still there; it is now standing on a body you
+      -- can hear rather than one you can only feel.
+      { "svf", type = "hp", cutoff = 58, q = 0.7 },
       { "reverb", mix = 0.26, room = 0.8, damp = 0.4 },
     }, loudness = 0.2, loudWin = 0.3 }
   end,
@@ -895,16 +980,21 @@ def("rift_close", {
     return { dur = 1.7, layers = {
       { osc = "noise", env = { type = "bp", points = { { 0, 0.8 }, { 0.35, 0.5 }, { 0.6, 0 } } },
         amp = 0.4 },
-      { osc = "saw", freq = { from = 220 * r:range(0.9, 1.1), to = 30, tau = 0.3 },
+      { osc = "saw", freq = { from = 260 * r:range(0.9, 1.1), to = 132, tau = 0.3 },
         env = { type = "bp", points = { { 0, 0.6 }, { 0.5, 0.2 }, { 0.7, 0 } } }, amp = 0.3 },
       { osc = "sub", at = at, amp = 1, spec = { dur = 1.0, layers = {
-        { osc = "sine", freq = { from = thud, to = 34, tau = 0.06 },
-          env = { type = "perc", a = 0.001, d = 0.45, curve = 2 }, amp = 0.9 },
+        { osc = "sine", freq = { from = thud * 1.7, to = 112, tau = 0.06 },
+          env = { type = "perc", a = 0.001, d = 0.4, curve = 2.2 }, amp = 0.9 },
         { osc = "noise", env = { type = "perc", a = 0.001, d = 0.09, curve = 4 }, amp = 0.4 },
       }, normalize = 0.9, trim = false } },
     }, fx = {
       { "resonate", mix = 0.24, gain = 1.2, modes = wetModes(300) },
-      { "svf", type = "lp", cutoff = { from = 3600, to = 600, tau = 0.4 }, q = 1 },
+      { "svf", type = "lp", cutoff = { from = 3600, to = 1100, tau = 0.4 }, q = 1 },
+      -- 98% under 80 Hz: closing a Rift Maw is a real accomplishment and it made
+      -- almost no sound at all on anything but studio monitors. The saw was
+      -- gliding down to 74 Hz and sitting there for half a second, which is the
+      -- whole cue landing in the one octave nothing this game ships to can play.
+      { "svf", type = "hp", cutoff = 96, q = 0.7 },
       { "reverb", mix = 0.28, room = 0.8 },
     }, loudness = 0.19, loudWin = 0.3 }
   end,
@@ -1024,18 +1114,28 @@ def("boss_step", {
   build = function(v, n, r)
     local thud = 92 * r:range(0.92, 1.1)
     return { dur = 1.5, layers = {
-      { osc = "sine", freq = { from = thud, to = 28, tau = 0.06 },
-        env = { type = "perc", a = 0.001, d = r:range(0.5, 0.68), curve = 1.8 }, amp = 0.95 },
+      { osc = "sine", freq = { from = thud, to = 56, tau = 0.06 },
+        env = { type = "perc", a = 0.001, d = r:range(0.5, 0.68), curve = 1.9 }, amp = 0.82 },
       { osc = "noise", env = { type = "perc", a = 0.0005, d = 0.12, curve = 3 }, amp = 0.4 },
       { osc = "tri", freq = 62 * r:range(0.92, 1.09),
         env = { type = "perc", a = 0.002, d = 0.3, curve = 2 }, amp = 0.25 },
       -- debris: the island's own gravel, thrown up and coming back down
-      { osc = "sub", at = 0.02, amp = 0.45, spec = { dur = 0.95, layers = {
+      { osc = "sub", at = 0.02, amp = 0.55, spec = { dur = 0.95, layers = {
         { osc = "pink", env = { type = "bp", points = { { 0, 0.5 }, { 0.4, 0.15 }, { 0.9, 0 } } },
           amp = 0.4 } }, fx = { { "svf", type = "bp", cutoff = r:range(2600, 3800), q = 1.4 } },
         normalize = 0.6, trim = false } },
+      -- the leg itself: the rig's own plate taking the load, in the band the
+      -- rest of the cue had nothing in
+      { osc = "sub", at = 0, amp = 0.45, spec = { dur = 1.0, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.004, curve = 3 }, amp = 1 } },
+        fx = { { "resonate", mix = 0.9, gain = 2.2,
+                 modes = coldModes(230 * r:range(0.9, 1.15), 0.7, 1.1) } },
+        normalize = 0.85, trim = false } },
     }, fx = {
-      { "svf", type = "lp", cutoff = { from = 2600, to = 500, tau = 0.3 }, q = 1 },
+      { "svf", type = "lp", cutoff = { from = 2600, to = 860, tau = 0.3 }, q = 1 },
+      -- 91% of the antagonist's footstep was under 80 Hz. It walks for ninety
+      -- seconds; it needs to be a footstep on a laptop, not a pressure change.
+      { "svf", type = "hp", cutoff = 46, q = 0.7 },
       { "softclip", drive = 2, mix = 0.6 },
       { "reverb", mix = 0.24, room = 0.85 },
     }, loudness = 0.22, loudWin = 0.25 }
@@ -1086,6 +1186,453 @@ def("boss_beam", {
       { "softclip", drive = 2, mix = 0.6 },
       { "reverb", mix = 0.3, room = 0.86 },
     }, loudness = 0.2, loudWin = 0.35 }
+  end,
+})
+
+-- THE RIG ------------------------------------------------------------------
+-- A hundred feet of extraction machine stands on the forest for ninety seconds
+-- and, until now, it made a noise when you hit it and was otherwise silent. A
+-- thing that size is not a sequence of events, it is a *presence*: it has to be
+-- under everything, it has to get bigger as you walk toward it, and it has to
+-- change when the core opens. Three pieces do that -- an intake bed, a core
+-- layer that fades up over it, and structural groans fired on a timer so the
+-- bed moves without giving away that it is a loop.
+
+-- RIG_INTAKE -- the column of taken air, and the machine holding it up.
+-- Everything is periodic in the 3.0 s loop body (dur 3.6 minus a 0.6 s splice)
+-- so the crossfade joins matching phase rather than smearing two different ones,
+-- which is the difference between a drone and a drone that breathes once a bar.
+def("rig_intake", {
+  gain = 0.8, variants = 1, loop = true, rate = 11025,
+  pitchVar = 0, gainVar = 0, limit = 1,
+  build = function()
+    local f = RIG_HZ
+    return { dur = 3.0, layers = {
+      -- the pedal: the rig is standing on the island and the island can feel it
+      { osc = "sine", freq = f,     amp = 0.30 },
+      { osc = "sine", freq = f * 2, amp = 0.11 },
+      { osc = "tri",  freq = f * 3, amp = 0.045 },
+      -- the intake. Broadband, dragged through a band-pass that walks up and
+      -- down twice a loop, so the column reads as *moving air* and not as hiss.
+      { osc = "sub", at = 0, amp = 1.0, spec = { dur = 3.0, layers = {
+        { osc = "brown", amp = 0.55 },
+        { osc = "pink",  amp = 0.30 },
+      }, fx = {
+        { "svf", type = "bp",
+          cutoff = function(t) return 340 + 210 * math.sin(t * 0.8 * TAU) end, q = 1.1 },
+        { "resonate", mix = 0.34, gain = 1.3, modes = coldModes(f * 3, 1.0, 1) },
+        { "svf", type = "lp", cutoff = 3200, q = 0.7 },
+      }, normalize = 0.86, trim = false } },
+      -- the whine, two tones a semitone apart at 554 Hz where every speaker
+      -- lives: the flat second the boss cue leans on, held by the machine.
+      -- Both are exact multiples of the loop body's own fundamental (1/2.5 Hz)
+      -- and carry no detune, because a few cents of offset is a few cents of
+      -- phase drift by the time the splice arrives, and the crossfade then
+      -- cancels part of the tone -- a drone that dips once every loop, which is
+      -- exactly the tell this is built to avoid.
+      { osc = "sub", at = 0, amp = 0.52, spec = { dur = 3.0, layers = {
+        { osc = "saw", freq = 1384 / 2.5, amp = 0.5 },      -- 553.6, = f * 8
+        { osc = "saw", freq = 1466 / 2.5, amp = 0.44 },      -- 586.4, a semitone up
+        { osc = "square", duty = 0.32, freq = f * 4, amp = 0.16 },
+      }, fx = {
+        { "svf", type = "bp", cutoff = 640, q = 1.5 },
+        { "svf", type = "lp", cutoff = 2800, q = 0.8 },
+      }, normalize = 0.72, trim = false } },
+    }, fx = {
+      { "svf", type = "hp", cutoff = 44, q = 0.7 },
+      { "softclip", drive = 1.3, mix = 0.35 },
+    }, trim = false, loop = true, xfade = 0.5, xfadeShape = "lin",
+       loudness = 0.13, loudWin = 0.6 }
+  end,
+})
+
+-- RIG_CORE -- what is underneath the plates. Fades up over the intake as the
+-- armour comes off, so the change in the machine is something you hear before
+-- the health bar tells you. A fifth over the pedal, unstable, and it throbs at
+-- 3.2 Hz -- eight whole cycles in the loop body, so the splice joins the throb
+-- to itself and not to the middle of a breath.
+def("rig_core", {
+  gain = 0.75, variants = 1, loop = true, rate = 11025,
+  pitchVar = 0, gainVar = 0, limit = 1,
+  build = function()
+    local f = RIG_HZ
+    return { dur = 3.0, layers = {
+      { osc = "sub", at = 0, amp = 1, spec = { dur = 3.0, layers = {
+        -- all exact multiples of the loop body's fundamental; see rig_intake
+        { osc = "saw",  freq = 1038 / 2.5, amp = 0.42 },     -- 415.2, = f * 6
+        { osc = "saw",  freq = 1555 / 2.5, amp = 0.3 },      -- 622.0, the fifth over it
+        { osc = "sine", freq = f * 12, amp = 0.13 },
+      }, fx = {
+        { "svf", type = "bp", cutoff = 940, q = 2.1 },
+        { "resonate", mix = 0.4, gain = 1.4, modes = coldModes(f * 12, 1.4, 0.8) },
+        { "chorus", mix = 0.3, rate = 0.8, depth = 0.005 },
+      }, normalize = 0.82, trim = false } },
+      -- the throb: an exposed core breathing
+      { osc = "sine", freq = 260 / 2.5, amp = 0.24,        -- 104, just over f * 1.5
+        env = function(t) return 0.4 + 0.6 * (0.5 + 0.5 * math.sin(t * 3.2 * TAU)) end },
+      { osc = "brown", amp = 0.15 },
+    }, fx = {
+      { "svf", type = "hp", cutoff = 96, q = 0.7 },
+      { "svf", type = "lp", cutoff = 5400, q = 0.8 },
+      { "softclip", drive = 1.5, mix = 0.45 },
+    }, trim = false, loop = true, xfade = 0.5, xfadeShape = "lin",
+       loudness = 0.125, loudWin = 0.6 }
+  end,
+})
+
+-- RIG_CREAK -- metal under load. Fired on a timer by the bed itself, more often
+-- once the plates are off, so a ninety-second drone keeps moving without ever
+-- repeating a phrase. Each one is a slow groan with a single stress tick buried
+-- somewhere inside it.
+def("rig_creak", {
+  gain = 0.5, variants = 4, rate = 11025, pitchVar = 0.09, gainVar = 0.25,
+  limit = 2, minGap = 0.5,
+  build = function(v, n, r)
+    local hz = r:range(128, 250)
+    local d  = r:range(0.7, 1.5)
+    return { dur = d + 0.95, layers = {
+      { osc = "brown",
+        env = { type = "bp", points = { { 0, 0 }, { 0.14, 0.75 }, { d * 0.6, 0.5 }, { d, 0 } } },
+        amp = 0.5 },
+      { osc = "saw", freq = { from = hz, to = hz * r:range(0.7, 0.87), tau = d * 0.7,
+                              curve = "lin" },
+        env = { type = "bp", points = { { 0, 0 }, { 0.22, 0.34 }, { d, 0 } } },
+        amp = 0.17, detune = -6 },
+      { osc = "sub", at = d * r:range(0.3, 0.68), amp = 0.75, spec = { dur = 0.5, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0022, curve = 3 }, amp = 1 } },
+        fx = { { "resonate", mix = 0.9, gain = 2.2,
+                 modes = coldModes(r:range(430, 900), 1.6, 0.9) } },
+        normalize = 0.8, trim = false } },
+    }, fx = {
+      { "resonate", mix = 0.5, gain = 1.4, modes = coldModes(hz * 2.1, 0.9, 1.1) },
+      { "svf", type = "lp", cutoff = 3400, q = 0.9 },
+      { "svf", type = "hp", cutoff = 78, q = 0.7 },
+      { "reverb", mix = 0.28, room = 0.86, damp = 0.32 },
+    }, loudness = 0.105, loudWin = 0.35 }
+  end,
+})
+
+-- RIG_LAND -- the arrival. The world plays a rift tear at the same moment; this
+-- is the other half of it, the part with mass. Air falling out of the sky for a
+-- second, one enormous contact, the island ringing, and then the intake spinning
+-- up into the loop that will not stop for the rest of the fight.
+def("rig_land", {
+  -- one variant: it happens once in a run, and a second take of a five-second
+  -- cue is a fifth of a second of the load budget spent on a coin toss nobody
+  -- will ever see land twice
+  gain = 1.0, variants = 1, rate = 11025, pitchVar = 0.008, gainVar = 0.04,
+  duckMusic = 0.55, duckTime = 3.2, limit = 1,
+  build = function(v, n, r)
+    local f = RIG_HZ
+    local HIT = 1.15
+    local k = ({ 1, 0.94 })[v]
+    return { dur = 4.5, layers = {
+      -- displaced air, falling
+      { osc = "pink", env = { type = "bp", points = { { 0, 0 }, { HIT - 0.03, 0.9 },
+                                                      { HIT + 0.06, 0.2 }, { 3.0, 0.05 },
+                                                      { 5.0, 0 } } }, amp = 0.34 },
+      { osc = "saw", freq = { from = 900 * k, to = 150 * k, tau = HIT, curve = "lin" },
+        env = { type = "bp", points = { { 0, 0 }, { 0.2, 0.3 }, { HIT, 0.55 },
+                                        { HIT + 0.05, 0 } } }, amp = 0.2, detune = -10 },
+      { osc = "saw", freq = { from = 954 * k, to = 159 * k, tau = HIT, curve = "lin" },
+        env = { type = "bp", points = { { 0, 0 }, { 0.2, 0.3 }, { HIT, 0.55 },
+                                        { HIT + 0.05, 0 } } }, amp = 0.2, detune = 13 },
+      -- contact. Transient first, mixed hot, then the mass arriving under it.
+      { osc = "sub", at = HIT, amp = 1, spec = { dur = 3.4, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.007, curve = 3 }, amp = 1.15 },
+        { osc = "noise", env = { type = "perc", a = 0.0005, d = 0.09, curve = 4 }, amp = 0.42 },
+        { osc = "sine", freq = { from = 132, to = 58, tau = 0.6 },
+          env = { type = "bp", points = { { 0, 0 }, { 0.004, 1 }, { 0.3, 0.5 }, { 1.6, 0.24 },
+                                          { 3.2, 0 } } }, amp = 0.66 },
+        { osc = "tri", freq = { from = 268, to = 76, tau = 0.6 },
+          env = { type = "bp", points = { { 0, 0 }, { 0.004, 0.6 }, { 1.0, 0.18 },
+                                          { 2.6, 0 } } }, amp = 0.3 },
+      }, fx = { { "svf", type = "lp", cutoff = { from = 5000, to = 620, tau = 0.5 }, q = 0.9 } },
+        normalize = 0.95, trim = false } },
+      -- and the island ringing: the rig's own plate, struck once, very large
+      { osc = "sub", at = HIT + 0.01, amp = 1.45, spec = { dur = 3.6, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.006, curve = 3 }, amp = 1 },
+        { osc = "brown", env = { type = "perc", a = 0.002, d = 0.5, curve = 2.4 }, amp = 0.45 },
+      }, fx = { { "resonate", mix = 0.9, gain = 2.3, modes = coldModes(f * 5.4 * k, 0.5, 1.15) },
+                { "svf", type = "hp", cutoff = 150, q = 0.7 },
+                { "reverb", mix = 0.34, room = 0.92, damp = 0.22 } },
+        normalize = 0.9, trim = false } },
+      -- the intake spinning up, so the cue hands over to the loop instead of
+      -- ending and leaving a hole where the machine should be
+      { osc = "sub", at = HIT + 0.35, amp = 0.55, spec = { dur = 4.4, layers = {
+        { osc = "brown", env = { type = "bp", points = { { 0, 0 }, { 2.4, 0.85 },
+                                                         { 4.3, 0.8 } } }, amp = 0.5 },
+        { osc = "saw", freq = { from = f * 3, to = f * 8, tau = 2.6, curve = "lin" },
+          env = { type = "bp", points = { { 0, 0 }, { 2.4, 0.5 }, { 4.3, 0.5 } } },
+          amp = 0.18, detune = -7 },
+        { osc = "saw", freq = { from = f * 3.18, to = f * 8 * 1.0595, tau = 2.6, curve = "lin" },
+          env = { type = "bp", points = { { 0, 0 }, { 2.4, 0.5 }, { 4.3, 0.5 } } },
+          amp = 0.17, detune = 8 },
+      }, fx = { { "svf", type = "bp", cutoff = { from = 200, to = 640, tau = 2.2, curve = "lin" },
+                  q = 1.2 },
+                { "svf", type = "lp", cutoff = 3000, q = 0.8 } },
+        normalize = 0.7, trim = false } },
+    }, fx = {
+      -- The rig weighs what the sub says it weighs, but a cue that is 82% below
+      -- 80 Hz is a cue nobody outside a studio hears arrive. The plate ring and
+      -- the intake spin-up carry it in the band that ships.
+      { "svf", type = "hp", cutoff = 64, q = 0.7 },
+      { "softclip", drive = 1.5, mix = 0.5 },
+      { "reverb", mix = 0.3, room = 0.9, damp = 0.26 },
+    }, loudness = 0.23, loudWin = 0.3, ceiling = 0.97, fadeOut = 0.05 }
+  end,
+})
+
+-- RIG_PLATE -- an armour plate shearing off at a phase break. Bolts go, a sheet
+-- of steel tears free with a downward shriek, and it lands about two thirds of a
+-- second later. The phase change used to be boss_hurt at pitch 0.7, which is the
+-- same sound as being poked -- the moment the fight changes shape needs its own.
+def("rig_plate", {
+  gain = 0.95, variants = 2, rate = 11025, pitchVar = 0.04, gainVar = 0.08,
+  duckMusic = 0.4, duckTime = 1.3, limit = 2,
+  build = function(v, n, r)
+    local hz = 300 * ({ 1, 0.86, 1.14 })[v]
+    local land = r:range(0.6, 0.78)
+    return { dur = 2.8, layers = {
+      -- the bolts letting go
+      { osc = "sub", at = 0, amp = 1.6, spec = { dur = 0.4, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.004, curve = 3 }, amp = 1 },
+        { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.05, curve = 4 }, amp = 0.35 } },
+        fx = { { "resonate", mix = 0.55, gain = 2.0, modes = coldModes(hz * 3.2, 1.5, 0.8) },
+               { "svf", type = "hp", cutoff = 700, q = 0.7 } },
+        normalize = 0.92, trim = false } },
+      -- the tear: a shriek that falls
+      { osc = "saw", freq = { from = hz * 4, to = hz * 1.1, tau = 0.42 },
+        env = { type = "bp", points = { { 0, 0 }, { 0.02, 0.8 }, { 0.3, 0.45 }, { 0.6, 0 } } },
+        amp = 0.46, detune = -9 },
+      { osc = "saw", freq = { from = hz * 4.06, to = hz * 1.12, tau = 0.42 },
+        env = { type = "bp", points = { { 0, 0 }, { 0.02, 0.8 }, { 0.3, 0.45 }, { 0.6, 0 } } },
+        amp = 0.42, detune = 11 },
+      { osc = "noise", env = { type = "bp", points = { { 0, 0 }, { 0.03, 0.6 }, { 0.45, 0.2 },
+                                                       { 0.7, 0 } } }, amp = 0.4 },
+      -- and it hits the island
+      { osc = "sub", at = land, amp = 1.1, spec = { dur = 1.9, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.005, curve = 3 }, amp = 0.9 },
+        { osc = "sine", freq = { from = 108, to = 58, tau = 0.06 },
+          env = { type = "perc", a = 0.001, d = 0.34, curve = 2.2 }, amp = 0.5 },
+        { osc = "brown", env = { type = "perc", a = 0.002, d = 0.3, curve = 2.4 }, amp = 0.22 },
+      }, fx = { { "resonate", mix = 0.7, gain = 2.1, modes = coldModes(hz * 1.6, 0.7, 1.2) },
+                { "svf", type = "hp", cutoff = 78, q = 0.7 } },
+        normalize = 0.9, trim = false } },
+    }, fx = {
+      { "svf", type = "lp", cutoff = { from = 8000, to = 3400, tau = 1.2 }, q = 0.9 },
+      -- a plate shearing off is a shriek with a clang under it, not a thump: the
+      -- first pass measured 96% below 80 Hz and sounded like the rig sitting down
+      { "svf", type = "hp", cutoff = 92, q = 0.7 },
+      { "softclip", drive = 1.8, mix = 0.5 },
+      { "reverb", mix = 0.3, room = 0.88, damp = 0.28 },
+    }, loudness = 0.2, loudWin = 0.25 }
+  end,
+})
+
+-- BOSS_FALL -- the rig coming down. This is the last thing that happens in the
+-- game before the suit comes off, and it was a boss_hurt played at pitch 0.5.
+--
+-- Six seconds with a shape: the intake dies first (the whine collapses two
+-- octaves and the pedal goes with it), then three structural failures, then the
+-- legs give and the whole mass arrives on the island at 2.2 s, and then a very
+-- long tail of metal settling and the column falling in on itself. The duck is
+-- deliberately moderate -- the score has its own cadence to play over this and
+-- burying it would waste both.
+def("boss_fall", {
+  gain = 1.0, variants = 1, rate = 11025, pitchVar = 0.006, gainVar = 0.03,
+  duckMusic = 0.45, duckTime = 2.0, limit = 1,
+  build = function(v, n, r)
+    local f = RIG_HZ
+    local k = ({ 1, 0.93 })[v]
+    local HIT = 2.2
+    return { dur = 5.6, layers = {
+      -- the intake dying: the whine falls away and takes the pedal with it
+      { osc = "saw", freq = { from = f * 8 * k, to = f * 1.6, tau = 1.5 },
+        env = { type = "bp", points = { { 0, 0.55 }, { 0.9, 0.4 }, { 1.9, 0.12 }, { 2.4, 0 } } },
+        amp = 0.22, detune = -8 },
+      { osc = "saw", freq = { from = f * 8 * 1.0595 * k, to = f * 1.66, tau = 1.5 },
+        env = { type = "bp", points = { { 0, 0.55 }, { 0.9, 0.4 }, { 1.9, 0.12 }, { 2.4, 0 } } },
+        amp = 0.2, detune = 10 },
+      { osc = "sine", freq = { from = f, to = f * 0.55, tau = 1.7 },
+        env = { type = "bp", points = { { 0, 0.5 }, { 1.4, 0.3 }, { 2.2, 0 } } }, amp = 0.3 },
+      -- three structural failures on the way down
+      { osc = "sub", at = 0.28, amp = 1.7, spec = { dur = 1.1, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0035, curve = 3 }, amp = 1 } },
+        fx = { { "resonate", mix = 0.9, gain = 2.4, modes = coldModes(420 * k, 1.1, 1.05) } },
+        normalize = 0.88, trim = false } },
+      { osc = "sub", at = 0.72, amp = 1.85, spec = { dur = 1.2, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.004, curve = 3 }, amp = 1 } },
+        fx = { { "resonate", mix = 0.9, gain = 2.4, modes = coldModes(310 * k, 1.0, 1.15) } },
+        normalize = 0.9, trim = false } },
+      { osc = "sub", at = 1.25, amp = 2.0, spec = { dur = 1.4, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.005, curve = 3 }, amp = 1 } },
+        fx = { { "resonate", mix = 0.9, gain = 2.4, modes = coldModes(228 * k, 0.85, 1.3) } },
+        normalize = 0.92, trim = false } },
+      -- the legs going: a long grind toward the impact
+      { osc = "brown", env = { type = "bp", points = { { 0, 0 }, { 1.4, 0.35 }, { HIT - 0.02, 0.9 },
+                                                       { HIT + 0.1, 0.3 }, { 4.2, 0.06 },
+                                                       { 5.4, 0 } } }, amp = 0.4 },
+      -- and it arrives
+      { osc = "sub", at = HIT, amp = 1, spec = { dur = 4.0, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.009, curve = 3 }, amp = 1.2 },
+        { osc = "noise", env = { type = "perc", a = 0.0006, d = 0.12, curve = 4 }, amp = 0.45 },
+        { osc = "sine", freq = { from = 118, to = 48, tau = 0.75 },
+          env = { type = "bp", points = { { 0, 0 }, { 0.004, 1 }, { 0.4, 0.55 }, { 2.0, 0.22 },
+                                          { 3.8, 0 } } }, amp = 0.78 },
+        { osc = "tri", freq = { from = 240, to = 62, tau = 0.7 },
+          env = { type = "bp", points = { { 0, 0 }, { 0.004, 0.6 }, { 1.2, 0.16 },
+                                          { 3.0, 0 } } }, amp = 0.3 },
+      }, fx = { { "svf", type = "lp", cutoff = { from = 4600, to = 480, tau = 0.7 }, q = 0.9 } },
+        normalize = 0.95, trim = false } },
+      -- the hull, struck for the last time, ringing out over everything
+      { osc = "sub", at = HIT + 0.015, amp = 1.6, spec = { dur = 4.1, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.008, curve = 3 }, amp = 1 },
+        { osc = "brown", env = { type = "perc", a = 0.003, d = 0.7, curve = 2.2 }, amp = 0.5 },
+      }, fx = { { "resonate", mix = 0.92, gain = 2.4, modes = coldModes(f * 4.8 * k, 0.5, 1.2) },
+                { "svf", type = "hp", cutoff = 140, q = 0.7 },
+                { "reverb", mix = 0.4, room = 0.94, damp = 0.2 } },
+        normalize = 0.9, trim = false } },
+      -- debris coming back down for two seconds afterwards
+      { osc = "sub", at = HIT + 0.22, amp = 0.9, spec = { dur = 3.2, layers = {
+        { osc = "pink", env = { type = "bp", points = { { 0, 0.75 }, { 1.2, 0.3 }, { 3.0, 0 } } },
+          amp = 0.45 } },
+        fx = { { "svf", type = "bp", cutoff = 2700, q = 1.3 },
+               { "resonate", mix = 0.3, gain = 1.3, modes = coldModes(1500, 1.8, 0.7) } },
+        normalize = 0.62, trim = false } },
+    }, fx = {
+      -- The rig weighs a great deal and the cue should say so, but the first
+      -- pass put 77% of it under 80 Hz -- so on the machine this game ships to,
+      -- the climax of a thirteen-minute run was a quiet crunch. The structural
+      -- failures and the hull ring do the telling now; the sub confirms it.
+      { "svf", type = "hp", cutoff = 48, q = 0.7 },
+      { "svf", type = "lp", cutoff = { from = 7000, to = 2600, tau = 3.2 }, q = 0.85 },
+      { "softclip", drive = 1.6, mix = 0.5 },
+      { "reverb", mix = 0.34, room = 0.93, damp = 0.24 },
+    }, loudness = 0.225, loudWin = 0.3, ceiling = 0.97, fadeOut = 0.08 }
+  end,
+})
+
+-- BOT_REBEL -- a small machine you named decides to run at the thing that came
+-- for the air. This is the sound the whole game has been walking toward and it
+-- did not exist: the rebellion was a line of dialogue and a heart particle.
+--
+-- Three gestures in one second. A servo locking as it stops and turns; two short
+-- notes climbing; and then a note it *holds* -- the only sustained pitch any bot
+-- makes in the game, because holding it is the decision. The six variants put
+-- that held note on six different chord tones over A, so a cohort of them is a
+-- chord rather than six copies of one chirp (see Audio.rebelCohort).
+local REBEL_TONES = { 0, 7, 12, 4, 16, 19 }
+def("bot_rebel", {
+  gain = 0.6, variants = 6, pitchVar = 0.02, gainVar = 0.1, limit = 5, minGap = 0.02,
+  build = function(v, n, r)
+    local base = 62                                   -- D4, the bots' own register
+    local top  = base + REBEL_TONES[v]
+    local chassis = 660 + v * 165
+    local layers = {}
+    -- the servo locking: it stops walking, and turns around
+    layers[#layers + 1] = { osc = "sub", at = 0, amp = 1.1, spec = { dur = 0.3, layers = {
+      { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0018, curve = 3 }, amp = 1 },
+      { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.026, curve = 4 }, amp = 0.3 } },
+      fx = { { "resonate", mix = 0.85, gain = 2.1, modes = brassModes(chassis * 1.6, 0.45, 1.2) },
+             { "svf", type = "hp", cutoff = 500, q = 0.7 } },
+      normalize = 0.85, trim = false } }
+    -- two notes up to the one it holds
+    local approach = { { top - 12, 0.06, 0.1 }, { top - 5, 0.17, 0.11 } }
+    for i = 1, 2 do
+      local a = approach[i]
+      local hz = Synth.noteToHz(a[1])
+      layers[#layers + 1] = { osc = "sub", at = a[2], amp = 0.8, spec = { dur = a[3] + 0.16,
+        layers = {
+          { osc = "square", duty = 0.4, freq = hz,
+            env = { type = "perc", a = 0.002, d = a[3] * 1.5, curve = 2.4 }, amp = 0.42 },
+          { osc = "sine", freq = hz * 2,
+            env = { type = "perc", a = 0.002, d = a[3], curve = 3 }, amp = 0.11 },
+        },
+        fx = { { "resonate", mix = 0.34, gain = 1.3, modes = brassModes(chassis, 0.6) },
+               { "svf", type = "lp", cutoff = 8000, q = 0.8 } },
+        normalize = 0.8, trim = false } }
+    end
+    -- and the one it holds. It does not decay; it is still going when the sound
+    -- ends, and the mixer's fade is what takes it away.
+    local hzT = Synth.noteToHz(top)
+    layers[#layers + 1] = { osc = "sub", at = 0.3, amp = 1.0, spec = { dur = 0.95, layers = {
+      { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0016, curve = 3 }, amp = 0.5 },
+      { osc = "square", duty = 0.42, freq = hzT,
+        env = { type = "bp", points = { { 0, 0 }, { 0.012, 1 }, { 0.2, 0.72 }, { 0.75, 0.6 },
+                                        { 0.95, 0 } } }, amp = 0.4 },
+      { osc = "sine", freq = hzT * 2,
+        env = { type = "bp", points = { { 0, 0 }, { 0.02, 0.4 }, { 0.75, 0.26 },
+                                        { 0.95, 0 } } }, amp = 0.13 },
+    }, fx = { { "resonate", mix = 0.4, gain = 1.4, modes = brassModes(chassis, 0.55, 1.1) },
+              { "svf", type = "lp", cutoff = 7600, q = 0.8 } },
+      normalize = 0.85, trim = false } }
+    -- the chassis coming up to power under all of it
+    layers[#layers + 1] = { osc = "sine",
+      freq = { from = Synth.noteToHz(base) * 0.5, to = Synth.noteToHz(base), tau = 0.3 },
+      env = { type = "bp", points = { { 0, 0 }, { 0.09, 0.32 }, { 0.45, 0.42 }, { 1.05, 0.26 },
+                                      { 1.28, 0 } } }, amp = 0.3 }
+    return { dur = 1.2, layers = layers, fx = {
+      { "svf", type = "hp", cutoff = 90, q = 0.7 },
+      { "shelf", type = "high", freq = 5000, db = 2 },
+      { "reverb", mix = 0.22, room = 0.72 },
+    }, loudness = 0.155, loudWin = 0.3 }
+  end,
+})
+
+-- BOT_SACRIFICE -- a bot reaching the hull. It was bot_down played 10% sharp and
+-- an enemy_die on top, which is the game telling you a Chomper popped.
+--
+-- Warm brass hitting cold steel: the bot's own chassis rings for forty
+-- milliseconds and then the rig's plate takes it, and the plate is still ringing
+-- a second later. Over the top, the *first note only* of the death motif -- the
+-- one bot_down spends three seconds on -- cut off at 170 ms. It does not get its
+-- three notes. That is the sound.
+--
+-- Forty-five of these land in a fight, so the duck is 0.12 and not bot_down's
+-- 0.28: at the old figure the procession holds the score down for the whole
+-- finale and the cue that is supposed to be carrying the moment never comes up.
+def("bot_sacrifice", {
+  gain = 0.72, variants = 4, pitchVar = 0.035, gainVar = 0.12, limit = 3, minGap = 0.045,
+  duckMusic = 0.12, duckTime = 0.35,
+  build = function(v, n, r)
+    local note = 74 + ({ 0, 2, -1, 3, 1 })[v]
+    local hz = Synth.noteToHz(note)
+    local chassis = 900 * r:range(0.88, 1.16)
+    return { dur = 1.45, layers = {
+      -- contact: brass into steel
+      { osc = "sub", at = 0, amp = 2.0, spec = { dur = 0.28, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0028, curve = 3 }, amp = 1 },
+        { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.03, curve = 5 }, amp = 0.32 } },
+        fx = { { "resonate", mix = 0.5, gain = 1.7, modes = brassModes(chassis, 0.6) },
+               { "svf", type = "hp", cutoff = 900, q = 0.7 } },
+        normalize = 0.95, trim = false } },
+      -- the note it does not get to finish
+      { osc = "sub", at = 0.004, amp = 0.95, spec = { dur = 0.34, layers = {
+        { osc = "fm", freq = hz, ratio = 2.01, index = { type = "exp", tau = 0.09, peak = 1.8 },
+          env = { type = "bp", points = { { 0, 0 }, { 0.004, 1 }, { 0.12, 0.72 },
+                                          { 0.165, 0.55 }, { 0.178, 0 } } }, amp = 0.5 },
+        { osc = "sine", freq = hz * 0.5,
+          env = { type = "bp", points = { { 0, 0 }, { 0.01, 0.6 }, { 0.165, 0.4 },
+                                          { 0.178, 0 } } }, amp = 0.24 },
+      }, fx = { { "resonate", mix = 0.45, gain = 1.4, modes = brassModes(hz, 0.5) } },
+        normalize = 0.86, trim = false } },
+      -- and the hull takes it. Cold, wide, and it outlasts the bot by a second.
+      { osc = "sub", at = 0.006, amp = 1.0, spec = { dur = 1.6, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.005, curve = 3 }, amp = 1 },
+        { osc = "brown", env = { type = "perc", a = 0.002, d = 0.22, curve = 2.6 }, amp = 0.35 },
+        { osc = "sine", freq = { from = 128, to = 52, tau = 0.05 },
+          env = { type = "perc", a = 0.001, d = 0.3, curve = 2.2 }, amp = 0.55 },
+      }, fx = { { "resonate", mix = 0.78, gain = 2.0,
+                  modes = coldModes(232 * r:range(0.9, 1.12), 0.65, 1.1) },
+                { "svf", type = "hp", cutoff = 70, q = 0.7 } },
+        normalize = 0.9, trim = false } },
+    }, fx = {
+      { "svf", type = "lp", cutoff = { from = 8000, to = 2200, tau = 0.7 }, q = 0.85 },
+      { "svf", type = "hp", cutoff = 62, q = 0.7 },
+      { "softclip", drive = 1.5, mix = 0.4 },
+      { "reverb", mix = 0.26, room = 0.84, damp = 0.3 },
+    }, loudness = 0.175, loudWin = 0.22 }
   end,
 })
 
@@ -1663,8 +2210,10 @@ function Audio.play(name, opts)
   for i = 1, #Audio.voices do
     if Audio.voices[i].bus ~= "music" then nonMusic = nonMusic + 1 end
   end
+  local musicOver = (bus == "music") and ((#Audio.voices - nonMusic) >= MUSIC_CEILING)
   local capped = (#Audio.voices >= MAX_VOICES)
               or (bus ~= "music" and nonMusic >= SFX_CEILING)
+              or musicOver
   if capped then
     -- steal whatever is closest to being over, weighted down by how loud it is:
     -- cutting the tail off a quiet, nearly-finished voice is inaudible
@@ -1673,6 +2222,9 @@ function Audio.play(name, opts)
       local v = Audio.voices[i]
       local eligible = not v.loop
       if bus ~= "music" then eligible = eligible and v.bus ~= "music" end
+      -- a score over its own ceiling takes the voice back off itself, never off
+      -- a bot dying two feet away
+      if musicOver then eligible = eligible and v.bus == "music" end
       if eligible then
         local score = v.t / max(0.05, v.dur) - v.gain * 0.5
         if not worst or score > worst then worst, wi = score, i end
@@ -1726,6 +2278,8 @@ end
 
 function Audio.stopAll()
   for i = #Audio.voices, 1, -1 do Audio.killVoice(i) end
+  Audio.clearScheduled()
+  if Audio.rigStop then Audio.rigStop(true) end
 end
 
 function Audio.isPlaying(name)
@@ -1740,6 +2294,208 @@ function Audio.setVoiceVolume(voice, v)
   if not voice or voice.dead then return end
   voice.gain = v
   if voice.src then safe(voice.src.setVolume, voice.src, U.saturate(v * busGain(voice.bus))) end
+end
+
+--- Move a live voice across the stereo field. Same unit-circle placement Audio
+--- .play uses, so a moving loop pans exactly like a one-shot does.
+function Audio.setVoicePan(voice, pan)
+  if not voice or voice.dead then return end
+  pan = U.clamp(pan or 0, -1, 1)
+  voice.pan = pan
+  if voice.src then
+    local z = -math.sqrt(max(0.02, 1 - pan * pan))
+    safe(voice.src.setPosition, voice.src, pan, 0, z)
+  end
+end
+
+------------------------------------------------------------------- scheduling
+-- A tiny deferred queue. Some cues are a *group* of voices rather than one --
+-- a cohort of bots turning around together -- and a group that fires on one
+-- sample offset is a flam, not a crowd. Nothing here allocates per frame.
+local sched = {}
+
+--- Play `name` after `delay` seconds. Returns nothing; use Audio.play for a
+--- handle you need to keep.
+function Audio.playIn(delay, name, opts)
+  if not delay or delay <= 0 then return Audio.play(name, opts) end
+  sched[#sched + 1] = { t = delay, name = name, opts = opts }
+end
+
+local function updateSched(dt)
+  local n = #sched
+  if n == 0 then return end
+  -- Compact in place over a snapshot of the length, then slide down anything a
+  -- callback appended while we were iterating. This module has now paid for the
+  -- append-while-compacting bug twice elsewhere in the codebase; it is not
+  -- going to pay for it a third time here.
+  local w = 0
+  for i = 1, n do
+    local e = sched[i]
+    e.t = e.t - dt
+    if e.t <= 0 then
+      Audio.play(e.name, e.opts)
+    else
+      w = w + 1
+      sched[w] = e
+    end
+  end
+  for i = n + 1, #sched do w = w + 1 sched[w] = sched[i] end
+  for i = #sched, w + 1, -1 do sched[i] = nil end
+end
+
+--- Drop everything pending (scene changes).
+function Audio.clearScheduled() for i = #sched, 1, -1 do sched[i] = nil end end
+
+------------------------------------------------------------------- the rig bed
+-- Harvester Prime is on screen for a minute and a half and had a hit sound.
+--
+-- The bed is *heartbeat driven*: Audio.rigSet() starts it on the first call and
+-- refreshes a watchdog on every call after that. If whoever is driving it stops
+-- -- the rig died, the scene changed, the game paused, a crash unwound the
+-- update loop -- it fades itself out and hands its voices back within about a
+-- second. A looping source that only stops when somebody remembers to stop it
+-- is a drone that outlives the fight, and this game switches scenes twice in
+-- the two seconds after the rig falls.
+local RIG = {
+  on = false, stopping = false, closed = false,
+  x = 0, y = 0, core = 0, phase = 1, hp = 1,
+  silence = 0, level = 0, coreLevel = 0, creakT = 0,
+  intake = nil, coreV = nil,
+}
+-- It is a hundred feet tall and it is draining the sky. It is never *gone*; it
+-- only gets quieter, and standing under it is loud.
+local RIG_NEAR, RIG_FAR = 300, 2400
+local RIG_FLOOR = 0.34
+
+--- Per-frame state of the rig. First call starts the bed and fires the arrival.
+--- Cheap and allocation-free: pass numbers, not a table.
+---   x, y   world position
+---   core   0..1, how far the core is open (drives the second layer)
+---   phase  1..3, how often the structure groans
+---   hp     0..1 hull fraction; a wounded rig runs rough, not quiet
+function Audio.rigSet(x, y, core, phase, hp)
+  if RIG.closed then return end
+  if not Audio.loaded then Audio.load() end
+  if not RIG.on then
+    -- cold start: nothing carries over from a previous rig
+    RIG.on = true
+    RIG.level, RIG.coreLevel = 0, 0
+    RIG.hp, RIG.phase, RIG.core = 1, 1, 0
+    RIG.creakT = 2.2
+    Audio.play("rig_land")
+  end
+  RIG.x, RIG.y = x or RIG.x, y or RIG.y
+  RIG.core  = U.saturate(core or 0)
+  RIG.phase = phase or RIG.phase
+  if hp then RIG.hp = U.saturate(hp) end
+  RIG.silence = 0
+  RIG.stopping = false
+end
+
+--- Arm the bed. The rig has arrived and is allowed to have a voice again.
+--- engine/music calls this when the boss cue starts, and closes it again on any
+--- other state, so the drone's lifetime is bracketed by the fight and cannot
+--- outlive it however the run ends.
+function Audio.rigOpen() RIG.closed = false end
+
+--- Explicit teardown. `hard` releases the voices this instant rather than
+--- fading: use it when nobody is going to be calling Audio.update any more
+--- (a scene switch), because a fade that is never ticked is a drone that never
+--- stops. Either way the bed is latched closed until Audio.rigOpen.
+function Audio.rigStop(hard)
+  RIG.closed = true
+  if not RIG.on then return end
+  RIG.stopping = true
+  if hard then
+    if RIG.intake then Audio.stop(RIG.intake) end
+    if RIG.coreV then Audio.stop(RIG.coreV) end
+    RIG.intake, RIG.coreV = nil, nil
+    RIG.on, RIG.stopping = false, false
+    RIG.level, RIG.coreLevel = 0, 0
+  end
+end
+
+function Audio.rigActive() return RIG.on end
+
+--- Keep one of the bed's looping voices at the right level and bearing. Returns
+--- nil if the voice was taken (Audio.stopAll), so the caller re-acquires it.
+local function rigVoice(v, gain, pan)
+  if not v or v.dead then return nil end
+  v.gain = gain
+  v.pan = pan
+  if v.src then
+    safe(v.src.setVolume, v.src, U.saturate(gain * busGain(v.bus)))
+    local z = -math.sqrt(max(0.02, 1 - pan * pan))
+    safe(v.src.setPosition, v.src, pan, 0, z)
+  end
+  return v
+end
+
+local function updateRig(dt)
+  if not RIG.on then return end
+  RIG.silence = RIG.silence + dt
+  local want = (RIG.stopping or RIG.silence > 0.55) and 0 or 1
+
+  local dx = RIG.x - listener.x
+  local dist = U.len(dx, RIG.y - listener.y)
+  local near = 1 - U.smoothstep(RIG_NEAR, RIG_FAR, dist)
+  local pan = U.clamp(dx / (PAN_WIDTH * 1.6), -1, 1)
+
+  -- the bed itself, and a little extra rasp as the hull fails
+  local g = want * (RIG_FLOOR + (1 - RIG_FLOOR) * near) * (0.88 + 0.12 * (1 - RIG.hp))
+  RIG.level = RIG.level + (g - RIG.level) * min(1, dt * (want > 0 and 1.6 or 2.8))
+  -- the core reads as something *inside* the machine, so it is more directional
+  local cg = want * RIG.core * (0.45 + 0.55 * near)
+  RIG.coreLevel = RIG.coreLevel + (cg - RIG.coreLevel) * min(1, dt * 1.1)
+
+  if want > 0 then
+    if not RIG.intake then
+      RIG.intake = Audio.play("rig_intake", { volume = 0.0015, loop = true, pan = pan })
+    end
+    if not RIG.coreV and RIG.coreLevel > 0.002 then
+      RIG.coreV = Audio.play("rig_core", { volume = 0.0015, loop = true, pan = pan })
+    end
+  end
+  RIG.intake = rigVoice(RIG.intake, RIG.level * 0.92, pan * 0.55)
+  RIG.coreV  = rigVoice(RIG.coreV,  RIG.coreLevel,    pan * 0.4)
+
+  if want <= 0 and RIG.level < 0.006 then
+    if RIG.intake then Audio.stop(RIG.intake) end
+    if RIG.coreV then Audio.stop(RIG.coreV) end
+    RIG.intake, RIG.coreV = nil, nil
+    RIG.on, RIG.stopping = false, false
+    return
+  end
+
+  -- structural groans. More of them once the plates are gone, and never while
+  -- the bed is on its way out.
+  if want > 0 then
+    RIG.creakT = RIG.creakT - dt
+    if RIG.creakT <= 0 then
+      RIG.creakT = rng:range(3.2, 6.4) / (0.75 + RIG.phase * 0.2)
+      if RIG.level > 0.09 then
+        Audio.play("rig_creak", { volume = 0.5 + 0.5 * RIG.level, pan = pan * 0.7 })
+      end
+    end
+  end
+end
+
+--- A cohort of the workforce has turned around. Fourteen of these happen in a
+--- fight, so it must not be a stinger fired fourteen times: it is a short
+--- stagger of individual voices, panned apart, whose held notes stack into one
+--- chord. The count widens the chord; it does not raise the level.
+local COHORT_VOICE = { 1, 2, 4, 3 }                 -- root, fifth, third, octave
+local COHORT_AT    = { 0, 0.085, 0.19, 0.315 }
+local COHORT_PAN   = { -0.45, 0.34, -0.24, 0.5 }
+function Audio.rebelCohort(count)
+  local n = U.clamp(floor(count or 1), 1, 4)
+  for i = 1, n do
+    Audio.playIn(COHORT_AT[i], "bot_rebel", {
+      variation = COHORT_VOICE[i],
+      volume = (i == 1) and 0.95 or 0.78,
+      pan = COHORT_PAN[i] * rng:range(0.7, 1),
+    })
+  end
 end
 
 --------------------------------------------------------------------- update
@@ -1765,6 +2521,9 @@ function Audio.update(dt, lx, ly)
   local dTarget = dialogue.on and 1 or 0
   dialogue.level = dialogue.level + (dTarget - dialogue.level) *
                    min(1, dt * (dialogue.on and 6 or 2.5))
+
+  updateSched(dt)
+  updateRig(dt)
 
   for _, m in pairs(meters) do m.rms = 0 m.voices = 0 end
   local mm = meters.master

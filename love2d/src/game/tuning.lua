@@ -291,9 +291,9 @@ T.boss = {
     -- Its own lighting. The rig used to paint itself lavender and stop reading
     -- as metal; the key is deliberately a cold near-neutral and the colour is
     -- pushed out to the ground and the throat where it belongs.
-    keyRadius     = 380, keyGain    = 0.34,
-    strobeRadius  = 300, strobeGain = 0.45,
-    throatRadius  = 250, throatGain = 0.50,
+    keyRadius     = 380, keyGain    = 0.30,
+    strobeRadius  = 300, strobeGain = 0.40,
+    throatRadius  = 150, throatGain = 0.30,
     moltenRadius  = 320, moltenGain = 0.75,
   },
 }

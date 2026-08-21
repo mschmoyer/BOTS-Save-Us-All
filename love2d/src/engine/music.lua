@@ -8,6 +8,13 @@
 --   Music.setO2(0..1)          -- the arpeggio opens up as the world heals
 --   Music.setCycle(1..7)       -- the modal centre darkens as the run wears on
 --
+-- and, for the finale only, because the finale is the only cue in the game with
+-- a script rather than a level:
+--
+--   Music.bossPart(1..5)       -- arrival / procession / plates / core / fall
+--   Music.cohort()             -- a wave of the workforce has left
+--   Music.bossFell()           -- the rig is down; play the cadence
+--
 -- Theme: hopeful growth that curdles into loneliness. Cycle 1 is Lydian and
 -- weightless; by cycle 7 the same music is Aeolian and thin. Night drops to
 -- Aeolian outright, the boss goes Phrygian dominant, and the ending is one
@@ -62,6 +69,8 @@ local STATES = {
     density = 0.95,
   },
   boss = {
+    -- The harmonic identity of the whole finale; the parts below inherit it and
+    -- differ only in what is playing and how fast. See BOSS_PARTS.
     mode = "phrygianDominant", root = 1, bpm = 104, barsPerChord = 1,
     prog = { 1, 2, 1, 7 },      -- the b2 leaning on the tonic: threat, not menace-by-volume
     layers = { pad = 0.6, bass = 0.75, arp = 0.8, bell = 0.6, perc = 0.7, choir = 1.0 },
@@ -92,6 +101,92 @@ local STATES = {
 -- How bright the day/dusk material is allowed to be, per cycle. The music
 -- forgets how to be hopeful at roughly the rate the player does.
 local CYCLE_MODES = { "lydian", "lydian", "ionian", "ionian", "mixolydian", "dorian", "aeolian" }
+
+----------------------------------------------------------------- the finale
+-- The extraction used to be one cue: setState("boss") fired when the rig landed
+-- and nothing moved for the next hundred seconds. That was defensible when the
+-- fight was eight seconds long. It is not now -- the finale has a *shape*, and
+-- it is not the shape of a health bar. The rig lands; the crew starts walking;
+-- the plates come off; the last of them go in; the rig falls. Five things, in
+-- that order, every time, whether the player built twelve bots or sixty.
+--
+-- So the boss state is five sub-states sharing one harmonic identity (Phrygian
+-- dominant a semitone above C, the flat second leaning on the tonic). They all
+-- run the same six layers; what changes is which of them are allowed to speak,
+-- how fast, and how much of the game's own tune the cue is permitted to quote.
+--
+-- The argument the arc makes:
+--
+--   1 ARRIVAL     Almost nothing. A pedal, a heartbeat, a little floor tom. No
+--                 choir, no arpeggio, and *no theme* -- the tune the player has
+--                 heard in every state of the game is taken away the moment the
+--                 rig lands. Withholding is the only device that makes an entry
+--                 mean anything, and this cue has four entries to make.
+--   2 PROCESSION  The crew starts walking. The choir arrives -- voices, at the
+--                 exact moment the machines decide something -- with the arp
+--                 pedal and the kit under it. Still no tune.
+--   3 PLATES      The armour comes off. Tempo up, the harmony starts moving
+--                 (a real vi), and the theme returns, but only its strong bones,
+--                 the way the night fragments it. You hear it *trying*.
+--   4 CORE        The last of them go in. Everything is in, the tune is whole
+--                 for the first time since the day, and it is being played over
+--                 the thing that came to kill the sky.
+--   5 FALL        Ritardando to 62, everything but the choir and the bed gone,
+--                 and one major triad on the tonic -- which Phrygian dominant
+--                 already contains, so the resolution is not a modulation, it
+--                 is the mode finally being allowed to mean the thing it always
+--                 spelled. Then the ending scene takes over.
+--
+-- Layers here are absolute, not multipliers: the parts author the whole balance
+-- and Music.setIntensity is deliberately almost inert inside them (see
+-- setTargetsFromDef). During the finale the score is not reacting to threat --
+-- it knows what is happening.
+--
+-- Measured on the music bus, relative to a cycle-1 day (tools: a headless pass
+-- that runs each state and reads Audio.meter("music")):
+--
+--   arrival -2.3 dB   procession +1.6   plates +3.5   core +5.7   fall +2.6
+--
+-- Night is +3.2, so the arrival sits five and a half dB below the night the
+-- player has just survived -- that drop is what makes the rest of the cue an
+-- arrival rather than a volume knob -- and the core, the loudest sustained thing
+-- in the game, is two and a half dB above the night. The fall is quieter than
+-- either and has the highest *peak* of any state in the game, because it is one
+-- chord and nothing else.
+--
+-- The first pass of these numbers measured +8.2 dB at the core, which is the
+-- same mistake the TRIM table below was written to fix. Every state in the game
+-- now lives inside a 9 dB window that one music-bus fader can serve.
+local BOSS_PARTS = {
+  { name = "arrival",    bpm = 84,  barsPerChord = 2, prog = { 1, 1, 7, 1 },
+    layers = { pad = 0.52, bass = 0.6, arp = 0, bell = 0, perc = 0.22, choir = 0 },
+    theme = "none", density = 0.45, fadeBars = 1 },
+  { name = "procession", bpm = 100, barsPerChord = 1, prog = { 1, 2, 1, 7 },
+    layers = { pad = 0.58, bass = 0.66, arp = 0.42, bell = 0, perc = 0.5, choir = 0.68 },
+    theme = "none", density = 0.85, fadeBars = 2 },
+  { name = "plates",     bpm = 107, barsPerChord = 1, prog = { 1, 2, 6, 7 },
+    layers = { pad = 0.6, bass = 0.72, arp = 0.58, bell = 0.5, perc = 0.62, choir = 0.78 },
+    theme = "strong", density = 1.0, fadeBars = 2 },
+  { name = "core",       bpm = 113, barsPerChord = 1, prog = { 1, 4, 6, 7 },
+    layers = { pad = 0.46, bass = 0.7, arp = 0.56, bell = 0.8, perc = 0.58, choir = 0.78 },
+    theme = "full", density = 1.0, fadeBars = 2 },
+  { name = "fall",       bpm = 62,  barsPerChord = 4, prog = { 1, 1, 1, 1 },
+    layers = { pad = 0.8, bass = 0.28, arp = 0, bell = 0.45, perc = 0, choir = 0.9 },
+    theme = "none", density = 0, fadeBars = 1 },
+}
+
+-- The procession is fourteen waves (game/tuning, boss.rebelWaves) and the score
+-- walks its answering voice from the tonic to the octave across them, so however
+-- many bots actually go, the *line* is the same length. See Music.cohort.
+local PROCESSION_STEPS = 14
+
+-- Each part is a complete state def in its own right, so nothing downstream has
+-- to know the finale is special: it inherits the boss cue's modal centre and key
+-- and overrides everything else. `part` is what marks it as one of these.
+for i = 1, #BOSS_PARTS do
+  local p = BOSS_PARTS[i]
+  p.mode, p.root, p.part = STATES.boss.mode, STATES.boss.root, i
+end
 
 ------------------------------------------------------------------- the theme
 -- The tune. Fixed pitches on a fixed rhythm, four bars long, in two halves: a
@@ -152,6 +247,8 @@ local M = {
   chordIndex = 1, barsSinceChord = 0,
   gains = {}, targets = {}, fade = 0.25,
   pending = nil,
+  bossPart = nil,     -- 1..5 while the finale is running, nil otherwise
+  tollIndex = 0, tollTotal = PROCESSION_STEPS, tollPending = false,
   lastNotes = {},
   armed = {},         -- a layer only starts playing on a bar line, never mid-phrase
 }
@@ -188,6 +285,18 @@ local function setTargetsFromDef()
   local d = M.def
   local it = M.intensity
   for _, l in ipairs(LAYERS) do M.targets[l] = d.layers[l] or 0 end
+  if d.part then
+    -- The finale authors its own balance, so intensity is almost inert inside
+    -- it. Threat is a reading of how badly a night is going; during the
+    -- extraction it is neither news nor true -- the fight's shape is scripted
+    -- and the score is playing the script, not reacting to it. All threat is
+    -- allowed to do here is lean on the kit. O2 is ignored outright: the
+    -- arpeggio is the sound of the world healing, and the world is not healing.
+    M.targets.perc = min(1, M.targets.perc * (0.88 + it * 0.18))
+    M.targets.bass = min(1, M.targets.bass * (0.92 + it * 0.12))
+    M.targetBpm = d.bpm
+    return
+  end
   -- intensity: rhythm section forward, pad back, so pressure reads as pulse
   M.targets.bass  = min(1, M.targets.bass * (0.75 + it * 0.6))
   M.targets.perc  = min(1, M.targets.perc * (0.55 + it * 0.9))
@@ -214,8 +323,24 @@ function Music.setState(name, opts)
   if not Audio.loaded then Music.load() end
   opts = opts or {}
   M.state = name
-  M.def = d
   if opts.cycle then M.cycle = U.clamp(opts.cycle, 1, #CYCLE_MODES) end
+
+  -- The finale is five sub-states, and it always enters at the first of them.
+  -- The state also brackets the rig's own drone (engine/audio): the machine is
+  -- allowed a voice exactly as long as its cue is running, so however the run
+  -- ends -- victory, defeat, a scene switch nobody wrote a teardown for -- a
+  -- looping source cannot outlive the fight.
+  if name == "boss" then
+    M.bossPart = U.clamp(floor(opts.part or 1), 1, #BOSS_PARTS)
+    M.tollIndex, M.tollPending = 0, false
+    M.tollTotal = PROCESSION_STEPS
+    d = BOSS_PARTS[M.bossPart]
+    if Audio.rigOpen then Audio.rigOpen() end
+  else
+    M.bossPart = nil
+    if Audio.rigStop then Audio.rigStop(true) end
+  end
+  M.def = d
 
   -- modal centre: states with their own colour keep it, day/dusk darken by cycle
   local modeName = d.mode
@@ -242,7 +367,7 @@ function Music.setState(name, opts)
     M.firstStep = true      -- fire the downbeat now, not a bar from now
     M.snap = true           -- and come in at level, rather than fading up from nothing
   end
-  M.fade = (opts.fadeBars or 3) * barSeconds()
+  M.fade = (opts.fadeBars or d.fadeBars or 3) * barSeconds()
   setTargetsFromDef()
   if M.snap then
     for _, l in ipairs(LAYERS) do M.gains[l] = M.targets[l] M.armed[l] = true end
@@ -289,6 +414,122 @@ local function note(inst, semis, opts)
   return v
 end
 
+--- The procession's toll. A cohort has walked into the rig; this is the score
+--- acknowledging it, quantised to the next beat so fourteen of them are a
+--- rhythm and not fourteen interruptions.
+---
+--- The low bell never changes -- it is a bell in a tower, and it does not get
+--- more interesting because more of them have gone. What changes is the voice
+--- that answers it, which walks one step up the mode per wave, from the tonic to
+--- the octave across the whole procession. That is deliberately the same shape
+--- the game's theme opens with (THEME: a call that climbs to the octave), so the
+--- rebellion sings the first half of the player's own tune without ever quoting
+--- it -- and then the tune itself comes back two parts later.
+---
+--- These bypass the layer gains on purpose. The toll is an event, not a bed: it
+--- has to be audible in part 1 where the choir has not arrived yet.
+local function toll()
+  local i = max(1, M.tollIndex or 1)
+  local n = max(2, M.tollTotal or PROCESSION_STEPS)
+  local up = min(1, (i - 1) / (n - 1))
+  note("bell", M.root + semisOf(1) - 12, { volume = 0.6 * TRIM.bell, pan = -0.12 })
+  local deg = 1 + floor(up * 7 + 1e-6)
+  note("choir", M.root + semisOf(deg) + 12,
+       { volume = (0.44 + 0.34 * up) * TRIM.choir, pan = 0.22 })
+  note("bell", M.root + semisOf(deg) + 12,
+       { volume = (0.28 + 0.26 * up) * TRIM.bell, pan = 0.34 })
+end
+
+---------------------------------------------------------------- the finale
+--- Advance the extraction cue. Idempotent, so it is safe to drive from a signal
+--- that may fire more than once.
+function Music.bossPart(n)
+  n = U.clamp(floor(n or 1), 1, #BOSS_PARTS)
+  if M.state ~= "boss" then Music.setState("boss", { part = n }) return end
+  if M.bossPart == n then return end
+  M.bossPart = n
+  local d = BOSS_PARTS[n]
+  M.def = d
+  -- harmony moves on the next bar line like every other change in this file;
+  -- the layers start crossfading immediately
+  M.pending = { mode = d.mode, root = d.root, prog = d.prog }
+  M.fade = (d.fadeBars or 2) * barSeconds()
+  setTargetsFromDef()
+  Signal.emit("music:bossPart", n, d.name)
+end
+
+--- Which part is running (0 if the finale is not).
+function Music.bossPartIndex() return M.bossPart or 0 end
+
+--- A wave of the workforce has left for the rig. Call it once per wave; index
+--- and total are optional and default to counting.
+function Music.cohort(index, total)
+  if M.state ~= "boss" then return end
+  M.tollTotal = max(2, floor(total or M.tollTotal or PROCESSION_STEPS))
+  M.tollIndex = floor(index or ((M.tollIndex or 0) + 1))
+  M.tollPending = true
+  -- the first wave is the moment the whole game has been walking toward, and it
+  -- is also the choir's cue
+  if (M.bossPart or 1) < 2 then Music.bossPart(2) end
+end
+
+--- The rig is down.
+---
+--- Everything but the bed and the voices stops, the tempo falls away, and the
+--- cue plays the one chord Phrygian dominant has been spelling since the rig
+--- landed and never been allowed to mean: the major triad on its own tonic. It
+--- is not a modulation and it is not a key change -- it is the mode finally
+--- resolving to the thing it always contained, which is the only cadence this
+--- particular ending could honestly have.
+---
+--- It does not wait for a bar line. The rig hitting the island is the downbeat.
+function Music.bossFell()
+  if M.state ~= "boss" then return end
+  local n = #BOSS_PARTS
+  local d = BOSS_PARTS[n]
+  M.bossPart = n
+  M.def = d
+  M.mode = SCALES[d.mode] or M.mode
+  M.modeName = d.mode
+  M.root = d.root
+  M.prog = d.prog
+  M.chordIndex, M.barsSinceChord = 1, 0
+  M.pending = nil
+  M.tollPending = false
+  setTargetsFromDef()
+  M.fade = 1.0
+  -- the kit and the pedal go now, not over four bars: a ritardando under a
+  -- hi-hat is a slowing-down, not an ending
+  M.gains.arp, M.targets.arp = 0, 0
+  M.gains.perc, M.targets.perc = 0, 0
+  M.armed.pad, M.armed.choir, M.armed.bell, M.armed.bass = true, true, true, true
+
+  local t = chordTones(1)
+  note("choir", t[1] + 12, { volume = 1.0 * TRIM.choir, pan = -0.3 })
+  note("choir", t[2] + 12, { volume = 0.82 * TRIM.choir, pan = 0.06 })
+  note("choir", t[3] + 12, { volume = 0.78 * TRIM.choir, pan = 0.32 })
+  note("pad", t[1], { volume = 0.85 * TRIM.pad, pan = 0 })
+  note("pad", t[2] + 12, { volume = 0.6 * TRIM.pad, pan = 0.35 })
+  note("pad", t[3] + 12, { volume = 0.6 * TRIM.pad, pan = -0.35 })
+  note("bass", t[1] - 12, { volume = 0.9 * TRIM.bass })
+  note("bell", t[1] + 24, { volume = 0.8 * TRIM.bell, pan = 0.15 })
+  Signal.emit("music:bossPart", n, d.name)
+end
+
+--- Optional one-line wiring for the finale. Every cue it needs already exists as
+--- a signal, so a caller that would rather not scatter four Music.* calls
+--- through the game loop can bind them here instead. Nothing is bound until this
+--- is called: requiring this module must never change what the game sounds like.
+function Music.bindSignals(owner)
+  owner = owner or Music
+  Signal.clearOwner(owner)
+  Signal.on("phase:extraction", function() Music.setState("boss") end, owner)
+  Signal.on("bots:cohort",      function() Music.cohort() end, owner)
+  Signal.on("boss:phase",       function(n) Music.bossPart((n or 2) + 1) end, owner)
+  Signal.on("boss:died",        function() Music.bossFell() end, owner)
+  return owner
+end
+
 --- One 16th step of the sequencer.
 local function stepTick(step)
   local sib = step % 16                     -- step in bar
@@ -302,7 +543,16 @@ local function stepTick(step)
   local st = M.state
   local ending = (st == "ending")
   local boss = (st == "boss")
+  local part = d.part or 0                  -- 1..5 inside the finale, 0 outside
   local tones = chordTones(M.prog[M.chordIndex], boss and 7 or 9)
+
+  -- a cohort's toll waits for the next beat rather than firing where it landed,
+  -- which is what turns fourteen sacrifices into one line instead of fourteen
+  -- interruptions of the bar
+  if M.tollPending and sib % 4 == 0 then
+    M.tollPending = false
+    toll()
+  end
 
   ---------------------------------------------------------------- pad bed
   if live("pad") and sib == 0 then
@@ -321,17 +571,23 @@ local function stepTick(step)
   -- half of the phrase and answers with the theme in augmentation, so the
   -- tension arrives as a voice joining rather than as a fader moving.
   if live("choir") and sib == 0 then
-    if boss then
+    if boss and part <= 4 then
       if barInPhrase >= 2 then
         note("choir", tones[2] + 12, { volume = g.choir * TRIM.choir * 0.9, pan = -0.25 })
         note("choir", tones[1] + 12, { volume = g.choir * TRIM.choir * 0.8, pan = 0.3 })
       end
     else
       note("choir", tones[2] + 12, { volume = g.choir * TRIM.choir * 0.8, pan = -0.25 })
+      -- the fall holds a whole triad rather than a colour tone: it is a cadence,
+      -- not a bed
+      if boss then
+        note("choir", tones[1] + 12, { volume = g.choir * TRIM.choir * 0.72, pan = 0.28 })
+        note("choir", tones[3] + 12, { volume = g.choir * TRIM.choir * 0.6, pan = 0.02 })
+      end
     end
   end
   -- the theme, at half speed, on the choir: the boss cue's actual argument
-  if boss and live("choir") and sip % 8 == 0 then
+  if boss and part <= 4 and live("choir") and sip % 8 == 0 then
     local idx = floor(sip / 8) + 1
     local t = THEME[idx]
     if t and t[4] > 0.8 then
@@ -345,20 +601,26 @@ local function stepTick(step)
     local hit = (sib == 0) or (sib == 8)
     if it > 0.35 and sib == 6 then hit = true end
     if it > 0.6 and (sib == 11 or sib == 14) then hit = rng:chance(0.45 + it * 0.3) end
-    if boss and (sib % 4 == 0) then hit = true end
+    -- the finale's four-on-the-floor pedal, but not while the rig is still
+    -- landing: part 1 keeps the two-hit heartbeat so part 2 has somewhere to go
+    if boss and part >= 2 and part <= 4 and (sib % 4 == 0) then hit = true end
     if hit then
       local n = tones[1] - 12
       if sib ~= 0 and rng:chance(0.25) then n = tones[3] - 12 end
       -- the boss climbs chromatically through the last bar of every phrase:
       -- pressure you can hear coming rather than pressure that is simply loud
-      if boss and barInPhrase == 3 then n = n + floor(sib / 4) end
+      if boss and part >= 3 and barInPhrase == 3 then n = n + floor(sib / 4) end
       note("bass", n, { volume = g.bass * TRIM.bass * (sib == 0 and 0.95 or 0.7), pan = 0 })
     end
   end
 
   ---------------------------------------------------------------- arpeggio
   if live("arp") then
-    local every = (M.o2 > 0.55 or boss) and 2 or 4    -- opens from 8ths to 16ths
+    -- opens from 8ths to 16ths. In the finale that is a part gate, not an
+    -- oxygen one: the pedal doubles when the plates come off.
+    local every = 4
+    if boss then every = (part >= 3) and 2 or 4
+    elseif M.o2 > 0.55 then every = 2 end
     if sib % every == 0 and (boss or rng:chance(0.55 + dens * 0.4)) then
       local semis
       if boss then
@@ -388,6 +650,13 @@ local function stepTick(step)
         local play = not (ending and isAnswer)
         -- under a night, only the strong bones of the tune survive
         if st == "night" and t[4] < 0.8 then play = false end
+        -- The finale takes the tune away and gives it back. It is gone while the
+        -- rig lands and while the crew walks; its strong bones return when the
+        -- plates come off; and it is whole again over the open core -- the first
+        -- time it has been whole since the daylight. Nothing else in the arc
+        -- does as much work as this does.
+        if d.theme == "none" then play = false
+        elseif d.theme == "strong" and t[4] < 0.86 then play = false end
         if play then
           local semis = M.root + semisOf(t[2]) + 12
           note("bell", semis, {
@@ -414,7 +683,7 @@ local function stepTick(step)
     if sib == 0 or sib == 8 or (it > 0.5 and sib == 11 and rng:chance(0.5)) then
       note("kick", 0, { volume = vol * 0.9 })
     end
-    if boss and barInPhrase == 3 and sib % 4 == 2 then
+    if boss and part >= 3 and barInPhrase == 3 and sib % 4 == 2 then
       note("kick", 0, { volume = vol * 0.7 })
     end
     if sib % 2 == 0 and rng:chance(0.35 + it * 0.55) then
@@ -501,6 +770,9 @@ function Music.debug()
     chord = chordName(), chordIndex = M.chordIndex, prog = M.prog,
     gains = M.gains, targets = M.targets, layers = LAYERS,
     intensity = M.intensity, o2 = M.o2, cycle = M.cycle,
+    bossPart = M.bossPart,
+    bossPartName = M.bossPart and BOSS_PARTS[M.bossPart].name or nil,
+    tollIndex = M.tollIndex, tollTotal = M.tollTotal,
     playing = M.playing, notes = M.lastNotes, pending = M.pending,
     phraseStep = M.phraseStep, theme = THEME, phrase = PHRASE,
   }
@@ -510,5 +782,6 @@ Music.theme = THEME
 Music.phraseSteps = PHRASE
 Music.layerNames = LAYERS
 Music.stateNames = { "title", "day", "dusk", "night", "boss", "draft", "ending" }
+Music.bossParts = BOSS_PARTS
 
 return Music
