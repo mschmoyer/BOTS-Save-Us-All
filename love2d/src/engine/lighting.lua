@@ -166,8 +166,14 @@ local function allocate(w, h)
   cw = math.max(1, math.floor(scrW * scale))
   ch = math.max(1, math.floor(scrH * scale))
   if canvas then canvas:release() end
+  -- Same rule as postfx: never name a format without checking the driver has
+  -- it. rgba8 does not exist under love.js, and asking for it raises an error
+  -- that escapes pcall there.
   local fmts = love.graphics.getCanvasFormats()
-  local fmt = (fmts and fmts.rgba16f) and "rgba16f" or "rgba8"
+  local fmt = "normal"
+  if fmts then
+    if fmts.rgba16f then fmt = "rgba16f" elseif fmts.rgba8 then fmt = "rgba8" end
+  end
   canvas = love.graphics.newCanvas(cw, ch, { format = fmt })
   canvas:setFilter("linear", "linear")
   L.format = fmt
