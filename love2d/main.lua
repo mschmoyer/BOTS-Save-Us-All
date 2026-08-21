@@ -173,6 +173,13 @@ end
 --------------------------------------------------------------------- love.load
 function love.load()
   bootLog = (cfg("BOTS_WEB") ~= nil or cfg("BOTS_BOOTLOG") ~= nil) and not H.on
+  -- Where the run and the preferences actually land. In the browser this has
+  -- to sit inside the directory love.js mounts IndexedDB over, or every save
+  -- is written to memory and thrown away on reload -- which is exactly what
+  -- was happening. Printed because it is not guessable from here.
+  if bootLog and love.filesystem.getSaveDirectory then
+    print("SAVEDIR|" .. tostring(love.filesystem.getSaveDirectory()))
+  end
   Boot.stage(0.02, "engine linked")
   love.graphics.setDefaultFilter("linear", "linear", 4)
   love.graphics.setLineStyle("smooth")
