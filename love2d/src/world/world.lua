@@ -142,15 +142,22 @@ end
 --- append to the same list (a builder building, a maw spawning), so anything
 --- added past the original end is slid down into the gap the dead left behind -
 --- otherwise the array keeps a hole and the next sweep indexes nil.
+--- `done` decides when an entity may be removed. Trees outlive `alive` so their
+--- topple, fade and stump can play; everything else goes the moment it dies.
+local function stillHere(e)
+  if e.isDone then return not e:isDone() end
+  return e.alive
+end
+
 local function sweep(list, hash, dt)
   local n = #list
   local w = 1
   for i = 1, n do
     local e = list[i]
-    if e.alive then
+    if stillHere(e) then
       if e.update then e:update(dt) end
     end
-    if e.alive then
+    if stillHere(e) then
       if hash then hash:update(e) end
       list[w] = e w = w + 1
     else
@@ -280,7 +287,8 @@ function World:plantTree(x, y, by)
 
   local oldGrowth = self.chips:has("oldGrowth")
   local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000), {
-    startGrown = (by == "player" and self.chips:has("greenThumb")) and 0.5 or nil,
+    startGrown = (by == "player" and self.chips:has("greenThumb")) or nil,
+    growth = (by == "player" and self.chips:has("greenThumb")) and 0.5 or nil,
   }) or nil
   if not t then return false end
   t.world = self
@@ -806,14 +814,14 @@ local O2W = TU.o2.weight
 --- frame: at nine hundred trees this was the single most expensive thing in the
 --- update, and the reading does not need to be resampled 60 times a second.
 function World:updateOxygen(dt)
-  self.o2Accum = (self.o2Accum or 0) + dt
+  -- The reading eases every frame; only the census that feeds it is amortised.
+  -- (Running both on the census frame integrated 7*dt every four frames, so
+  -- everything time-based in here ran 1.75x fast.)
+  self:applyOxygen(dt)
+
   self.o2Frame = (self.o2Frame or 0) + 1
-  if self.o2Frame < 4 and self.forestPoints then
-    self:applyOxygen(dt)
-    return
-  end
-  local sliceDt = self.o2Accum
-  self.o2Accum, self.o2Frame = 0, 0
+  if self.o2Frame < 4 and self.forestPoints then return end
+  self.o2Frame = 0
 
   local mature, elders, points, alive = 0, 0, 0, 0
   for i = 1, #self.trees do
@@ -830,7 +838,6 @@ function World:updateOxygen(dt)
   end
   self.matureTrees, self.elderTrees, self.forestPoints = mature, elders, points
   self.treeCount = alive
-  self:applyOxygen(sliceDt)
 end
 
 --- The cheap per-frame half: ease the reading toward whatever the last census

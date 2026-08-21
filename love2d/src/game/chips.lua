@@ -67,8 +67,8 @@ local C = {
   -- Every card above is pure upside, which makes a draft arithmetic rather than
   -- a decision. These cost you something real.
   { id = "monoculture", f = F.GROWTH, r = 2, name = "MONOCULTURE",
-    desc = "Trees grow 60% faster. They will only seed ground already touching the wood.",
-    mod = { growRate = 1.6, frontierMax = 99 } },
+    desc = "Trees grow 60% faster, and only the outermost of them will seed at all.",
+    mod = { growRate = 1.6, frontierMax = 2 } },
   { id = "scrapDoctrine", f = F.BOTS, r = 2, name = "SCRAP DOCTRINE",
     desc = "Bots cost 35% less. Every one of them is made of tin.",
     mod = { botCost = 0.65, botHp = -2 } },
@@ -76,8 +76,8 @@ local C = {
     desc = "Nights are a quarter shorter. Twice as much comes out of them.",
     mod = { nightLen = 0.75, budget = 2.0 } },
   { id = "clearCut", f = F.LOGISTICS, r = 2, name = "CLEAR CUT",
-    desc = "Felling a tree yields 4 cobalt. The Blight knows it, and prefers your forest.",
-    mod = { fellYield = 4, blightFocus = 1.35 } },
+    desc = "Felling a tree yields 4 cobalt. The Blight can smell it from further away.",
+    mod = { fellYield = 4, blightFocus = 1.8 } },
   { id = "glassLungs", f = F.PLAYER, r = 3, name = "GLASS LUNGS",
     desc = "Everything you do is 25% faster. One hit puts you down.",
     mod = { moveSpeed = 1.25, dashCd = 0.75 } },

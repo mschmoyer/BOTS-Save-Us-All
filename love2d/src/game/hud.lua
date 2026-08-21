@@ -4,13 +4,18 @@
 -- screen; the middle third is never touched. The layout is an 8 px grid with a
 -- 24 px safe inset, and every readout has exactly one job:
 --
---   top left     cobalt (odometer) and forest count -- what you have
---   top centre   the OXYGEN arc -- the campaign, drawn as sky rather than a bar
+--   top left     cobalt, forest and workforce -- what you have
+--   top centre   the OXYGEN arc -- the campaign, drawn as sky rather than a bar,
+--                with the reason it is moving written under it
 --   top right    the cycle dial -- where you are in the run and how long is left
 --   bottom left  hearts, and the event feed stacking up above them
 --   bottom mid   the build bar (drawn by game/buildmenu.lua)
---   bottom right the workforce, by bot type
---   the edges    the dusk telegraph and the threat bleed
+--   bottom right belongs to the minimap, and nothing else
+--   the edges    the dusk telegraph
+--
+-- Bot chatter is drawn here too, not in the world: in world space it was
+-- graded, bloomed, and free to sit on top of the hearts. As a HUD layer it is
+-- crisp, it knows where every readout is, and it refuses to cover one.
 --
 -- Allocation: zero tables per frame. Colours come from ui.lua's scratch ring,
 -- numerals are memoised strings, the toast feed is a fixed pool, and every
@@ -63,7 +68,10 @@ end
 local PAD   = UI.pad
 local PHASE_LABEL = { day = "DAY", dusk = "DUSK", night = "NIGHT",
                       dawn = "DAWN", extraction = "EXTRACTION", ending = "ENDING" }
-local O2_MILESTONES = { 10, 25, 50, 75, 90, 100 }
+-- The quarters, and only the quarters. The world already owns milestone
+-- detection and plays the chime; the HUD used to keep a second, finer list and
+-- fire a second chime on top of it.
+local O2_MILESTONES = { 25, 50, 75, 100 }
 
 local function phaseColor(phase)
   if phase == "dusk" then return P.warn end
@@ -92,43 +100,109 @@ HUD.tick      = 0        -- last whole second of the dusk countdown
 HUD.tickPunch = 0
 HUD.alpha     = 1
 HUD.hidden    = false
+HUD.botCount  = 0
+HUD.o2Rate    = 0        -- smoothed %/s, signed
+HUD.o2Cause   = nil      -- why it is moving, when it is moving down
+HUD.o2Lag     = 0        -- the ghost tail: where the reading was a moment ago
 
--- workforce tallies, recounted on a slow timer rather than every frame
-local ROSTER = {}
-for i = 1, #TU.bots.order do ROSTER[i] = 0 end
-local rosterT = 0
 local heartAnim = {}
 for i = 1, 8 do heartAnim[i] = 0 end
+local botT = 0
 
 -------------------------------------------------------------------- toasts
-local TOAST_MAX = 6
+-- The feed is ranked, because a Builder finishing its ninth Planter and a bot
+-- you named dying are not the same event and must not look the same.
+--
+--   1  chatter   -- something came online. Short, small, coalesces.
+--   2  progress  -- a milestone, a chip, a night survived.
+--   3  loss      -- a bot did not come back. Bigger, slower, longer, and it
+--                   cannot be pushed out of the pool by chatter.
+local TOAST_MAX = 5
+local RANK_CHATTER, RANK_PROGRESS, RANK_LOSS = 1, 2, 3
 local toasts = {}
 for i = 1, TOAST_MAX do
-  toasts[i] = { text = "", sub = nil, color = P.ink, t = 0, dur = 0, live = false, y = 0, yTo = 0 }
+  toasts[i] = { text = "", sub = nil, color = P.ink, t = 0, dur = 0, live = false,
+                y = 0, yTo = 0, rank = 2, count = 1, h = 32, seq = 0 }
 end
+local ORDER = { 1, 2, 3, 4, 5 }
+local toastSeq = 0
 
---- Push an event onto the feed. Oldest falls off the bottom of the pool.
-function HUD.toast(text, color, sub, dur)
+--- Push an event onto the feed.
+---
+--- Repeat chatter with the same sub folds into the row that is already there
+--- and bumps a counter, so a builder streak is one line rather than six. When
+--- the pool is full the lowest-ranked, oldest row is the one that goes.
+function HUD.toast(text, color, sub, dur, rank)
+  rank = rank or RANK_PROGRESS
+  if rank <= RANK_CHATTER then
+    for i = 1, TOAST_MAX do
+      local t = toasts[i]
+      if t.live and t.rank == rank and t.sub == sub then
+        t.text  = text
+        t.count = t.count + 1
+        t.t     = 0
+        toastSeq = toastSeq + 1
+        t.seq   = toastSeq
+        return t
+      end
+    end
+  end
+
   local slot
   for i = 1, TOAST_MAX do
     if not toasts[i].live then slot = toasts[i] break end
   end
   if not slot then
-    -- retire the oldest
-    local oldest, ot = toasts[1], -1
+    local worst, wr, wt = nil, math.huge, -1
     for i = 1, TOAST_MAX do
-      if toasts[i].t > ot then ot = toasts[i].t oldest = toasts[i] end
+      local t = toasts[i]
+      if t.rank < wr or (t.rank == wr and t.t > wt) then worst, wr, wt = t, t.rank, t.t end
     end
-    slot = oldest
+    -- a loss never evicts a loss that is still being read
+    if wr >= rank and rank >= RANK_LOSS then return end
+    slot = worst
   end
   slot.text  = text
   slot.sub   = sub
   slot.color = color or P.ink
   slot.t     = 0
-  slot.dur   = dur or 4.4
+  slot.rank  = rank
+  slot.count = 1
+  slot.h     = rank >= RANK_LOSS and 44 or 30
+  slot.dur   = dur or (rank >= RANK_LOSS and 7.5 or (rank <= RANK_CHATTER and 3.0 or 4.6))
   slot.live  = true
   slot.y     = nil            -- nil = spawn at its resting place with a slide-in
+  toastSeq   = toastSeq + 1
+  slot.seq   = toastSeq
   return slot
+end
+HUD.RANK_CHATTER, HUD.RANK_PROGRESS, HUD.RANK_LOSS =
+  RANK_CHATTER, RANK_PROGRESS, RANK_LOSS
+
+--------------------------------------------------------------------- speech
+-- Bot chatter, queued from the world each frame and drawn as part of the HUD.
+-- A fixed pool: the world caps itself at three lines, this holds six for the
+-- frames where a cutscene has not yet flushed the old ones.
+local SPEECH_MAX = 6
+local speech = {}
+for i = 1, SPEECH_MAX do
+  speech[i] = { x = 0, y = 0, text = "", a = 0, bx = 0, by = 0, bw = 0, bh = 0 }
+end
+local speechN = 0
+-- placed rectangles for this frame, so bubbles can be told about each other
+local PLACED = {}
+for i = 1, SPEECH_MAX do PLACED[i] = { x = 0, y = 0, w = 0, h = 0 } end
+
+function HUD.clearSpeech() speechN = 0 end
+
+--- Called by the world (through the method this file installs on World) with a
+--- world-space anchor. Stored, not drawn: placement needs to know about every
+--- other bubble and about the whole HUD, and only the draw pass does.
+function HUD.queueSpeech(x, y, text, a)
+  if speechN >= SPEECH_MAX or not text then return end
+  speechN = speechN + 1
+  local s = speech[speechN]
+  s.x, s.y, s.text, s.a = x, y, text, a or 1
 end
 
 ------------------------------------------------------------------ hit targets
@@ -138,7 +212,6 @@ local hits = {
   cycle   = { x = 0, y = 0, w = 0, h = 0 },
   cobalt  = { x = 0, y = 0, w = 0, h = 0 },
   hearts  = { x = 0, y = 0, w = 0, h = 0 },
-  roster  = { x = 0, y = 0, w = 0, h = 0 },
   build   = { x = 0, y = 0, w = 0, h = 0 },
 }
 function HUD.hitTargets() return hits end
@@ -147,20 +220,30 @@ local L = {   -- resolved layout, rebuilt on resize
   sw = 0, sh = 0,
   o2x = 0, o2y = 0, o2w = 0, o2R = 0, o2cx = 0, o2cy = 0, o2a0 = 0, o2a1 = 0,
   dialX = 0, dialY = 0, dialR = 0,
-  feedX = 0, feedY = 0,
+  feedX = 0, feedY = 0, resH = 0,
 }
+
+-- Where the HUD lives, as rectangles, so bot chatter can be told to stay out of
+-- them. Rebuilt on resize only.
+local ZONES = {}
+for i = 1, 6 do ZONES[i] = { x = 0, y = 0, w = 0, h = 0 } end
+local function zone(i, x, y, w, h)
+  local z = ZONES[i]
+  z.x, z.y, z.w, z.h = x, y, w, h
+end
 
 local function layout(sw, sh)
   if L.sw == sw and L.sh == sh then return end
   L.sw, L.sh = sw, sh
 
   -- oxygen: a shallow arc struck from far below the screen, so it reads as
-  -- horizon rather than as a widget.
-  local w = U.clamp(sw * 0.40, 320, 620)
+  -- horizon rather than as a widget. On a short viewport it narrows rather
+  -- than reaching for the corners.
+  local w = U.clamp(sw * 0.36, 300, 560)
   w = floor(w / UI.u) * UI.u
   L.o2w = w
   L.o2x = floor((sw - w) * 0.5)
-  L.o2y = PAD + 14
+  L.o2y = PAD + 12
   local R = w * 2.35
   L.o2R = R
   L.o2cx = sw * 0.5
@@ -173,20 +256,26 @@ local function layout(sw, sh)
   L.dialX = sw - PAD - L.dialR
   L.dialY = PAD + L.dialR + 4
 
+  L.resH  = 124                       -- cobalt row + forest/bots row
   L.feedX = PAD
-  L.feedY = sh - PAD - 82
+  L.feedY = sh - PAD - 76
 
   hits.oxygen.x, hits.oxygen.y = L.o2x, PAD
-  hits.oxygen.w, hits.oxygen.h = w, 64
+  hits.oxygen.w, hits.oxygen.h = w, 78
   hits.cycle.x, hits.cycle.y = L.dialX - L.dialR - 8, L.dialY - L.dialR - 8
   hits.cycle.w, hits.cycle.h = (L.dialR + 8) * 2, (L.dialR + 8) * 2
-  hits.cobalt.x, hits.cobalt.y, hits.cobalt.w, hits.cobalt.h = PAD, PAD, 200, 108
+  hits.cobalt.x, hits.cobalt.y, hits.cobalt.w, hits.cobalt.h = PAD, PAD, 216, L.resH
   hits.hearts.x, hits.hearts.y = PAD, sh - PAD - 48
   hits.hearts.w, hits.hearts.h = 200, 48
-  hits.roster.x, hits.roster.y = sw - PAD - 300, sh - PAD - 56
-  hits.roster.w, hits.roster.h = 300, 56
-  hits.build.x, hits.build.y = sw * 0.5 - 336, sh - PAD - 76
-  hits.build.w, hits.build.h = 672, 76
+  hits.build.x, hits.build.y = sw * 0.5 - 300, sh - PAD - 66
+  hits.build.w, hits.build.h = 600, 66
+
+  zone(1, 0, 0, PAD + 232, PAD + L.resH + 12)              -- resources
+  zone(2, L.o2x - 44, 0, w + 88, L.o2y + 106)              -- oxygen
+  zone(3, L.dialX - L.dialR - 190, 0, L.dialR * 2 + 214, L.dialY + L.dialR + 20)
+  zone(4, 0, sh - 246, 340, 246)                           -- feed + hearts
+  zone(5, sw * 0.5 - 340, sh - 158, 680, 158)              -- build bar + boss bar
+  zone(6, sw - 320, sh - 292, 320, 292)                    -- the minimap's corner
 end
 
 --------------------------------------------------------------------- signals
@@ -199,13 +288,22 @@ function HUD.init(world)
   HUD.o2Shown = world and world.o2 or 0
   HUD.o2Mile = 0
   HUD.duskK, HUD.threat = 0, 0
+  HUD.o2Rate, HUD.o2Cause, HUD.o2Lag = 0, nil, HUD.o2Shown
   for i = 1, TOAST_MAX do toasts[i].live = false end
+  HUD.clearSpeech()
 
-  -- The world draws bot speech in world space through Draw.speechBubble.
-  -- The shape vocabulary does not own one, so the HUD supplies the styling.
-  local Dr = Opt.require("src.engine.draw")
-  if Dr and rawget(Dr, "speechBubble") == nil then
-    Dr.speechBubble = function(x, y, text, alpha) HUD.speechBubble(x, y, text, alpha) end
+  -- Take the speech layer off the world.
+  --
+  -- World:drawBubble runs inside the camera transform and inside the post
+  -- chain, so chatter was bloomed, colour-graded, scaled by the zoom and
+  -- perfectly happy to sit on top of the hearts. Replacing the method on the
+  -- class -- the world file itself is untouched -- turns every call into a
+  -- queue push that this file renders in screen space, after post, knowing
+  -- where every readout is.
+  local Wo = Opt.require("src.world.world")
+  if Wo and rawget(Wo, "_hudSpeech") == nil then
+    Wo._hudSpeech = true
+    Wo.drawBubble = function(_, x, y, text, a) HUD.queueSpeech(x, y, text, a) end
   end
 
   if bound then return end
@@ -218,19 +316,30 @@ function HUD.init(world)
   Signal.on("ui:denied", function() HUD.cobShake = 1 end)
   Signal.on("player:hurt", function() HUD.hurtFlash = 1 end)
 
+  -- Chatter. A Builder finishes a Planter every fourteen seconds and there can
+  -- be a dozen Builders, so this rank exists to be folded into one line.
   Signal.on("bot:built", function(b)
-    HUD.toast(b.name, P.accentCool, "ONLINE")
+    HUD.toast(b.name, P.accent, "ONLINE", nil, RANK_CHATTER)
   end)
   Signal.on("bot:lost", function(b, peaceful)
     if peaceful then return end
-    HUD.toast(b.name, P.danger, "LOST", 6.0)
+    HUD.toast(b.name, P.danger, "DID NOT COME BACK", nil, RANK_LOSS)
   end)
-  Signal.on("bot:revived", function(b) HUD.toast(b.name, P.accent, "BACK ON ITS FEET") end)
+  Signal.on("bot:revived", function(b)
+    HUD.toast(b.name, P.accent, "BACK ON ITS FEET", nil, RANK_PROGRESS)
+  end)
   Signal.on("chip:added", function(c) HUD.toast(c.name, P.ramp.ember[4], c.f, 5.5) end)
   Signal.on("director:dawn", function() HUD.toast("NIGHT SURVIVED", P.accent, nil, 5) end)
   Signal.on("phase:dusk", function(cycle, sx, sy)
     HUD.sideX, HUD.sideY = sx or 0, sy or -1
     HUD.toast("DUSK", P.warn, "THE RIFT IS OPENING", 5)
+  end)
+
+  -- The world detects milestones and plays the chime. The HUD only reacts.
+  Signal.on("o2:milestone", function(m)
+    HUD.o2Pulse = 1
+    HUD.toast("OXYGEN " .. itos(m) .. "%", P.o2, "ATMOSPHERE RISING", 5.5)
+    J.flashScreen(0.05, P.o2[1], P.o2[2], P.o2[3])
   end)
 
   Signal.on("tree:planted", function()
@@ -251,6 +360,8 @@ function HUD.update(dt, world)
   HUD.world = world
   if dt <= 0 then dt = 1 / 1000 end
   HUD.time = HUD.time + dt
+  -- the world refills this during its draw pass, every frame, from scratch
+  speechN = 0
   if not world then return end
 
   local sw, sh = lg.getDimensions()
@@ -267,16 +378,39 @@ function HUD.update(dt, world)
   HUD.o2Pulse   = max(0, HUD.o2Pulse - dt * 0.9)
   HUD.tickPunch = max(0, HUD.tickPunch - dt * 5)
 
-  -- oxygen milestones are the campaign's only applause
+  -- The oxygen trend, and the reason for it. A meter that falls without saying
+  -- why is just a punishment; the world already knows the answer, so ask it.
   local o2 = world.o2 or 0
-  for i = 1, #O2_MILESTONES do
-    local m = O2_MILESTONES[i]
-    if o2 >= m and HUD.o2Mile < m then
-      HUD.o2Mile = m
-      HUD.o2Pulse = 1
-      HUD.toast("OXYGEN " .. itos(m) .. "%", P.o2, "ATMOSPHERE RISING", 5.5)
-      Audio.play("o2_milestone")
-      J.flashScreen(0.05, P.o2[1], P.o2[2], P.o2[3])
+  local prevLag = HUD.o2Lag
+  HUD.o2Lag = U.damp(HUD.o2Lag, o2, 0.9, dt)
+  HUD.o2Rate = U.damp(HUD.o2Rate, (HUD.o2Lag - prevLag) / dt, 3, dt)
+  local debt = world.o2Debt or 0
+  local drain = world.bossDrain or 0
+  if drain > 0.05 then
+    HUD.o2Cause = "THE RIG IS TAKING IT"
+  elseif debt > 0.4 then
+    HUD.o2Cause = "SIPHONS FEEDING"
+  elseif HUD.o2Rate < -0.06 then
+    HUD.o2Cause = "THE CANOPY IS THINNING"
+  else
+    HUD.o2Cause = nil
+  end
+
+  -- the workforce, as one number: it is also the boss's health bar later
+  if world.botCount then
+    HUD.botCount = world:botCount()
+  else
+    botT = botT - dt
+    if botT <= 0 then
+      botT = 0.25
+      local n, bots = 0, world.bots
+      if bots then
+        for i = 1, #bots do
+          local b = bots[i]
+          if b.alive and b.state ~= "dead" then n = n + 1 end
+        end
+      end
+      HUD.botCount = n
     end
   end
 
@@ -306,26 +440,8 @@ function HUD.update(dt, world)
     HUD.tick = -1
   end
 
-  -- workforce census, four times a second
-  rosterT = rosterT - dt
-  if rosterT <= 0 then
-    rosterT = 0.25
-    for i = 1, #ROSTER do ROSTER[i] = 0 end
-    local bots = world.bots
-    if bots then
-      for i = 1, #bots do
-        local b = bots[i]
-        if b.alive and b.state ~= "dead" then
-          for k = 1, #TU.bots.order do
-            if TU.bots.order[k] == b.type then ROSTER[k] = ROSTER[k] + 1 break end
-          end
-        end
-      end
-    end
-  end
-
-  -- toast feed: settle each live toast into its slot
-  local idx = 0
+  -- toast feed: settle each live toast into its slot. Rows are not all the same
+  -- height any more, so the stack accumulates rather than multiplying an index.
   for i = 1, TOAST_MAX do
     local t = toasts[i]
     if t.live then
@@ -333,16 +449,29 @@ function HUD.update(dt, world)
       if t.t >= t.dur then t.live = false end
     end
   end
+  -- newest nearest the anchor, whatever order the pool recycled in
+  local n = 0
   for i = 1, TOAST_MAX do
-    local t = toasts[i]
-    if t.live then
-      t.yTo = -idx * 34
-      if t.y == nil then t.y = t.yTo + 22 end
-      t.y = U.damp(t.y, t.yTo, 14, dt)
-      idx = idx + 1
-    else
-      t.y = nil
+    if toasts[i].live then
+      n = n + 1
+      local j = n
+      while j > 1 and toasts[ORDER[j - 1]].seq < toasts[i].seq do
+        ORDER[j] = ORDER[j - 1]
+        j = j - 1
+      end
+      ORDER[j] = i
     end
+  end
+  local stack = 0
+  for k = 1, n do
+    local t = toasts[ORDER[k]]
+    stack = stack + t.h
+    t.yTo = -stack
+    if t.y == nil then t.y = t.yTo + 22 end
+    t.y = U.damp(t.y, t.yTo, 14, dt)
+  end
+  for i = 1, TOAST_MAX do
+    if not toasts[i].live then toasts[i].y = nil end
   end
 end
 
@@ -395,6 +524,19 @@ local function cobaltGlyph(x, y, r, alpha, hot)
   if hot and hot > 0.01 then Draw.glow(x, y, r * 3.4, P.ramp.cobalt[4], 0.5 * hot, 2) end
 end
 
+--- A bot in general -- a head with two lit eyes. Deliberately not any of the
+--- six silhouettes: this counts all of them, and borrowing the Planter's shape
+--- to mean "bots" would say the wrong thing.
+local function crewGlyph(x, y, r, alpha)
+  lg.setLineWidth(max(1.4, r * 0.18))
+  Draw.setColor(UI.c(P.ramp.metal[3], alpha))
+  Draw.roundRect("line", x - r * 0.72, y - r * 0.56, r * 1.44, r * 1.12, r * 0.3)
+  lg.line(x, y - r * 0.56, x, y - r * 1.0)
+  Draw.setColor(UI.c(P.eye, alpha))
+  lg.circle("fill", x - r * 0.26, y, r * 0.18, 8)
+  lg.circle("fill", x + r * 0.26, y, r * 0.18, 8)
+end
+
 --- A little canopy.
 local function treeGlyph(x, y, r, alpha, hot)
   Draw.setColor(UI.c(P.ramp.bark[2], alpha))
@@ -414,14 +556,20 @@ end
 -- them together.
 local function drawScrims(a)
   local sw, sh = L.sw, L.sh
-  UI.vgrad(0, 0, sw, 120, P.black, P.black, 0.18 * a, 0)
-  UI.vgrad(0, sh - 130, sw, 130, P.black, P.black, 0, 0.22 * a)
-  Draw.softShadow(PAD + 40, PAD + 52, 265, 165, 0.62 * a)         -- cobalt / forest
-  Draw.softShadow(sw * 0.5, L.o2y + 36, 350, 130, 0.48 * a)       -- oxygen
-  Draw.softShadow(L.dialX, L.dialY + 6, 265, 155, 0.62 * a)       -- cycle dial
-  Draw.softShadow(PAD + 70, sh - PAD - 78, 320, 220, 0.58 * a)    -- hearts + feed
-  Draw.softShadow(sw - PAD - 140, sh - PAD - 28, 280, 130, 0.58 * a) -- workforce
-  Draw.softShadow(sw * 0.5, sh - PAD - 34, 450, 120, 0.46 * a)    -- build bar
+  -- Measured, not guessed: over a sunlit canopy the old weights left caption
+  -- type at 1.7:1 against its own background. These are roughly doubled, and
+  -- the per-cluster pools are drawn twice -- once wide and soft to lift the
+  -- whole corner, once tight and dark under the type itself.
+  UI.vgrad(0, 0, sw, 132, P.black, P.black, 0.30 * a, 0)
+  UI.vgrad(0, sh - 146, sw, 146, P.black, P.black, 0, 0.34 * a)
+  Draw.softShadow(PAD + 60, PAD + 56, 300, 190, 0.62 * a)          -- resources, wide
+  Draw.softShadow(PAD + 52, PAD + 50, 190, 120, 0.62 * a)          -- resources, tight
+  Draw.softShadow(sw * 0.5, L.o2y + 44, 380, 150, 0.50 * a)        -- oxygen, wide
+  Draw.softShadow(sw * 0.5, L.o2y + 36, 200, 70, 0.55 * a)         -- oxygen, tight
+  Draw.softShadow(L.dialX - 30, L.dialY + 4, 250, 150, 0.60 * a)   -- cycle dial
+  Draw.softShadow(L.dialX, L.dialY, 90, 90, 0.55 * a)
+  Draw.softShadow(PAD + 80, sh - PAD - 92, 340, 250, 0.60 * a)     -- hearts + feed
+  Draw.softShadow(sw * 0.5, sh - PAD - 30, 430, 120, 0.46 * a)     -- build bar
 end
 
 ------------------------------------------------------------------- the oxygen
@@ -438,9 +586,21 @@ local function drawOxygen(w, a)
             (0.05 + 0.16 * t + 0.5 * pulse) * a, 3)
 
   -- track
-  Draw.ring(cx, cy, R, 3, a0, a1, UI.c(P.ink, 0.12 * a))
-  -- fill
+  Draw.ring(cx, cy, R, 3, a0, a1, UI.c(P.ink, 0.14 * a))
+
+  -- The ghost tail: where the reading was a few seconds ago. When the arc is
+  -- being eaten, the stretch between the ghost and the live edge is drawn in
+  -- danger red, so a night that costs you sky *looks* like a night that cost
+  -- you sky rather than a number quietly getting smaller.
   local ae = a0 + (a1 - a0) * t
+  local lag = U.saturate(HUD.o2Lag / TU.o2.target)
+  local losing = lag - t > 0.002
+  if losing then
+    local al = a0 + (a1 - a0) * lag
+    Draw.ring(cx, cy, R, 5, ae, al, UI.c(P.danger, 0.55 * a), 3)
+  end
+
+  -- fill
   if t > 0.004 then
     Draw.ring(cx, cy, R, 4 + pulse * 3, a0, ae, UI.c(P.o2, (0.85 + 0.15 * pulse) * a), 3)
   end
@@ -461,24 +621,43 @@ local function drawOxygen(w, a)
   -- the leading spark
   local ex, ey = cx + cos(ae) * R, cy + sin(ae) * R
   if t > 0.004 then
-    Draw.glow(ex, ey, 16 + pulse * 26, P.o2, (0.6 + pulse) * a, 3)
+    local sc = losing and P.danger or P.o2
+    Draw.glow(ex, ey, 16 + pulse * 26, sc, (0.6 + pulse) * a, 3)
     Draw.setColor(UI.c(P.white, (0.85 + 0.15 * sin(HUD.time * 6)) * a))
     lg.circle("fill", ex, ey, 2.6, 10)
   end
 
-  -- The arc is the picture; this is its caption. One baseline, three parts:
-  -- what it is, what it reads, and what it is aiming at. Nothing sits on top of
-  -- the arc, which is why the numeral hangs below it rather than inside it.
-  local ny2 = L.o2y + 30
+  -- The arc is the picture; this is its caption. The number, the word, and --
+  -- only when the air is actually going -- the reason. "TARGET 100" used to
+  -- live on the right of this line at 1.7:1 over a canopy; the end of the arc
+  -- is the target and always was.
+  local ny2 = L.o2y + 28
   local numSize = UI.ts.h2 * (1 + pulse * 0.12)
   local base = ny2 + numSize * 0.36
   local nw = UI.text(dec1(HUD.o2Shown), cx - 6, ny2, numSize,
                      UI.mix(P.ink, P.o2, 0.35 + 0.65 * pulse), "right", a, 0.02)
-  UI.text("%", cx - 2, base, UI.ts.small, UI.c(P.o2, 0.7 * a), "left", a, 0.05)
+  UI.text("%", cx - 2, base, UI.ts.small, UI.c(P.o2, 0.85 * a), "left", a, 0.05)
   UI.caption("OXYGEN", cx - 6 - nw - 14, base + 2, UI.ts.micro,
-             UI.c(P.inkDim, 0.8 * a), "right")
-  UI.caption("TARGET " .. itos(TU.o2.target), cx + 34, base + 2, UI.ts.micro,
-             UI.c(P.inkDim, 0.62 * a), "left")
+             UI.c(P.ink, 0.72 * a), "right", nil, 1)
+
+  -- the trend, under the numeral, on its own line
+  local cause = HUD.o2Cause
+  local rate = HUD.o2Rate
+  if cause then
+    local ty = ny2 + numSize + 8
+    local puls = 0.72 + 0.28 * sin(HUD.time * 4)
+    Draw.setColor(UI.c(P.danger, 0.95 * puls * a))
+    Draw.chevron(cx - 76, ty + 5, 6, pi * 0.5, 2, 0.85)
+    UI.caption(cause, cx - 64, ty, UI.ts.micro, UI.c(P.danger, 0.95 * a), "left", nil, 1)
+    UI.caption(dec1(rate) .. "/S", cx + 88, ty, UI.ts.micro,
+               UI.c(P.danger, 0.8 * a), "right", nil, 1)
+  elseif rate > 0.06 then
+    local ty = ny2 + numSize + 8
+    Draw.setColor(UI.c(P.accent, 0.8 * a))
+    Draw.chevron(cx - 44, ty + 5, 6, -pi * 0.5, 2, 0.85)
+    UI.caption("+" .. dec1(rate) .. "/S", cx - 32, ty, UI.ts.micro,
+               UI.c(P.accent, 0.85 * a), "left", nil, 1)
+  end
 end
 
 -------------------------------------------------------------------- the dial
@@ -538,15 +717,19 @@ local function drawCycleDial(w, a)
           UI.mix(P.ink, pc, urgent and 0.8 or 0.15), "right", a, 0.14)
   UI.caption(extracting and "THE SKY THEY HAVE TAKEN"
              or ("CYCLE " .. itos(w.cycle or 1) .. " OF " .. itos(TU.cycle.count)),
-             tx, cy + 6, UI.ts.micro, UI.c(P.inkDim, 0.8 * a), "right")
-
-  if urgent then
-    UI.brackets(cx - R - 10, cy - R - 10, (R + 10) * 2, (R + 10) * 2, 12, pc,
-                (0.5 + 0.5 * sin(HUD.time * 7)) * a, 2, 0)
-  end
+             tx, cy + 6, UI.ts.micro, UI.c(P.ink, 0.68 * a), "right", nil, 1)
+  -- Urgency used to be said four ways at once here: the ring colour, the
+  -- pulsing sweep, the punched numeral and a set of flashing corner brackets
+  -- the size of the dial. The brackets were the loudest and carried the least,
+  -- so they are gone.
 end
 
 ----------------------------------------------------------------- resources
+--- What you have: what you can spend, what you have grown, and how many of
+--- them there are. The last of those used to be a six-cell roster parked in the
+--- bottom-right corner on top of the map; as a single number it belongs here,
+--- next to the other two counts, and it is the number that becomes the boss's
+--- health bar in the last three minutes anyway.
 local function drawResources(w, a)
   local x, y = PAD, PAD
   local shake = HUD.cobShake > 0 and sin(HUD.cobShake * 46) * HUD.cobShake * 5 or 0
@@ -558,18 +741,27 @@ local function drawResources(w, a)
   if HUD.cobShake > 0.02 then cobColor = UI.mix(P.ramp.cobalt[4], P.danger, HUD.cobShake) end
   UI.text(itos(HUD.cob.v), x + 30 + shake, y + 4, UI.ts.h2 * (1 + flash * 0.06),
           cobColor, "left", a, 0.02)
-  UI.caption("COBALT", x + 30 + shake, y + 40, UI.ts.micro, UI.c(P.inkDim, 0.85 * a), "left")
+  UI.caption("COBALT", x + 30 + shake, y + 40, UI.ts.micro,
+             UI.c(P.ink, 0.72 * a), "left", nil, 1)
 
-  -- forest
-  local ty = y + 60
+  -- a hairline that ties the row above to the pair below
+  UI.rule(x, y + 56, 188, P.ink, 0.14 * a)
+
+  -- forest | bots, one row, so the block stays three lines tall
+  local ty = y + 64
   local tflash = U.ease.outQuad(HUD.treeFlash)
-  treeGlyph(x + 11, ty + 16, 11, a, tflash)
-  UI.text(itos(HUD.trees.v), x + 30, ty + 2, UI.ts.h3 * (1 + tflash * 0.06),
+  treeGlyph(x + 10, ty + 14, 10, a, tflash)
+  UI.text(itos(HUD.trees.v), x + 28, ty + 1, UI.ts.h3 * (1 + tflash * 0.06),
           UI.mix(P.accent, P.white, tflash * 0.6), "left", a, 0.02)
-  UI.caption("FOREST", x + 30, ty + 30, UI.ts.micro, UI.c(P.inkDim, 0.85 * a), "left")
+  UI.caption("FOREST", x + 28, ty + 30, UI.ts.micro,
+             UI.c(P.ink, 0.72 * a), "left", nil, 1)
 
-  -- a hairline that ties the two together
-  UI.rule(x, y + 52, 108, P.ink, 0.1 * a)
+  local bx = x + 112
+  crewGlyph(bx + 10, ty + 14, 10, 0.9 * a)
+  UI.text(itos(HUD.botCount), bx + 28, ty + 1, UI.ts.h3,
+          UI.c(P.ink, a), "left", a, 0.02)
+  UI.caption("BOTS", bx + 28, ty + 30, UI.ts.micro,
+             UI.c(P.ink, 0.72 * a), "left", nil, 1)
 end
 
 ------------------------------------------------------------------- hearts
@@ -585,21 +777,22 @@ local function drawHearts(w, a)
     local full = i <= (p.hp or 0)
     heartAnim[i] = U.damp(heartAnim[i] or 0, full and 1 or 0, 12, 1 / 60)
     local k = heartAnim[i]
-    -- shield chevron
+    -- drop shadow, then the socket. An empty socket has to be as legible as a
+    -- full one or the player cannot tell three hearts from two.
     lg.setLineWidth(2.5)
-    Draw.setColor(UI.c(P.ink, (0.12 + 0.1 * k) * a))
+    Draw.setColor(UI.c(P.black, 0.55 * a))
     Draw.chevron(hx + 9, y + 4, 11, -pi * 0.5, 3, 0.85)
-    Draw.setColor(UI.mix(P.inkFaint, P.danger, k, (0.35 + 0.65 * k) * a))
+    Draw.setColor(UI.mix(P.inkFaint, P.danger, k, (0.72 + 0.28 * k) * a))
     Draw.chevron(hx + 9, y, 11, -pi * 0.5, 3, 0.85)
-    if full then
+    if k > 0.02 then
       Draw.setColor(UI.mix(P.danger, P.white, hurt * 0.8, (0.55 + 0.45 * k) * a))
-      Draw.chevron(hx + 9, y + 6, 7, -pi * 0.5, 3, 0.85)
-      if hurt > 0.01 and i == (p.hp or 0) + 1 then
-        Draw.glow(hx + 9, y + 2, 26, P.danger, hurt * 0.8, 2)
-      end
+      Draw.chevron(hx + 9, y + 6, 7 * k, -pi * 0.5, 3, 0.85)
+    end
+    if hurt > 0.01 and i == (p.hp or 0) + 1 then
+      Draw.glow(hx + 9, y + 2, 26, P.danger, hurt * 0.8, 2)
     end
   end
-  UI.caption("INTEGRITY", x, y + 20, UI.ts.micro, UI.c(P.inkDim, 0.7 * a), "left")
+  UI.caption("INTEGRITY", x, y + 20, UI.ts.micro, UI.c(P.ink, 0.7 * a), "left", nil, 1)
 
   -- reboot timer, if the player is down
   if p.state == "down" then
@@ -609,50 +802,51 @@ local function drawHearts(w, a)
   end
 end
 
-------------------------------------------------------------------- workforce
-local function drawRoster(w, a)
-  local order = TU.bots.order
-  local n = #order
-  local cellW = 46
-  local x0 = L.sw - PAD - n * cellW
-  local y = L.sh - PAD - 34
-  UI.caption("WORKFORCE", L.sw - PAD, y - 16, UI.ts.micro, UI.c(P.inkDim, 0.8 * a), "right")
-  local total = 0
-  for i = 1, n do total = total + ROSTER[i] end
-  for i = 1, n do
-    local cx = x0 + (i - 1) * cellW + cellW * 0.5
-    local count = ROSTER[i]
-    local live = count > 0
-    HUD.botGlyph(order[i], cx, y + 8, 11, live and P.ramp.metal[3] or P.inkFaint,
-                 (live and 0.95 or 0.28) * a)
-    UI.text(itos(count), cx, y + 22, UI.ts.small,
-            UI.c(live and P.ink or P.inkFaint, (live and 1 or 0.3) * a), "center", a, 0.02)
-  end
-  UI.rule(x0, y - 8, n * cellW, P.ink, 0.09 * a)
-  if total > 0 then
-    UI.caption(itos(total) .. " ONLINE", x0, y - 16, UI.ts.micro,
-               UI.c(P.accentCool, 0.8 * a), "left")
-  end
-end
-
 --------------------------------------------------------------------- feed
+--- Three weights, and they are not interchangeable.
+---
+--- Chatter is one small line with a count. A loss is set at heading size with
+--- the name on its own baseline, a thick tick, a slow arrival and eight seconds
+--- to be read -- because the name of a bot that did not come back is the point
+--- of the game and it used to look exactly like a Builder saying hello.
 local function drawFeed(a)
   local x, baseY = L.feedX, L.feedY
   for i = 1, TOAST_MAX do
     local t = toasts[i]
     if t.live and t.y then
-      local k = U.saturate(min(t.t * 5, (t.dur - t.t) * 2.2))
-      local slide = (1 - U.ease.outCubic(U.saturate(t.t * 4))) * -18
+      local loss = t.rank >= RANK_LOSS
+      local inK  = U.ease.outCubic(U.saturate(t.t / (loss and 0.55 or 0.2)))
+      local k    = U.saturate(min(inK, (t.dur - t.t) * (loss and 1.4 or 2.2)))
+      local slide = (1 - inK) * (loss and -30 or -18)
       local y = baseY + t.y
       local aa = a * k
-      -- accent tick
-      Draw.setColor(UI.c(t.color, 0.9 * aa))
-      Draw.roundRect("fill", x + slide, y + 4, 3, 20, 1.5)
-      UI.text(t.text, x + 12 + slide, y + 4, UI.ts.label, UI.c(P.ink, aa), "left", aa, 0.06)
-      if t.sub then
-        local tw = Text.measure(t.text, UI.ts.label, nil)
-        UI.caption(t.sub, x + 12 + slide + tw + 10, y + 9, UI.ts.micro,
-                   UI.c(t.color, 0.85 * aa), "left")
+
+      if loss then
+        Draw.softShadow(x + 130, y + 20, 190, 34, 0.5 * aa)
+        Draw.setColor(UI.c(t.color, 0.95 * aa))
+        Draw.roundRect("fill", x + slide, y + 2, 4, 36, 2)
+        Draw.glow(x + slide + 2, y + 20, 40, t.color, 0.28 * aa, 2)
+        UI.text(t.text, x + 14 + slide, y + 2, UI.ts.h4,
+                UI.mix(P.ink, P.danger, 0.25), "left", aa, 0.08)
+        UI.caption(t.sub or "", x + 15 + slide, y + 28, UI.ts.micro,
+                   UI.c(t.color, 0.95 * aa), "left", nil, 1)
+      else
+        Draw.setColor(UI.c(t.color, 0.9 * aa))
+        Draw.roundRect("fill", x + slide, y + 4, 3, 18, 1.5)
+        local tw = UI.text(t.text, x + 12 + slide, y + 3, UI.ts.label,
+                           UI.c(P.ink, aa), "left", aa, 0.06)
+        local sx = x + 12 + slide + tw + 10
+        if t.count > 1 then
+          local cw = UI.captionWidth("x" .. itos(t.count), UI.ts.micro) + 10
+          Draw.setColor(UI.c(t.color, 0.22 * aa))
+          Draw.roundRect("fill", sx - 2, y + 5, cw, 15, 3)
+          UI.caption("x" .. itos(t.count), sx + cw * 0.5 - 2, y + 8, UI.ts.micro,
+                     UI.c(t.color, aa), "center")
+          sx = sx + cw + 6
+        end
+        if t.sub then
+          UI.caption(t.sub, sx, y + 8, UI.ts.micro, UI.c(t.color, 0.9 * aa), "left", nil, 1)
+        end
       end
     end
   end
@@ -717,18 +911,11 @@ local function drawTelegraph(w, a)
   end
 end
 
---- Threat bleeds in from every edge, quietly, so the screen itself tightens.
-local function drawThreat(a)
-  local k = HUD.threat
-  if k < 0.02 then return end
-  local sw, sh = L.sw, L.sh
-  local d = 150
-  local aa = 0.20 * k * a
-  UI.vgrad(0, 0, sw, d, P.ramp.blight[2], P.ramp.blight[2], aa * 0.7, 0)
-  UI.vgrad(0, sh - d, sw, d, P.ramp.blight[2], P.ramp.blight[2], 0, aa)
-  UI.hgrad(0, 0, d, sh, P.ramp.blight[2], P.ramp.blight[2], aa * 0.8, 0)
-  UI.hgrad(sw - d, 0, d, sh, P.ramp.blight[2], P.ramp.blight[2], 0, aa * 0.8)
-end
+-- The all-edge purple threat bleed used to be drawn here, underneath the
+-- directional dusk telegraph and on top of the post chain's own vignette:
+-- three vignettes at once, and the only one of the three that told the player
+-- anything was the directional one. Threat still drives the telegraph's
+-- strength (see HUD.duskK); it no longer gets a wash of its own.
 
 --- The player took a hit: a red iris that snaps in and eases out.
 local function drawHurt(a)
@@ -743,23 +930,79 @@ local function drawHurt(a)
 end
 
 --------------------------------------------------------------------- speech
---- Bot chatter, drawn in world space by world:drawSpeech.
-function HUD.speechBubble(x, y, text, alpha)
-  alpha = alpha or 1
-  if alpha <= 0.01 then return end
-  local size = 13
-  local w = Text.measure(text, size, nil)
-  local bw, bh = w + 22, size + 16
-  local bx, by = x - bw * 0.5, y - bh
-  Draw.setColor(UI.c(P.black, 0.72 * alpha))
-  Draw.roundRect("fill", bx, by, bw, bh, 5)
-  Draw.setColor(UI.c(P.ink, 0.16 * alpha))
+--- One bubble, in screen space, already placed.
+local BSIZE = UI.bs.small
+local function drawBubble(s, alpha)
+  local bx, by, bw, bh = s.bx, s.by, s.bw, s.bh
+  Draw.softShadow(bx + bw * 0.5, by + bh * 0.75, bw * 0.6, bh * 0.8, 0.34 * alpha)
+  Draw.setColor(UI.c(P.black, 0.80 * alpha))
+  Draw.roundRect("fill", bx, by, bw, bh, 6)
+  -- the tail leans back toward whoever is talking, which is what keeps a bubble
+  -- attached to its bot once it has been pushed clear of a readout
+  local ax = U.clamp(s.ax, bx + 10, bx + bw - 10)
+  lg.polygon("fill", ax - 5, by + bh - 1, ax + 5, by + bh - 1,
+             U.clamp(s.ax, bx - 6, bx + bw + 6), by + bh + 7)
+  Draw.setColor(UI.c(P.ink, 0.18 * alpha))
   lg.setLineWidth(1)
-  Draw.roundRect("line", bx + 0.5, by + 0.5, bw - 1, bh - 1, 5)
-  -- tail
-  Draw.setColor(UI.c(P.black, 0.72 * alpha))
-  lg.polygon("fill", x - 5, by + bh - 1, x + 5, by + bh - 1, x, by + bh + 7)
-  UI.text(text, x, by + 8, size, UI.c(P.ink, 0.95 * alpha), "center", alpha, 0.05)
+  Draw.roundRect("line", bx + 0.5, by + 0.5, bw - 1, bh - 1, 6)
+  UI.body(s.text, bx + bw * 0.5, by + 5, BSIZE, UI.c(P.ink, 0.96 * alpha), nil, "center")
+end
+
+local function overlaps(ax, ay, aw, ah, bx, by, bw, bh)
+  return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
+end
+
+--- Place and draw the queued chatter.
+---
+--- Every bubble is pushed upward until it clears the HUD's own zones and every
+--- bubble already placed. If it cannot be cleared without leaving the play area
+--- it is dropped: an idle bot's remark is worth less than an unobstructed view
+--- of the oxygen meter, and it will say something else in nine seconds.
+local function drawSpeech(w, cam, a)
+  if speechN == 0 or not cam or not cam.toScreen then return end
+  if w.cutscene then return end
+  local sw, sh = L.sw, L.sh
+  local placed = 0
+  for i = 1, speechN do
+    local s = speech[i]
+    local alpha = a * s.a
+    if alpha > 0.02 then
+      local tw = Text.bodyMeasure(s.text, BSIZE)
+      local bw, bh = tw + 20, BSIZE + 14
+      local sx, sy = cam:toScreen(s.x, s.y)
+      s.ax = sx
+      local bx = U.clamp(sx - bw * 0.5, 12, sw - bw - 12)
+      local by = sy - bh
+      -- lift clear of the furniture, then of each other
+      local guard = 0
+      local moved = true
+      while moved and guard < 12 do
+        moved = false
+        guard = guard + 1
+        for z = 1, #ZONES do
+          local r = ZONES[z]
+          if overlaps(bx, by, bw, bh + 8, r.x, r.y, r.w, r.h) then
+            by = r.y - bh - 10
+            moved = true
+          end
+        end
+        for k = 1, placed do
+          local o = PLACED[k]
+          if overlaps(bx, by, bw, bh + 6, o.x, o.y, o.w, o.h) then
+            by = o.y - bh - 8
+            moved = true
+          end
+        end
+      end
+      if by > 40 and by + bh < sh - 40 then
+        s.bx, s.by, s.bw, s.bh = bx, by, bw, bh
+        placed = placed + 1
+        local r = PLACED[placed]
+        r.x, r.y, r.w, r.h = bx, by, bw, bh
+        drawBubble(s, alpha)
+      end
+    end
+  end
 end
 
 ----------------------------------------------------------------------- draw
@@ -768,14 +1011,20 @@ end
 -- hide you from yourself. It fades up only when there is something to hide
 -- behind, so open ground stays clean.
 local pipFade = 0
+-- Hoisted: an anonymous callback here is a table allocation every frame, in the
+-- one function in the game that promises never to make one.
+local coverCount, coverY = 0, 0
+local function countCover(t)
+  if t.alive and t.y > coverY then coverCount = coverCount + 1 end
+end
 local function drawPlayerPip(w, cam, a)
   local p = w.player
   if not p or not cam then return end
   local cover = 0
   if w.hTree then
-    w.hTree:each(p.x, p.y - 30, 70, function(t)
-      if t.alive and t.y > p.y - 90 then cover = cover + 1 end
-    end)
+    coverCount, coverY = 0, p.y - 90
+    w.hTree:each(p.x, p.y - 30, 70, countCover)
+    cover = coverCount
   end
   local want = (p.state == "down") and 1 or min(1, cover / 3)
   pipFade = U.damp(pipFade, want, 7, love.timer.getDelta())
@@ -879,16 +1128,15 @@ function HUD.draw(w, cam)
   local prevLW = lg.getLineWidth()
   lg.setLineStyle("smooth")
 
-  drawScrims(a)
-  drawThreat(a)
   drawTelegraph(w, a)
   drawHurt(a)
+  drawSpeech(w, cam, a)      -- under the readouts: chatter never wins a fight
+  drawScrims(a)
 
   drawResources(w, a)
   drawOxygen(w, a)
   drawCycleDial(w, a)
   drawHearts(w, a)
-  drawRoster(w, a)
   drawPlayerPip(w, cam, a)
   drawChewMarkers(w, cam, a)
   drawBossBar(w, a)

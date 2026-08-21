@@ -199,7 +199,7 @@ local BEATS = {
     end,
   },
   {
-    id = "question", pri = 1, guard = "calm", delay = 4.0, patience = 240,
+    id = "question", pri = 1, guard = "calm", delay = 4.0, patience = 420,
     prep = function(world, ctx)
       local p = world.player
       local b = pickBot(world, p and p.x, p and p.y, nil,
@@ -212,7 +212,11 @@ local BEATS = {
     end,
   },
   {
-    id = "extraction", pri = 3, guard = "now", delay = 1.6,
+    -- The rig is on the ground and the bots have stopped working: this has to
+    -- play promptly or not at all. If the player was mid-reboot when it landed
+    -- it waits for them to get up, and gives up rather than talking over the
+    -- rebellion.
+    id = "extraction", pri = 3, guard = "now", delay = 1.6, patience = 26,
     prep = function(world, ctx)
       ctx.boss = ctx.boss or world.boss
       local a = pickBot(world, ctx.boss and ctx.boss.x, ctx.boss and ctx.boss.y)
@@ -222,7 +226,9 @@ local BEATS = {
     end,
   },
   {
+    -- Never before the scene that introduced the thing they are charging.
     id = "rebellion", pri = 3, guard = "now", delay = 0.4,
+    require = function() return Story.fired.extraction or not Story.armed.extraction end,
     prep = function(world, ctx)
       local p = world.player
       local a = ctx.bot
@@ -239,8 +245,10 @@ local BEATS = {
     prep = function(world, ctx)
       local p = world.player
       local a = pickBot(world, p and p.x, p and p.y)
+      local b = pickBot(world, p and p.x, p and p.y, a)
       bind("botA", a)
-      bind("botB", pickBot(world, p and p.x, p and p.y, a))
+      bind("botB", b)
+      ctx.bot, ctx.bot2 = a, b
       return true
     end,
   },
@@ -284,6 +292,18 @@ local TUT = {
     done = function(w) return Story.did.build == true end,
     anchor = playerOf,
     color = P.accent,
+  },
+  {
+    -- Dusk offers a trade with no UI attached to it anywhere else in the game:
+    -- half a minute more daylight for a heavier night. A player who is never
+    -- told cannot make the decision, and it is one of the two decisions in the
+    -- run. It arms only while the offer is live, so it can never nag.
+    id = "hold",
+    arm  = function(w) return w.canHoldDawn ~= nil and w:canHoldDawn() == true end,
+    done = function(w) return w.heldThisCycle == true end,
+    anchor = playerOf,
+    color = P.warn,
+    maxT = 11.0,
   },
   {
     id = "shove",
@@ -361,6 +381,7 @@ local function resetState()
   Story.moved    = 0
   Story.lastX, Story.lastY = nil, nil
   Story.did      = {}
+  Story.epitaphs = {}
   Story.watch    = nil
   Story.tut      = { active = nil, a = 0, t = 0, gap = 1.5, fading = false,
                      shown = {}, doneIds = {} }
@@ -445,14 +466,26 @@ local function subscribe()
     Story.watch.attack = true
   end, Story)
 
+  -- Every bot that dies hands over one line about what it actually did. It is
+  -- said out loud once, by the bot standing next to it, in the first-loss beat
+  -- -- and then again, in writing, next to its name in the memorial.
+  Signal.on("bot:epitaph", function(name, text)
+    if name and text then Story.epitaphs[name] = text end
+  end, Story)
+
   Signal.on("bot:lost", function(bot, peaceful)
     if peaceful then return end
     -- world.lua owns world.allLostNames (it records a record per bot, not a
     -- bare name). Writing strings in here too made the memorial sort a mixed
     -- list and crash the ending.
-    react("loss", bot.x, bot.y)
+    local first = not (Story.fired.firstLoss or Story.armed.firstLoss)
+    -- On the very first one, keep quiet: the cutscene opens on "it stopped",
+    -- and an ambient bubble that got there first spends the line.
+    if not first then react("loss", bot.x, bot.y) end
+    local ep = bot.epitaph and bot:epitaph() or nil
     queue("firstLoss", { lostName = bot.name, lostX = bot.x, lostY = bot.y,
-                         lostType = bot.type })
+                         lostType = bot.type,
+                         lostEpitaph = ep and ("it " .. ep) or nil })
   end, Story)
 
   Signal.on("phase:day", function(cycle)
@@ -472,6 +505,25 @@ local function subscribe()
   Signal.on("phase:night", function() react("night") end, Story)
   Signal.on("phase:dawn",  function() react("day") end, Story)
   Signal.on("boss:phase",  function() react("boss") end, Story)
+
+  -- The player traded a worse night for more daylight. Somebody who has to
+  -- work through that night has an opinion about it.
+  Signal.on("world:heldDawn", function() react("hold") end, Story)
+  Signal.on("o2:milestone",   function() react("grown") end, Story)
+
+  -- The rebellion goes in waves. The cutscene says it once; every cohort after
+  -- that says it in the world, on its way past, and then does not come back.
+  Signal.on("bots:cohort", function()
+    Story.reactT = 0
+    react("rebel")
+  end, Story)
+
+  -- The rig drained the sky. There is about a second and a half before the
+  -- screen goes black, and the last thing in it should be one of them.
+  Signal.on("world:failed", function()
+    Story.reactT = 0
+    react("failed")
+  end, Story)
   Signal.on("player:hurt", function()
     local p = Story.world and Story.world.player
     react("night", p and p.x, p and p.y)
@@ -544,7 +596,7 @@ local function updateBeats(dt, world)
     if e.def.patience and e.age > e.def.patience then
       e.expired = true
     elseif e.wait <= 0 and (Story.cooldown <= 0 or e.def.pri >= 3) then
-      if guardOk(e.def.guard, world) then
+      if guardOk(e.def.guard, world) and (not e.def.require or e.def.require(world, e.ctx)) then
         if not pick or e.def.pri > pick.def.pri then pick, pickI = e, i end
       end
     end
@@ -631,13 +683,13 @@ end
 local function hintFor(step)
   local c = step.copy
   if not c then return nil, nil end
-  if c.action then return c.action, nil end
   if c.id == "move" then
     if Input.scheme == "pad" then return nil, c.pad or "L-STICK" end
     if Input.scheme == "touch" then return nil, c.touch or "DRAG" end
     return nil, c.hint or "WASD"
   end
-  return nil, c.hint
+  -- a step may carry both: the button to press, and what pressing it costs
+  return c.action, c.hint
 end
 
 local HINT_TEXT = { tracking = 0.08, snap = true }
@@ -668,8 +720,9 @@ local function drawHint(step, alpha, world)
     size = size * 300 / lw
     lw = 300
   end
-  local subH = 20
-  local boxW = max(lw, 92) + 40
+  local subH = 20 + ((action and words) and 16 or 0)
+  local wordW = words and (Text.measure(words, 10, HINT_TEXT) or 0) or 0
+  local boxW = max(lw, wordW, 92) + 40
   local boxH = size + subH + 26
   local bx = floor(sx - boxW * 0.5)
   local by = floor(sy - boxH - 16 + rise)
@@ -689,6 +742,9 @@ local function drawHint(step, alpha, world)
   UI.text(label, sx, by + 12, size, col, "center", e, 0.08)
   if action then
     UI.prompt(sx, by + 12 + size + 14, action, nil, 12, P.ink, e, "center")
+    if words then
+      UI.caption(words, sx, by + 12 + size + 38, 10, P.inkDim, "center", e * 0.9)
+    end
   elseif words then
     UI.caption(words, sx, by + 14 + size + 8, 10, P.inkDim, "center", e * 0.95)
   end

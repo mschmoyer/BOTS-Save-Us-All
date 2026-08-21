@@ -58,24 +58,32 @@ function M.draw(world, cam)
   local sw, sh = love.graphics.getDimensions()
   local g = love.graphics
 
-  -- corner placement, growing toward the centre when opened
+  -- Corner placement, growing toward the centre when opened. The workforce
+  -- roster used to occupy this corner and the map was shoved 168 px up the
+  -- screen to dodge it; the corner is the map's now, so it sits where a corner
+  -- map belongs -- one safe inset in from both edges, above the build bar.
   local k = U.ease.inOutCubic(M.open)
-  local scale = U.lerp(1, math.min(sw * 0.62 / M.w, sh * 0.68 / M.h), k)
+  local corner = math.min(1, (sh - 250) / 400)      -- shrink on a short viewport
+  corner = math.max(0.62, corner)
+  local scale = U.lerp(corner, math.min(sw * 0.62 / M.w, sh * 0.68 / M.h), k)
   local w, h = M.w * scale, M.h * scale
-  local cx = U.lerp(sw - PAD - M.w, (sw - w) / 2, k)
-  -- sits above the build bar and clear of the workforce cluster in the corner
-  local cy = U.lerp(sh - PAD - M.h - 168, (sh - h) / 2, k)
-  local a = U.lerp(0.72, 0.97, k)
+  local cx = U.lerp(sw - PAD - M.w * corner, (sw - w) / 2, k)
+  local cy = U.lerp(sh - PAD - 22 - M.h * corner, (sh - h) / 2, k)
+  local a = U.lerp(0.62, 0.97, k)
 
   if k > 0.02 then
     g.setColor(P.black[1], P.black[2], P.black[3], 0.55 * k)
     g.rectangle("fill", 0, 0, sw, sh)
   end
 
-  -- sea plate behind the island
-  g.setColor(P.ramp.water[1][1], P.ramp.water[1][2], P.ramp.water[1][3], a * 0.9)
-  if Draw.roundRect then Draw.roundRect("fill", cx - 6, cy - 6, w + 12, h + 12, 8)
-  else g.rectangle("fill", cx - 6, cy - 6, w + 12, h + 12, 8) end
+  -- A soft pool under the plate rather than a hard bright rectangle sitting on
+  -- the world: closed, the map should read as a quiet inset, not a window.
+  if Draw.softShadow then
+    Draw.softShadow(cx + w * 0.5, cy + h * 0.5, w * 0.75, h * 0.9, 0.5)
+  end
+  g.setColor(P.ramp.water[1][1], P.ramp.water[1][2], P.ramp.water[1][3], a * 0.85)
+  if Draw.roundRect then Draw.roundRect("fill", cx - 5, cy - 5, w + 10, h + 10, 7)
+  else g.rectangle("fill", cx - 5, cy - 5, w + 10, h + 10, 7) end
 
   g.setColor(1, 1, 1, a)
   g.draw(M.canvas, cx, cy, 0, scale, scale)
@@ -137,9 +145,20 @@ function M.draw(world, cam)
   g.setLineWidth(1)
   g.rectangle("line", cx + vx * s, cy + vy * s, vw * s, vh * s)
 
+  -- a hairline edge, so the plate has a defined boundary at low alpha
+  g.setColor(P.ink[1], P.ink[2], P.ink[3], 0.16 * a)
+  g.setLineWidth(1)
+  if Draw.roundRect then Draw.roundRect("line", cx - 4.5, cy - 4.5, w + 9, h + 9, 7)
+  else g.rectangle("line", cx - 4.5, cy - 4.5, w + 9, h + 9) end
+
   if k > 0.35 and Text.display then
     Text.display("THE ISLAND", cx, cy - 34 * scale, 22 * scale,
                  { color = P.ink, alpha = k, tracking = 0.28 })
+  elseif Text.display and k < 0.3 then
+    -- what opens it, once, in the corner's own voice
+    Text.display(Input.glyph("map") .. "  MAP", cx + w, cy + h + 8, 10,
+                 { color = P.inkDim, alpha = (0.5 - k) * 1.2, tracking = 0.24,
+                   align = "right", shadow = 1 })
   end
   g.setColor(1, 1, 1, 1)
 end

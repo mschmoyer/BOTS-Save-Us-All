@@ -48,7 +48,7 @@ BuildMenu.barAlpha = 1
 local hoverK, denyK, buildK = {}, {}, {}
 for i = 1, N do hoverK[i], denyK[i], buildK[i] = 0, 0, 0 end
 
-local BAR = { x = 0, y = 0, w = 0, h = 76, slotW = 104, gap = 8, sw = 0, sh = 0 }
+local BAR = { x = 0, y = 0, w = 0, h = 66, slotW = 92, gap = 6, sw = 0, sh = 0 }
 
 local ITOS = {}
 local function itos(n)
@@ -103,7 +103,8 @@ local function layout()
   local sw, sh = lg.getDimensions()
   if BAR.sw == sw and BAR.sh == sh then return end
   BAR.sw, BAR.sh = sw, sh
-  BAR.slotW = (sw < 1180) and 88 or 104
+  BAR.slotW = (sw < 1180) and 78 or 92
+  BAR.h     = (sh < 700) and 58 or 66
   BAR.w = N * BAR.slotW + (N - 1) * BAR.gap
   BAR.x = floor((sw - BAR.w) * 0.5)
   BAR.y = sh - UI.pad - BAR.h
@@ -215,21 +216,30 @@ function BuildMenu.centre()
 end
 
 ----------------------------------------------------------------------- bar
+--- One slot.
+---
+--- Affordability is the thing this bar has to say from across the room while
+--- something is chewing a tree, so it is said three ways at once and none of
+--- them is subtle: an affordable slot is lit and has a live accent underline;
+--- an unaffordable one goes flat, loses its underline, and its cost is drawn in
+--- danger red with a bar showing how much of it you have. Guessing at four
+--- shades of grey was never going to work mid-fight.
 local function drawSlot(i, x, y, w, h, world, a)
   local id = ORDER[i]
   local def = TU.bots[id]
   local cost = costOf(def, world)
-  local afford = (world and world.cobalt or 0) >= cost
+  local have = world and world.cobalt or 0
+  local afford = have >= cost
+  local progress = cost > 0 and U.saturate(have / cost) or 1
   local deny = U.ease.outQuad(denyK[i])
   local built = buildK[i]
   local hov = hoverK[i]
   local shake = deny > 0 and sin(BuildMenu.time * 52) * deny * 4 or 0
   x = x + shake
 
-  local tint = afford and P.ink or P.inkFaint
-  if deny > 0.02 then tint = P.danger end
+  local ka = (afford and 1 or 0.5) * a          -- one dimming factor, used everywhere
 
-  Draw.setColor(UI.c(P.black, (0.46 + 0.2 * hov) * a))
+  Draw.setColor(UI.c(P.black, ((afford and 0.5 or 0.66) + 0.2 * hov) * a))
   Draw.roundRect("fill", x, y, w, h, UI.r)
   if hov > 0.002 then
     UI.vgrad(x + 1, y + h * 0.4, w - 2, h * 0.6 - 1, P.black, P.accent, 0, 0.14 * hov * a)
@@ -238,40 +248,54 @@ local function drawSlot(i, x, y, w, h, world, a)
     UI.vgrad(x + 1, y + 1, w - 2, h - 2, P.accent, P.accent, 0.22 * built * a, 0.02 * built * a)
   end
   lg.setLineWidth(1)
-  Draw.setColor(UI.c(deny > 0.02 and P.danger or P.ink,
-                     (0.1 + 0.22 * hov + 0.5 * deny) * a))
+  Draw.setColor(UI.c(deny > 0.02 and P.danger or (afford and P.ink or P.inkFaint),
+                     ((afford and 0.16 or 0.08) + 0.3 * hov + 0.5 * deny) * a))
   Draw.roundRect("line", x + 0.5, y + 0.5, w - 1, h - 1, UI.r)
 
   -- key chip, top-left
-  local kg = (Input.scheme == "pad") and itos(i) or itos(i)
-  Draw.setColor(UI.c(P.ink, 0.1 * a))
-  Draw.roundRect("fill", x + 6, y + 6, 18, 16, 3)
-  UI.text(kg, x + 15, y + 9, UI.ts.micro, UI.c(afford and P.inkDim or P.inkFaint, a),
+  Draw.setColor(UI.c(P.black, 0.55 * a))
+  Draw.roundRect("fill", x + 5, y + 5, 17, 15, 3)
+  UI.text(itos(i), x + 13.5, y + 7, UI.ts.micro,
+          UI.c(afford and P.ink or P.inkFaint, (afford and 0.9 or 0.5) * a),
           "center", a, 0.04)
 
   -- silhouette
-  HUD.botGlyph(id, x + w * 0.5, y + 30, 14,
-               afford and P.ramp.metal[3] or P.inkFaint, (afford and 1 or 0.42) * a)
+  HUD.botGlyph(id, x + w * 0.5, y + 27, 13,
+               afford and P.ramp.metal[3] or P.inkFaint, (afford and 1 or 0.45) * a)
 
   -- name
-  UI.caption(def.label, x + w * 0.5, y + h - 26, UI.ts.micro,
-             UI.c(afford and P.inkDim or P.inkFaint, (afford and 0.95 or 0.45) * a), "center")
+  UI.caption(def.label, x + w * 0.5, y + h - 24, UI.ts.micro,
+             UI.c(afford and P.ink or P.inkFaint, (afford and 0.92 or 0.5) * a),
+             "center", nil, 1)
 
-  -- cost
+  -- cost, with how close you are to it when you are not there yet
+  local costCol = afford and P.ramp.cobalt[4] or P.danger
   local cw = Text.measure(itos(cost), UI.ts.small, nil)
-  local cxx = x + w * 0.5 - (cw + 14) * 0.5
-  Draw.setColor(UI.c(afford and P.ramp.cobalt[3] or P.inkFaint, (afford and 1 or 0.4) * a))
-  Draw.diamond(cxx + 4, y + h - 9, 3.4, 4.4, "fill")
-  UI.text(itos(cost), cxx + 13, y + h - 15, UI.ts.small,
-          UI.c(afford and P.ramp.cobalt[4] or P.inkFaint, (afford and 1 or 0.42) * a),
-          "left", a, 0.02)
+  local cxx = x + w * 0.5 - (cw + 13) * 0.5
+  Draw.setColor(UI.c(afford and P.ramp.cobalt[3] or P.danger, (afford and 1 or 0.75) * a))
+  Draw.diamond(cxx + 4, y + h - 8, 3.2, 4.2, "fill")
+  UI.text(itos(cost), cxx + 12, y + h - 14, UI.ts.small,
+          UI.c(costCol, (afford and 1 or 0.85) * a), "left", a, 0.02)
+
+  -- the bottom edge: an accent underline when you can build it, a cobalt
+  -- progress sliver when you cannot
+  if afford then
+    Draw.setColor(UI.c(P.accent, (0.5 + 0.4 * hov) * a))
+    Draw.roundRect("fill", x + 8, y + h - 3, w - 16, 2, 1)
+  elseif progress > 0.02 then
+    Draw.setColor(UI.c(P.ramp.cobalt[2], 0.5 * a))
+    Draw.roundRect("fill", x + 8, y + h - 3, w - 16, 2, 1)
+    Draw.setColor(UI.c(P.ramp.cobalt[3], 0.8 * a))
+    Draw.roundRect("fill", x + 8, y + h - 3, (w - 16) * progress, 2, 1)
+  end
 
   -- recharge wipe after a successful placement
   if built > 0.01 then
     local k = 1 - built
-    Draw.setColor(UI.c(P.accent, 0.5 * built * a))
+    Draw.setColor(UI.c(P.accent, 0.75 * built * a))
     lg.rectangle("fill", x + 2, y + h - 3, (w - 4) * k, 2)
   end
+  return ka
 end
 
 function BuildMenu.drawBar(a)
@@ -282,10 +306,11 @@ function BuildMenu.drawBar(a)
   for i = 1, N do
     drawSlot(i, BAR.x + (i - 1) * (BAR.slotW + BAR.gap), BAR.y, BAR.slotW, BAR.h, world, a)
   end
-  -- The affordance for the wheel sits beside the bar, not under it: the bar
-  -- already ends one safe inset from the bottom of the screen.
-  UI.prompt(BAR.x - 16, BAR.y + BAR.h * 0.5 - 5, "radial", "WHEEL",
-            UI.ts.micro, P.inkFaint, 0.7 * a, "right")
+  -- The affordance for the wheel sits above the bar's left end rather than
+  -- floating beside it on bare ground, where it measured 1.6:1 against a
+  -- sunlit canopy no matter what colour it was.
+  UI.prompt(BAR.x + 2, BAR.y - 18, "radial", "WHEEL",
+            UI.ts.micro, P.inkDim, 0.85 * a, "left")
 end
 
 --------------------------------------------------------------------- ghost
@@ -375,8 +400,14 @@ function BuildMenu.drawWheel(a)
     local kx = cx + cos(mid) * (ro - 17)
     local ky = cy + sin(mid) * (ro - 17)
     UI.text(itos(cost), kx, ky - UI.ts.small * 0.5, UI.ts.small,
-            UI.c(afford and P.ramp.cobalt[4] or P.inkFaint, (afford and 1 or 0.45) * aa),
+            UI.c(afford and P.ramp.cobalt[4] or P.danger, (afford and 1 or 0.6) * aa),
             "center", aa, 0.02)
+
+    -- the same digit the bar shows, inboard: the two ways in teach each other
+    local nx2 = cx + cos(mid) * (ri + 13)
+    local ny2 = cy + sin(mid) * (ri + 13)
+    UI.text(itos(i), nx2, ny2 - UI.ts.micro * 0.5, UI.ts.micro,
+            UI.c(P.ink, (0.3 + 0.5 * hov) * aa), "center", aa, 0.04)
   end
 
   -- hub: what you can spend
@@ -399,11 +430,13 @@ function BuildMenu.drawWheel(a)
   if k > 0.2 then
     local id = ORDER[BuildMenu.sel]
     local def = TU.bots[id]
-    local pw, ph = 460, 76
+    local pw, ph = 460, 88
     local px = cx - pw * 0.5
     local py = cy + rOut + 30
     local sh = select(2, lg.getDimensions())
-    if py + ph > sh - UI.pad then py = cy - rOut - 30 - ph end
+    -- The plate has to clear the build bar as well as the bottom of the screen;
+    -- the prompt used to be hung underneath it and landed on top of the bar.
+    if py + ph > sh - UI.pad - BAR.h - 16 then py = cy - rOut - 30 - ph end
     local pa2 = aa * U.saturate((k - 0.2) / 0.5)
     UI.panel(px, py, pw, ph, 0.72 * pa2, UI.r, P.accent, 0.2 * pa2)
     UI.text(def.label, px + 20, py + 14, UI.ts.h3, UI.c(P.ink, pa2), "left", pa2, 0.1)
@@ -414,13 +447,13 @@ function BuildMenu.drawWheel(a)
     Draw.diamond(px + 20 + lw + 20, py + 24, 4.5, 6, "fill")
     UI.text(itos(cost), px + 20 + lw + 32, py + 14, UI.ts.h4,
             UI.c(afford and P.ramp.cobalt[4] or P.danger, pa2), "left", pa2, 0.02)
-    UI.body(def.desc, px + 21, py + 44, UI.bs.base, UI.c(P.inkDim, 0.9 * pa2), pw - 42)
+    UI.body(def.desc, px + 21, py + 42, UI.bs.base, UI.c(P.inkDim, 0.92 * pa2), pw - 42)
     if not afford then
       UI.caption("NOT ENOUGH COBALT", px + pw - 20, py + 14, UI.ts.micro,
-                 UI.c(P.danger, pa2), "right")
+                 UI.c(P.danger, pa2), "right", nil, 1)
     end
-    UI.prompt(px + pw - 20, py + ph + 14, "radial", "RELEASE TO PLACE", UI.ts.micro,
-              P.inkFaint, 0.7 * pa2, "right")
+    UI.prompt(px + pw - 20, py + ph - 20, "radial", "RELEASE TO PLACE", UI.ts.micro,
+              P.inkDim, 0.85 * pa2, "right")
   end
 end
 

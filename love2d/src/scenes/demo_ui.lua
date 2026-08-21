@@ -69,11 +69,13 @@ local function buildStub()
     cobalt = 143, treeCount = 128, o2 = 41.6,
     cycle = 3, phase = "dusk", phaseT = 7.4, phaseDur = 12,
     cutscene = false, bots = bots, enemies = {}, chips = chips, rng = rng,
+    o2Debt = 5.2,
     player = { hp = 2, maxHp = 3, state = "alive", x = 800, y = 470,
                vx = 0, vy = 0, faceX = 1, faceY = 0 },
     director = { sideVector = function() return 0, -1 end },
   }
   function W:threat() return 0.55 end
+  function W:botCount() return #self.bots end
   function W:setPhase(p) self.phase = p self.phaseT = 0 end
   function W:spawnBot() return false end
   return W
@@ -209,9 +211,11 @@ function S:enter()
   BuildMenu.init(W)
   if VFX.init then VFX.init() end
   -- a couple of feed entries, so the HUD's toast column is not empty
-  HUD.toast("SEED-19", P.accentCool, "ONLINE", 30)
-  HUD.toast("THORN-04", P.danger, "LOST", 30)
-  HUD.toast("OXYGEN 40%", P.o2, "ATMOSPHERE RISING", 30)
+  HUD.toast("OXYGEN 40%", P.o2, "ATMOSPHERE RISING", 30, HUD.RANK_PROGRESS)
+  HUD.toast("SEED-19", P.accent, "ONLINE", 30, HUD.RANK_CHATTER)
+  HUD.toast("SEED-22", P.accent, "ONLINE", 30, HUD.RANK_CHATTER)
+  HUD.toast("SEED-24", P.accent, "ONLINE", 30, HUD.RANK_CHATTER)
+  HUD.toast("THORN-04", P.danger, "DID NOT COME BACK", 30, HUD.RANK_LOSS)
 end
 
 -- Screen.update's numeric `for` fixes its limit before the body runs, so the

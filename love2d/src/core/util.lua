@@ -115,11 +115,14 @@ end
 
 ------------------------------------------------------------------------- noise
 -- Deterministic hash-based value noise. Cheap, tileable enough, no love dep.
+--- Deterministic 2D hash. The obvious integer mixer overflows double precision
+--- (its product lands on an exact multiple of 2^32, so the modulo returned zero
+--- for almost every input and every noise in the game was a constant). This one
+--- never leaves the range doubles represent exactly.
 local function hash2(x, y, seed)
-  local h = x * 374761393 + y * 668265263 + (seed or 0) * 1442695040888963407
-  h = (h % 4294967296)
-  h = (h * (h * h * 15731 + 789221) + 1376312589) % 4294967296
-  return h / 4294967296
+  local n = x * 127.1 + y * 311.7 + (seed or 0) * 74.7
+  n = sin(n) * 43758.5453123
+  return n - floor(n)
 end
 U.hash2 = hash2
 
@@ -166,13 +169,18 @@ end
 local Rng = {}
 Rng.__index = Rng
 function U.rng(seed)
-  return setmetatable({ s = (seed or 12345) % 2147483647 }, Rng)
+  local s = math.floor(math.abs(seed or 12345)) % 2147483647
+  if s == 0 then s = 12345 end
+  return setmetatable({ s = s }, Rng)
 end
+
+--- Lehmer / MINSTD. The previous LCG multiplied past 2^53, which froze its low
+--- bits and cut the period to about ten thousand - long-lived streams (the music
+--- sequencer, the wave director) repeated verbatim. This stays exact in doubles
+--- and has a full 2^31-2 period.
 function Rng:next()
-  local s = self.s
-  s = (s * 1103515245 + 12345) % 2147483648
-  self.s = s
-  return s / 2147483648
+  self.s = (self.s * 48271) % 2147483647
+  return self.s / 2147483647
 end
 function Rng:range(a, b)
   if not a then return self:next() end

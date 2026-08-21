@@ -90,6 +90,7 @@ function UI.darken(c, k, a)  return UI.mix(c, P.black, k, a) end
 local TO  = { color = nil, align = "left", size = nil, snap = true }
 local TO2 = { color = nil, align = "left", tracking = 0.14, snap = true }
 local TOB = { color = nil, align = "left", width = nil }
+local CAP_SHADOW = { dx = 1, dy = 1, color = P.black, alpha = 0.8 }
 
 --- Display type. `o` fields: color, alpha, align, width, tracking, weight,
 --- maxWidth, glow, shadow, snap. Returns rendered width.
@@ -106,11 +107,18 @@ function UI.text(str, x, y, size, color, align, alpha, tracking, opts)
 end
 
 --- Wide-tracked micro label: the game's caption voice.
-function UI.caption(str, x, y, size, color, align, alpha)
+---
+--- `shadow` is a pixel offset. Caption-sized type is one stroke wide, so over a
+--- sunlit canopy it disappears no matter what colour it is; a hard 1 px shadow
+--- gives every stroke its own edge and is the difference between 1.7:1 and
+--- something a player can actually read. HUD captions always pass it.
+function UI.caption(str, x, y, size, color, align, alpha, shadow)
   TO2.color = color or P.inkFaint
   TO2.align = align or "left"
   TO2.alpha = alpha
   TO2.tracking = 0.2
+  TO2.shadow = shadow and CAP_SHADOW or nil
+  if shadow then CAP_SHADOW.dx, CAP_SHADOW.dy = shadow, shadow end
   return Text.display(str, x, y, size or UI.ts.micro, TO2)
 end
 
@@ -139,6 +147,16 @@ function UI.hgrad(x, y, w, h, c1, c2, a1, a2)
   local l1, l2, l3, l4 = l[1], l[2], l[3], l[4]
   Draw.quad(x, y, x + w, y, x + w, y + h, x, y + h,
             UI.rgba(l1, l2, l3, l4), UI.c(c2, a2), UI.c(c2, a2), UI.rgba(l1, l2, l3, l4))
+end
+
+--- The seat a readout sits on: a soft elliptical pool of darkness sized to the
+--- rect it has to cover, with no edge anywhere. A rectangle of shadow has an
+--- edge and an edge reads as a panel; this reads as the screen getting deeper.
+--- `k` scales the falloff -- 1.0 just covers the rect, higher spreads it wider
+--- and softer.
+function UI.seat(x, y, w, h, alpha, k)
+  k = k or 1.15
+  Draw.softShadow(x + w * 0.5, y + h * 0.5, w * 0.5 * k, h * 0.5 * k, alpha or 0.6)
 end
 
 --- The kit's surface: a dark pane with a hairline edge and a top sheen.
@@ -229,13 +247,18 @@ function UI.prompt(x, y, action, label, size, color, alpha, align)
   local total = boxW + (label and (lw + 10) or 0)
   if align == "right" then x = x - total elseif align == "center" then x = x - total * 0.5 end
 
-  Draw.setColor(UI.c(P.ink, 0.09 * alpha))
+  -- The chip is a *dark* plate, not a light one. A 9%-ink wash was invisible
+  -- over anything brighter than dusk, which is exactly where these prompts get
+  -- drawn (the build bar sits on open ground).
+  Draw.setColor(UI.c(P.black, 0.62 * alpha))
   Draw.roundRect("fill", x, y - 6, boxW, boxH, 3)
-  Draw.setColor(UI.c(color, 0.34 * alpha))
+  Draw.setColor(UI.c(color, 0.40 * alpha))
   lg.setLineWidth(1)
   Draw.roundRect("line", x + 0.5, y - 5.5, boxW - 1, boxH - 1, 3)
   UI.text(g, x + boxW * 0.5, y, size, color, "center", alpha)
-  if label then UI.caption(label, x + boxW + 10, y, size, color, "left", alpha * 0.9) end
+  if label then
+    UI.caption(label, x + boxW + 10, y, size, color, "left", alpha * 0.9, 1)
+  end
   return total
 end
 
@@ -464,10 +487,17 @@ function UI.focusRing(x, y, w, h, k, color, time, radius)
   local e = U.ease.outBack(U.saturate(k))
   local grow = (1 - e) * 14
   local pulse = 0.72 + 0.28 * sin((time or 0) * 4.4)
-  Draw.setColor(UI.c(color, 0.055 * k))
-  Draw.roundRect("fill", x - 4, y - 4, w + 8, h + 8, (radius or UI.r) + 3)
+  local r = (radius or UI.r) + 3
+  Draw.setColor(UI.c(color, 0.075 * k))
+  Draw.roundRect("fill", x - 4, y - 4, w + 8, h + 8, r)
+  -- A continuous hairline as well as the brackets. The brackets say "this one";
+  -- the hairline is what keeps the row readable as focused when the corners
+  -- happen to land on something bright.
+  lg.setLineWidth(1)
+  Draw.setColor(UI.c(color, 0.4 * k))
+  Draw.roundRect("line", x - 3.5, y - 3.5, w + 7, h + 7, r)
   UI.brackets(x - grow, y - grow, w + grow * 2, h + grow * 2,
-              min(16, h * 0.5), color, k * pulse, 2, 3)
+              min(16, h * 0.5), color, k * pulse, 2.5, 3)
 end
 
 --------------------------------------------------------------------- button

@@ -9,9 +9,16 @@
 --   quiet    the boss is gone and nothing moves. Longer than is comfortable.
 --   gather   every surviving bot walks in and forms a ring around the player.
 --   settle   they stand there. Nobody says anything.
---   words    script.ending -- "the world is safe", and the suit comes off.
+--   words    script.ending -- "the world is safe", and the suit comes off. The
+--            script takes the dialogue panel away for the silence in the
+--            middle of it, so there is nothing on the screen but the ring.
 --   after    silence, held past the point where a game would normally cut.
 --   credits  the tally and the names, scrolling up over the forest.
+--
+-- The ring is the image the whole game is for, and by this point the island is
+-- eight hundred trees deep, so the canopy x-ray is pointed at the whole circle
+-- rather than at the player's shoulders: without it the last shot of the game
+-- is a wall of leaves with a letterbox on it.
 --
 -- Every stage can be skipped with `back`; skipping always lands you further
 -- down this same list, never on a black screen.
@@ -37,6 +44,7 @@ local DayNight = Opt.require("src.engine.daynight")
 local Lighting = Opt.require("src.engine.lighting")
 local Post     = Opt.require("src.engine.postfx")
 local Wind     = Opt.require("src.world.wind")
+local Tree     = Opt.require("src.entities.tree")
 
 local lg = love.graphics
 local floor, max, min = math.floor, math.max, math.min
@@ -47,13 +55,18 @@ local S = {}
 local T = {
   quiet     = 3.2,
   gatherMax = 7.0,
-  settle    = 2.0,
-  after     = 2.6,       -- silence after the last word. This is the whole point.
+  settle    = 3.0,       -- they stand there. Nobody says anything.
+  after     = 3.4,       -- silence after the last word. This is the whole point.
   ringGap   = 40,        -- arc length each bot wants on the circle
   ringMin   = 132,
   ringMax   = 250,
   walk      = 96,
-  zoomIn    = 1.72,
+  -- Framing is derived from the ring, not fixed: two survivors and forty want
+  -- the same picture, and 1.72 on a full-grown island is a close-up of a leaf.
+  ringFrame = 300,       -- world half-height the ring should occupy on screen
+  zoomIn    = 1.20,
+  zoomMax   = 1.42,
+  zoomMin   = 0.88,
   zoomOut   = 0.70,
   scroll    = 46,        -- credits, pixels per second
   barFrac   = 0.105,
@@ -74,6 +87,12 @@ local function hush(world)
   end
   if world.projectiles then
     for i = #world.projectiles, 1, -1 do world.projectiles[i] = nil end
+  end
+  -- Nobody updates the world from here on, so anything left in the speech
+  -- queue would hang over the ending forever. A bot saying "more sun today"
+  -- across the last shot of the game is not a small problem.
+  if world.speeches then
+    for i = #world.speeches, 1, -1 do world.speeches[i] = nil end
   end
 end
 
@@ -97,23 +116,46 @@ local function survivors(world)
   return out
 end
 
---- The names the run cost. World keeps them per-cycle, so gather every list.
-local function fallenNames(world)
-  local names, seen = {}, {}
-  local function push(n)
-    if n and not seen[n] then seen[n] = true names[#names + 1] = n end
+--- What the run cost, in the order it cost it.
+---
+--- This list is NOT sorted. Sorting it alphabetically turns a memorial into an
+--- inventory: it groups the dead by model number and throws away the one thing
+--- the order carried, which is the shape of the run -- three names from the
+--- night everything went wrong, sitting together.
+---
+--- Every name brings what that bot actually did. Story keeps the epitaphs as
+--- they are emitted; world.lua's record is the fallback, and a bare string
+--- (which is all the older per-cycle list holds) still lands, just without a
+--- line under it.
+local function epitaphFor(name, rec)
+  local ep = Story.epitaphs and Story.epitaphs[name]
+  if ep then return ep end
+  if type(rec) ~= "table" then return nil end
+  if (rec.planted or 0) > 0 then
+    return rec.planted == 1 and "planted one tree"
+                             or ("planted " .. rec.planted .. " trees")
+  end
+  if (rec.built or 0) > 0 then
+    return "built " .. rec.built .. (rec.built == 1 and " planter" or " planters")
+  end
+  return nil
+end
+
+local function fallenRecords(world)
+  local out, seen = {}, {}
+  local function push(rec)
+    local name = (type(rec) == "table") and rec.name or rec
+    if not name or seen[name] then return end
+    seen[name] = true
+    out[#out + 1] = { name = name, epitaph = epitaphFor(name, rec) }
   end
   if world.allLostNames then
-    for i = 1, #world.allLostNames do
-      local e = world.allLostNames[i]
-      push(type(e) == "table" and e.name or e)
-    end
+    for i = 1, #world.allLostNames do push(world.allLostNames[i]) end
   end
   if world.lostNames then
     for i = 1, #world.lostNames do push(world.lostNames[i]) end
   end
-  table.sort(names)
-  return names
+  return out
 end
 
 ------------------------------------------------------------------------- enter
@@ -141,7 +183,7 @@ function S:enter(world)
   if world then
     hush(world)
     self.bots = survivors(world)
-    self.fallen = fallenNames(world)
+    self.fallen = fallenRecords(world)
     self.stats = {
       trees   = world.treeCount or 0,
       planted = (world.stats and world.stats.planted) or 0,
@@ -198,6 +240,8 @@ function S:assignRing()
     b.ringA = a
   end
   self.ringR = r
+  -- frame the circle, whatever size it turned out to be
+  self.ringZoom = U.clamp(T.ringFrame / (r * 0.78 + 96), T.zoomMin, T.zoomMax)
 end
 
 --- Walk the bots to their places. Their own AI is not running; this is us.
@@ -266,6 +310,37 @@ function S:speak()
   })
 end
 
+--- The world is not running, so the one line a bot says out loud during the
+--- silence would otherwise never expire. Age it by hand.
+function S:tickSpeech(dt)
+  local sp = self.world and self.world.speeches
+  if not sp then return end
+  for i = #sp, 1, -1 do
+    local e = sp[i]
+    e.t = e.t + dt
+    if e.t >= (e.dur or 3.2) then table.remove(sp, i) end
+  end
+end
+
+--- Open the canopy over the whole circle, not just over the player's head.
+--- World:draw re-points the focus at the player every frame with a 78px
+--- radius, but the fade is driven from the update, so this is what wins.
+function S:tickCanopy(dt)
+  local world = self.world
+  local p = world and world.player
+  if not (p and world.trees and Tree.setFocus) then return end
+  local r = (self.ringR or T.ringMin) * 1.15 + 90
+  Tree.setFocus(p.x, p.y, r)
+  local list = world.trees
+  for i = 1, #list do
+    local t = list[i]
+    if t.updateXray then
+      if t.visible then t.onScreen = t:visible() end
+      t:updateXray(dt)
+    end
+  end
+end
+
 ------------------------------------------------------------------------ update
 function S:update(dt, realDt)
   realDt = realDt or dt
@@ -276,6 +351,8 @@ function S:update(dt, realDt)
   if Wind.update then Wind.update(realDt) end
   if VFX.update then VFX.update(realDt) end
   if Music.update then Music.update(realDt) end
+  self:tickSpeech(realDt)
+  self:tickCanopy(realDt)
   self.dawnT = min(1, (self.dawnT or 0) + realDt / 64)
   if DayNight.set then DayNight.set("dawn", self.dawnT) end
   if Audio.update and world and world.player then
@@ -315,11 +392,12 @@ function S:update(dt, realDt)
   local cam = self.camera
   local p = world and world.player
   if cam and p then
-    local zoom = T.zoomIn
+    local held = self.ringZoom or T.zoomIn
+    local zoom = held
     if stage == "after" then
-      zoom = U.lerp(T.zoomIn, 0.92, U.saturate(self.stageT / T.after))
+      zoom = U.lerp(held, held * 0.78, U.saturate(self.stageT / T.after))
     elseif stage == "credits" then
-      zoom = U.lerp(0.92, T.zoomOut, U.saturate(self.creditsT / 26))
+      zoom = U.lerp(held * 0.78, T.zoomOut, U.saturate(self.creditsT / 26))
     end
     cam.zoomTarget = zoom
     cam.zoom = U.damp(cam.zoom, cam.zoomTarget, 1.1, realDt)
@@ -408,7 +486,12 @@ function S:layoutCredits()
   if #f == 0 then
     push("none", C.none, nil, ROW.line)
   else
-    for i = 1, #f do push("name", f[i], nil, ROW.line + 4) end
+    for i = 1, #f do
+      local r = f[i]
+      -- name over epitaph, not name beside number: a two-line block reads as a
+      -- headstone, a label-and-value row reads as a table of results
+      push("name", r.name, r.epitaph, r.epitaph and (ROW.line + 26) or (ROW.line + 8))
+    end
   end
 
   push("space", nil, nil, ROW.big)
@@ -444,12 +527,25 @@ function S:drawCredits()
   local rx = cx + colW * 0.5
   local top = h - self.scrollY
 
-  -- a scrim, not a curtain: the forest stays visible behind every word
+  -- A scrim, not a curtain: the forest stays visible behind every word. It was
+  -- 0.30 and the words were not readable -- eight hundred sunlit canopies is
+  -- the brightest, busiest backdrop in the game, and 13px caption type over it
+  -- simply disappears. The fix is a soft column the type sits in, so the
+  -- forest stays bright at the edges of the frame and dark under the names.
   local k = U.saturate(self.creditsT / 5)
-  Draw.setColor(P.black, 0.30 * k)
+  Draw.setColor(P.black, 0.34 * k)
   lg.rectangle("fill", 0, 0, w, h)
+  local bandW = colW + 150
+  local bx = floor(cx - bandW * 0.5)
+  local band = 0.50 * k
+  Draw.setColor(P.black, band)
+  lg.rectangle("fill", bx, 0, bandW, h)
+  Draw.linearGradient(bx - 110, 0, 110, h,
+                      P.alpha(P.black, 0), P.alpha(P.black, band), 0)
+  Draw.linearGradient(bx + bandW, 0, 110, h,
+                      P.alpha(P.black, band), P.alpha(P.black, 0), 0)
   Draw.radialGradient(cx, h * 0.5, colW * 1.35,
-                      P.alpha(P.black, 0.34 * k), P.alpha(P.black, 0), h * 0.72)
+                      P.alpha(P.black, 0.22 * k), P.alpha(P.black, 0), h * 0.72)
 
   for i = 1, #rows do
     local r = rows[i]
@@ -473,6 +569,12 @@ function S:drawCredits()
           local grow = U.saturate((h * 0.80 - y) / 220)
           sapling(lx + 12, y + 20, grow, a)
           UI.text(r.text, lx + 42, y, 19, P.ink, "left", a * 0.95, 0.1, credOpts())
+          if r.value then
+            -- what it did, in the voice it said it in: lowercase, body face,
+            -- the same type its speech bubbles were set in
+            Text.body(r.value, lx + 42, y + 24, 14,
+                      { color = P.inkDim, alpha = a * 0.8 })
+          end
         elseif kind == "none" then
           UI.text(r.text, cx, y, 13, P.accent, "center", a, 0.26, credOpts())
         elseif kind == "close" then

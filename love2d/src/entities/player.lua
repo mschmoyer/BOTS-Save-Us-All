@@ -180,7 +180,11 @@ function Player:update(dt, camera)
   -- always wins: nobody means to plant a tree over a bot that is still beeping.
   local rescuee = (canAct and self.world and not self.carrying)
                   and self.world:nearestDownedBot(self.x, self.y, T.carry.pickupRange) or nil
-  if canAct and self:wants("plant") and self.plantCd <= 0 and not rescuee then
+  -- The plant key is also pick-up and put-down. Carrying or standing over
+  -- someone always wins: nobody means to plant a tree over a bot that is still
+  -- beeping, or to pay three cobalt for putting one down.
+  if canAct and self:wants("plant") and self.plantCd <= 0 and not rescuee
+     and not self.carrying then
     self:handPlant()
   end
 
@@ -213,7 +217,7 @@ function Player:dash(mx, my)
   dx, dy = U.norm(dx, dy)
   self.vx, self.vy = dx * T.dash.speed, dy * T.dash.speed
   self.dashTimer = T.dash.dur
-  self.dashCd = T.dash.cooldown
+  self.dashCd = T.dash.cooldown * self:chip("dashCd", 1)
   self.squash = 0.78
   self:setFacing(dx, dy)
   J.dilate(T.dash.dilation, T.dash.dilationDur)

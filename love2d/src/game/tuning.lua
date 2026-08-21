@@ -167,6 +167,7 @@ T.enemy = {
   bulwark = { cost = 18, hp = 14, speed = 44,  radius = 22, damage = 2, from = 3, armoured = true,
               armour = 0.5 },   -- fraction of incoming damage it shrugs off
   maw     = { cost = 34, hp = 22, speed = 0,   radius = 30, damage = 0, from = 4,
+              armoured = true, armour = 1.0,
               spawnEvery = 4.5, shovesToClose = 6 },
   spawnEdgePad = 90,
   fleeOnDawn   = 8,             -- seconds to retreat and despawn at dawn

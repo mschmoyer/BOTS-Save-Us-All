@@ -97,9 +97,16 @@ function Enemy:update_chomper(dt)
   if not self.target or not self.target.alive then
     -- A short search radius is what makes a Chomper dangerous: once the trees
     -- nearby are already spoken for it comes for your bots, and then for you.
-    self.target = w and w:nearestTree(self.x, self.y, self.def.treeSearch or 480, true)
+    local reach = (self.def.treeSearch or 480)
+                  * (w and w.chips and w.chips:get("blightFocus", 1) or 1)
+    -- Trees first, and hard: an unclaimed one nearby, then any tree at all a
+    -- little further out. Only a Chomper that genuinely cannot find a tree
+    -- turns on your bots, which keeps the pressure where the design wants it
+    -- without letting a big swarm strip the workforce in a single night.
+    self.target = w and w:nearestTree(self.x, self.y, reach, true)
     if not self.target and w then
-      self.target = w:nearestBot(self.x, self.y, 600) or w.player
+      self.target = w:nearestTree(self.x, self.y, reach * 2.4)
+                    or w:nearestBot(self.x, self.y, 520) or w.player
     end
     if self.target then
       self.target.markedBy = self
@@ -218,12 +225,21 @@ function Enemy:update_bulwark(dt)
   local t = self.target
   if not t then return end
   local d = self:seek(t.x, t.y, dt)
+  if d >= t.radius + self.radius + 4 and self.chewing then
+    if self.chewing.stopChew then self.chewing:stopChew() end
+    self.chewing = nil
+  end
   if d < t.radius + self.radius + 4 then
     self.slamT = (self.slamT or 0) + dt
     if self.slamT > 1.1 then
       self.slamT = 0
       if type(t.damage) == "function" then t:damage(self.def.damage, self.x, self.y) end
-      if t.startChew then t:startChew(self) end
+      -- one registration only: slamming re-registered every 1.1 s and never
+      -- released, so the tree kept taking chew damage with nothing near it
+      if t.startChew and not self.chewing then
+        t:startChew(self)
+        self.chewing = t
+      end
       VFX.emit("slam_dust", self.x, self.y)
       J.shake(0.1)
     end
@@ -277,6 +293,7 @@ end
 
 function Enemy:onDeath()
   self.alive = false
+  if self.chewing and self.chewing.stopChew then self.chewing:stopChew() self.chewing = nil end
   if self.target and self.target.stopChew then self.target:stopChew() end
   VFX.emit("blight_death", self.x, self.y, { power = self.radius / 14 })
   Audio.play("enemy_die", { x = self.x, y = self.y })

@@ -1389,10 +1389,13 @@ function Tree:draw(sunDirX, sunDirY)
     -- elders take a warm golden rim; everything else a cool sky rim.
     -- Both of these are the same for almost every tree in the forest, so they
     -- are only re-uploaded when they actually change.
-    local eld = floor(self.elderness * 8) + rimEpoch * 16
-    if cur.rimKey ~= eld then
-      cur.rimKey = eld
-      local e = eld / 8
+    -- The cache key folds in the epoch; the *value* must not, or every tree
+    -- reads as an elder and the rim alpha climbs without bound until it wraps.
+    local step = floor(self.elderness * 8)
+    local key = step + rimEpoch * 16
+    if cur.rimKey ~= key then
+      cur.rimKey = key
+      local e = step / 8
       local rc = e > 0.05 and RIM_GOLD or RIM_KEY
       uRimC[1], uRimC[2], uRimC[3] = rc[1], rc[2], rc[3]
       uRimC[4] = (TUNE.rimAlpha + e * 0.14) * rimGain

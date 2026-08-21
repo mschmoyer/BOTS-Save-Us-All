@@ -49,6 +49,9 @@ end
 
 function Entity:damage(n, srcX, srcY, opts)
   if not self.alive or self.invuln and self.invuln > 0 then return false end
+  -- Already on the ground: further hits must not re-run onDeath, which would
+  -- reset the rescue timer (bots) or the reboot and its cobalt fine (player).
+  if self.state == "down" then return false end
   self.hp = self.hp - (n or 1)
   self.flash = 0.12
   if self.onDamage then self:onDamage(n, srcX, srcY, opts) end

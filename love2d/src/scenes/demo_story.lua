@@ -53,6 +53,7 @@ function Stub.new()
   w.flags  = {}
   w.cutscene = false
   w.phase  = "day"
+  w.heldThisCycle = false
   w.cycle  = 7
   w.cobalt = 46
   w.o2     = 92
@@ -62,7 +63,15 @@ function Stub.new()
   w.stats  = { planted = 613, lost = 88, botsLost = 5, botsBuilt = 34,
                killed = 402, cobaltMined = 900, rescued = 7 }
   w.lostNames = {}
-  w.allLostNames = { "SEED-04", "SEED-11", "FRAME-02", "PYLON-03", "LAMP-01" }
+  -- real records, in the order they died: the memorial reads them, and a demo
+  -- that feeds it bare strings never shows the half of it that has epitaphs
+  w.allLostNames = {
+    { name = "SEED-04",  type = "planter",   cycle = 2, planted = 41 },
+    { name = "PYLON-03", type = "repulsor",  cycle = 3 },
+    { name = "FRAME-02", type = "builder",   cycle = 3, built = 6 },
+    { name = "SEED-11",  type = "planter",   cycle = 5, planted = 9 },
+    { name = "LAMP-01",  type = "beacon",    cycle = 6 },
+  }
 
   local cx, cy = 900, 700
   w.homeX, w.homeY = cx, cy
@@ -124,6 +133,7 @@ function Stub:nearestDownedBot() return self.downed end
 function Stub:nearestBot() return self.bots[1] end
 function Stub:nearestTree() return self.trees[1] end
 function Stub:botCount() return #self.bots end
+function Stub:canHoldDawn() return not self.heldThisCycle end
 function Stub:beaconAt() return nil end
 function Stub:beaconBoostAt() return 0 end
 function Stub:beaconSlowAt() return 0 end
@@ -225,7 +235,7 @@ for i = 1, #Script.order do
   SLOTS[#SLOTS + 1] = { kind = "beat", id = id, title = Script.titles[id] or id }
 end
 SLOTS[#SLOTS + 1] = { kind = "tut", title = "9  TUTORIAL  GROWTH",
-                      ids = { "move", "cobalt", "planter" } }
+                      ids = { "move", "cobalt", "planter", "hold" } }
 SLOTS[#SLOTS + 1] = { kind = "tut", title = "10  TUTORIAL  DANGER",
                       ids = { "shove", "dash", "rescue" } }
 
@@ -235,7 +245,8 @@ local D = {}
 local function ctxFor(w, id)
   if id == "firstBot"    then return { bot = w.bots[1] } end
   if id == "firstAttack" then return { enemy = w.chomper, tree = w.trees[1] } end
-  if id == "firstLoss"   then return { lostName = w.allLostNames[1],
+  if id == "firstLoss"   then return { lostName = w.allLostNames[1].name,
+                                       lostEpitaph = "it planted 41 trees",
                                        lostX = w.homeX - 90, lostY = w.homeY + 40 } end
   if id == "question"    then return { bot = w.bots[1] } end
   if id == "extraction"  then return { boss = w.boss } end
@@ -312,7 +323,6 @@ function D:selfTest()
   Dialogue.abort()
   Story.reset()
   for i = #w.speeches, 1, -1 do w.speeches[i] = nil end
-  w.allLostNames = { "SEED-04", "SEED-11", "FRAME-02", "PYLON-03", "LAMP-01" }
   w.flags = {}
   w.cutscene = false
   self.testLine = string.format(
