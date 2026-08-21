@@ -281,8 +281,13 @@ end
 function World:plantTree(x, y, by)
   if self.treeCount >= TU.tree.maxTrees then return false end
   if self.terrain and self.terrain.isLand and not self.terrain:isLand(x, y) then return false end
-  if self.terrain and self.terrain.biomeAt and not self.chips:has("pioneer") then
-    if self.terrain:biomeAt(x, y) == "scar" then return false end
+  -- Bare rock and blight scars stay bare, which is where the forest gets its
+  -- shape. Pioneer is the chip that lets you take the dead ground back.
+  if self.terrain and self.terrain.biomeAt then
+    local biome = self.terrain:biomeAt(x, y)
+    if TU.tree.barrenBiomes[biome] and not self.chips:has("pioneer") then
+      return false
+    end
   end
   local gap = TU.tree.spreadReject * 0.74
   if self.hTree:nearest(x, y, gap, function(t) return t.alive end) then return false end

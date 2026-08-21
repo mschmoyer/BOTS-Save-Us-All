@@ -121,6 +121,11 @@ T.tree = {
   spreadEvery   = { 70, 128 }, -- seconds between seedling attempts
   -- Only trees on the edge of the wood put out seedlings. That is what turns the
   -- forest into an advancing front with a defensible line instead of a mat.
+  -- Nothing roots in bare rock. The island's stone spines therefore stay clear,
+  -- and a finished forest has paths and clearings running through it instead of
+  -- being one uniform mass edge to edge. A soil *threshold* was tried first and
+  -- was far too blunt: it halved the wood everywhere rather than shaping it.
+  barrenBiomes   = { rock = true, scar = true },
   frontierRadius = 130,
   frontierMax    = 4,          -- neighbours within that radius before it stops
   spreadRange   = { 70, 190 },
@@ -144,7 +149,7 @@ T.o2 = {
   -- derived from plantable land rather than being a constant that some seeds
   -- could never reach: trees-worth of area, clamped so extremes stay sane.
   fullForest    = 950,          -- fallback when there is no terrain
-  forestPerArea = 1 / 3900,     -- tree-points per square world unit of land
+  forestPerArea = 1 / 4300,   -- per square unit of land; not all of it is plantable     -- tree-points per square world unit of land
   forestMin     = 520,
   forestMax     = 1250,            -- tree-points that read as a fully restored sky
   rise        = 0.42,           -- how fast the reading climbs toward the forest
