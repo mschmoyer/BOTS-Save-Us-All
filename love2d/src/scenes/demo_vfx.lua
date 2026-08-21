@@ -67,10 +67,13 @@ local SHOW = {
 }
 
 local COLS, ROWS = 8, 5
-local CELL_PERIOD = 0.8
+local CELL_PERIOD = 0.9
 
-local PHASES = { "grid", "stress", "ambient", "decals" }
-local PHASE_DUR = { 3.4, 2.0, 1.9, 6.0 }
+-- Phase 5 is a reference sheet for the generated atlas; it is reachable with
+-- the 5 key or BOTS_PHASE=5 but stays out of the automatic cycle.
+local PHASES = { "grid", "stress", "ambient", "decals", "shapes" }
+local PHASE_DUR = { 3.4, 2.0, 1.9, 6.0, 1e9 }
+local AUTO_PHASES = 4
 
 local STRESS_TARGET = 8000
 local STRESS_MIX = { "plant_burst", "impact", "bot_death", "blight_death",
@@ -136,7 +139,7 @@ function S:enter()
   self.phaseT = 0
   self.phase = 1
   self.locked = tonumber(os.getenv("BOTS_PHASE") or "")
-  if self.locked then self.phase = U.clamp(self.locked, 1, 4) end
+  if self.locked then self.phase = U.clamp(self.locked, 1, #PHASES) end
   self:startPhase()
 end
 
@@ -146,7 +149,7 @@ function S:startPhase()
   VFX.setWind(0, 0)
   self.phaseT = 0
   resetPerf()
-  for i = 1, #SHOW do fireAt[i] = (i - 1) * 0.018 end
+  for i = 1, #SHOW do fireAt[i] = 0 end   -- all cells fire in lockstep
   local name = PHASES[self.phase]
   if name == "ambient" then self:warmAmbient()
   elseif name == "grid" then self:warmGrid()
@@ -280,7 +283,7 @@ function S:update(dt)
   Decals.update(dt)
 
   if not self.locked and self.phaseT >= PHASE_DUR[self.phase] then
-    self.phase = self.phase % #PHASES + 1
+    self.phase = self.phase % AUTO_PHASES + 1
     self:startPhase()
   end
 end
@@ -296,8 +299,9 @@ function S:drawGrid()
   local g = love.graphics
   for i = 1, #SHOW do
     local x, y, cw, chh = cellRect(i, w, h)
-    bar(x + 3, y + 3, cw - 6, chh - 6, P.ramp.rock[1], 0.5)
-    g.setColor(P.ramp.rock[2][1], P.ramp.rock[2][2], P.ramp.rock[2][3], 0.5)
+    local st = P.mix(P.ramp.rock[1], P.ramp.rock[2], 0.42)
+    bar(x + 3, y + 3, cw - 6, chh - 6, st, 1)
+    g.setColor(P.ramp.rock[2][1], P.ramp.rock[2][2], P.ramp.rock[2][3], 0.7)
     g.setLineWidth(1)
     g.rectangle("line", x + 3.5, y + 3.5, cw - 7, chh - 7, 3, 3)
   end
@@ -374,7 +378,7 @@ function S:drawDecals()
   local w, h = self.w, self.h
   local g = love.graphics
   -- a dry ground to stain
-  local steps = 20
+  local steps = 90
   for k = 0, steps - 1 do
     local c = P.mix(P.ramp.sand[2], P.ramp.soil[1], k / (steps - 1))
     g.setColor(c[1], c[2], c[3], 1)
@@ -402,6 +406,36 @@ function S:drawDecals()
            0, h - 46, w, "center")
 end
 
+local SHAPE_ORDER = { "dot", "disc", "streak", "spark", "shard", "leaf",
+                      "smoke", "heart", "annulus", "mote", "bubble", "drop",
+                      "flare", "plus", "blob", "halo" }
+
+function S:drawShapes()
+  local w, h = self.w, self.h
+  local g = love.graphics
+  local cols, cw = 8, w / 8
+  local chh = (h - 90) / 4
+  g.setFont(self.fontM)
+  for i, name in ipairs(SHAPE_ORDER) do
+    local col = (i - 1) % cols
+    local row = floor((i - 1) / cols)
+    local x = col * cw + cw * 0.5
+    local y = 80 + row * chh + chh * 0.42
+    local q = VFX.quads[VFX.quadIndex[name]]
+    local sc = math.min(cw, chh) * 0.62 / 64
+    g.setBlendMode("alpha", "alphamultiply")
+    g.setColor(P.ink)
+    g.draw(VFX.tex, q, x - cw * 0.22, y, 0, sc, sc, 32, 32)
+    g.setBlendMode("add", "alphamultiply")
+    g.setColor(P.accent)
+    g.draw(VFX.tex, q, x + cw * 0.22, y, 0, sc, sc, 32, 32)
+    g.setBlendMode("alpha", "alphamultiply")
+    g.setColor(P.inkDim)
+    g.printf(name, col * cw, 80 + row * chh + chh * 0.86, cw, "center")
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
 function S:draw()
   local w, h = self.w, self.h
   local g = love.graphics
@@ -412,6 +446,7 @@ function S:draw()
   if name == "grid" then self:drawGrid()
   elseif name == "stress" then self:drawStress()
   elseif name == "ambient" then self:drawAmbient()
+  elseif name == "shapes" then self:drawShapes()
   else self:drawDecals() end
 
   perf.drw = (love.timer.getTime() - t0) * 1000
@@ -434,7 +469,7 @@ end
 
 --------------------------------------------------------------------- input
 function S:keypressed(k)
-  if k == "1" or k == "2" or k == "3" or k == "4" then
+  if k == "1" or k == "2" or k == "3" or k == "4" or k == "5" then
     self.phase = tonumber(k)
     self.locked = self.phase
     self:startPhase()

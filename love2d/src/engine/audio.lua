@@ -26,12 +26,13 @@ local floor, max, min, abs, random = math.floor, math.max, math.min, math.abs, m
 Audio.rate = 22050
 
 --------------------------------------------------------------------- constants
-local MAX_VOICES     = 28      -- hard concurrency cap (love.js is not generous)
-local MAX_PER_SOUND  = 5       -- clones kept per sound; beyond this we steal
+local MAX_VOICES     = 40      -- hard concurrency cap (love.js is not generous)
+local MAX_PER_SOUND  = 6       -- clones kept per sound; beyond this we steal
 local NEAR, FAR      = 260, 1500
 local PAN_WIDTH      = 820     -- world units mapped to full pan
 
 --------------------------------------------------------------------- state
+Audio.maxVoices = MAX_VOICES
 Audio.bus = { master = 0.9, sfx = 1.0, music = 0.62, ui = 0.8 }
 Audio.sounds = {}
 Audio.voices = {}
@@ -99,21 +100,24 @@ local function plantSpec(v)
   local st = Synth.degree(PENTA, v)        -- v = 1..PLANT_STEPS climbing degrees
   local hz = Synth.noteToHz(60 + st)       -- C4 upward
   return {
-    dur = 1.15,
+    dur = 1.0,
     layers = {
-      -- wooden knock
+      -- wooden knock: present enough to feel, quiet enough to stay out of the
+      -- bell's way (it is the frame, not the picture)
       { osc = "sine", freq = { from = 240, to = 96, tau = 0.012 },
-        env = { type = "perc", a = 0.0008, d = 0.09, curve = 3 }, amp = 0.55 },
-      { osc = "noise", env = { type = "perc", a = 0.0005, d = 0.035, curve = 5 }, amp = 0.5 },
+        env = { type = "perc", a = 0.0008, d = 0.08, curve = 3 }, amp = 0.3 },
+      { osc = "noise", env = { type = "perc", a = 0.0005, d = 0.03, curve = 5 }, amp = 0.22 },
       -- soil puff
-      { osc = "pink", env = { type = "perc", a = 0.006, d = 0.16, curve = 2 }, amp = 0.16 },
+      { osc = "pink", env = { type = "perc", a = 0.006, d = 0.16, curve = 2 }, amp = 0.1 },
       -- the bell
       { osc = "fm", freq = hz, ratio = 3.01,
-        index = { type = "exp", tau = 0.045, peak = 2.6 },
-        env = { type = "perc", a = 0.003, d = 0.85, curve = 1.9 }, amp = 0.42 },
-      { osc = "sine", freq = hz * 2, env = { type = "perc", a = 0.004, d = 0.4, curve = 2.4 },
-        amp = 0.12 },
-      { osc = "sine", freq = hz * 1.4983, env = { type = "perc", a = 0.01, d = 0.55, curve = 2 },
+        index = { type = "exp", tau = 0.05, peak = 2.2 },
+        env = { type = "perc", a = 0.003, d = 0.95, curve = 1.5 }, amp = 0.62 },
+      { osc = "sine", freq = hz, env = { type = "perc", a = 0.006, d = 0.9, curve = 1.6 },
+        amp = 0.3 },
+      { osc = "sine", freq = hz * 2, env = { type = "perc", a = 0.004, d = 0.45, curve = 2.4 },
+        amp = 0.1 },
+      { osc = "sine", freq = hz * 1.4983, env = { type = "perc", a = 0.01, d = 0.6, curve = 2 },
         amp = 0.07 },
     },
     fx = {
@@ -156,6 +160,23 @@ def("pickup_streak", {
       { osc = "fm", freq = hz * 2, ratio = 2, index = { type = "exp", tau = 0.03, peak = 1.4 },
         env = { type = "perc", a = 0.001, d = 0.1, curve = 3 }, amp = 0.16 },
     }, fx = { { "reverb", mix = 0.12, room = 0.5 } } }
+  end,
+})
+
+-- DEPOSIT_POP -- cobalt landing in the Home Rig: a metal ping over a small
+-- thunk, quiet enough to fire many times a second while a Harvester unloads.
+def("deposit_pop", {
+  gain = 0.45, variants = 4, pitchVar = 0.07,
+  build = function(v, n, r)
+    local hz = 1240 * r:range(0.9, 1.14)
+    return { dur = 0.35, layers = {
+      { osc = "fm", freq = hz, ratio = 2.41, index = { type = "exp", tau = 0.02, peak = 1.6 },
+        env = { type = "perc", a = 0.001, d = 0.2, curve = 3 }, amp = 0.4 },
+      { osc = "sine", freq = { from = 220, to = 110, tau = 0.02 },
+        env = { type = "perc", a = 0.001, d = 0.08, curve = 3 }, amp = 0.35 },
+      { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.01, curve = 5 }, amp = 0.2 },
+    }, fx = { { "svf", type = "hp", cutoff = 260, q = 0.7 },
+              { "reverb", mix = 0.16, room = 0.6 } } }
   end,
 })
 
@@ -877,7 +898,7 @@ local function mdef(name, t)
   return t
 end
 
-mdef("pad", { gain = 0.5, dur = 2.5, rate = 11025, sparse = 3, build = function(hz)
+mdef("pad", { gain = 0.5, dur = 2.5, rate = 11025, sparse = 4, build = function(hz)
   return { dur = 2.5, layers = {
     { osc = "saw", freq = hz, detune = -7, env = { a = 0.55, d = 0.6, s = 0.75, r = 1.1 }, amp = 0.16 },
     { osc = "saw", freq = hz, detune = 8, env = { a = 0.6, d = 0.6, s = 0.75, r = 1.1 }, amp = 0.16 },
@@ -903,10 +924,10 @@ mdef("bass", { gain = 0.72, dur = 1.0, rate = 11025, sparse = 2, build = functio
   }, normalize = 0.82, trim = false }
 end })
 
-mdef("bell", { gain = 0.44, dur = 1.8, sparse = 2, build = function(hz)
-  return { dur = 1.8, layers = {
+mdef("bell", { gain = 0.44, dur = 1.5, sparse = 3, build = function(hz)
+  return { dur = 1.5, layers = {
     { osc = "fm", freq = hz, ratio = 3.01, index = { type = "exp", tau = 0.06, peak = 2.2 },
-      env = { type = "perc", a = 0.004, d = 1.5, curve = 2 }, amp = 0.45 },
+      env = { type = "perc", a = 0.004, d = 1.25, curve = 2 }, amp = 0.45 },
     { osc = "sine", freq = hz * 2, env = { type = "perc", a = 0.004, d = 0.6, curve = 2.6 },
       amp = 0.12 },
   }, fx = { { "reverb", mix = 0.34, room = 0.88, damp = 0.3 } }, normalize = 0.8, trim = false }
@@ -919,7 +940,7 @@ mdef("pluck", { gain = 0.4, dur = 0.9, sparse = 2, build = function(hz)
            { "reverb", mix = 0.24, room = 0.8 } }, normalize = 0.8, trim = false }
 end })
 
-mdef("choir", { gain = 0.5, dur = 2.2, rate = 11025, sparse = 3, build = function(hz)
+mdef("choir", { gain = 0.5, dur = 2.2, rate = 11025, sparse = 4, build = function(hz)
   return { dur = 2.2, layers = {
     { osc = "additive", freq = hz, env = { a = 0.5, d = 0.5, s = 0.7, r = 1.0 }, amp = 0.4,
       partials = { { 1, 0.5 }, { 2, 0.26, 5 }, { 3, 0.16, -6 }, { 5, 0.07, 8 },
@@ -1128,6 +1149,7 @@ end
 
 --- Play a sound. Returns a voice handle (or nil if the sound does not exist).
 function Audio.play(name, opts)
+  if not Audio.loaded then Audio.load() end
   local entry = Audio.sounds[name]
   if not entry then return nil end
   opts = opts or nil
@@ -1180,11 +1202,13 @@ function Audio.play(name, opts)
 
   -- concurrency cap: steal the quietest, oldest voice
   if #Audio.voices >= MAX_VOICES then
+    -- steal whatever is closest to being over, weighted down by how loud it is:
+    -- cutting the tail off a quiet, nearly-finished voice is inaudible
     local worst, wi
     for i = 1, #Audio.voices do
       local v = Audio.voices[i]
       if not v.loop then
-        local score = v.t - v.gain
+        local score = v.t / max(0.05, v.dur) - v.gain * 0.5
         if not worst or score > worst then worst, wi = score, i end
       end
     end

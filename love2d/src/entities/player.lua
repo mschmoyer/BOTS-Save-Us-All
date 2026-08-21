@@ -47,6 +47,12 @@ function Player:init(x, y, world)
 end
 
 ------------------------------------------------------------------------ helpers
+--- One place to ask "did the player (or the autoplay agent) request this?".
+function Player:wants(action)
+  if self.agent then return self.autoAct and self.autoAct[action] == true end
+  return Input.pressed(action)
+end
+
 function Player:canAct()
   return self.state == "alive" and not (self.world and self.world.cutscene)
 end
@@ -71,7 +77,16 @@ function Player:update(dt, camera)
 
   local canAct = self:canAct()
   local mx, my = 0, 0
-  if canAct then mx, my = Input.moveVector() end
+  local auto
+  if canAct then
+    if self.agent then
+      local ax, ay, act = self.agent:decide(self, dt)
+      mx, my, auto = ax, ay, act
+    else
+      mx, my = Input.moveVector()
+    end
+  end
+  self.autoAct = auto
 
   -- aim resolves from mouse / right stick / touch, falling back to facing
   local ax, ay = Input.aimVector(self.x, self.y, self.faceX, self.faceY, camera)
@@ -87,7 +102,7 @@ function Player:update(dt, camera)
       self.vx, self.vy = self.vx * 0.42, self.vy * 0.42
       self.squash = 1.16
     end
-  elseif canAct and Input.pressed("dash") and self.dashCd <= 0 then
+  elseif canAct and self:wants("dash") and self.dashCd <= 0 then
     self:dash(mx, my)
   end
 
@@ -124,7 +139,7 @@ function Player:update(dt, camera)
   ------------------------------------------------------------------ shove
   self.shoveCd = math.max(0, self.shoveCd - dt)
   self.shoveAnim = math.max(0, self.shoveAnim - dt * 5)
-  if canAct and Input.pressed("shove") and self.shoveCd <= 0 and not self.charging then
+  if canAct and self:wants("shove") and self.shoveCd <= 0 and not self.charging then
     self:shove()
   end
 
@@ -143,10 +158,13 @@ function Player:update(dt, camera)
 
   ------------------------------------------------------------------ plant
   self.plantCd = math.max(0, self.plantCd - dt)
-  if canAct and Input.pressed("plant") and self.plantCd <= 0 then self:handPlant() end
+  if canAct and self:wants("plant") and self.plantCd <= 0 then self:handPlant() end
 
   ------------------------------------------------------------------ carry
-  if canAct and self.world then self:updateCarry(dt) end
+  if canAct and self.world and not self.agent then self:updateCarry(dt) end
+  if auto and auto.build and self.world then
+    self.world:spawnBot(self.x + self.faceX * 30, self.y + self.faceY * 30, auto.build)
+  end
 
   ------------------------------------------------------------------ cosmetic
   local sp = U.len(self.vx, self.vy) / T.maxSpeed

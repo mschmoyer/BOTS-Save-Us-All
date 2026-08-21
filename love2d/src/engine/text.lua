@@ -206,7 +206,7 @@ local function alignOffset(align, w, boxW)
 end
 
 ------------------------------------------------------------------- rendering
-local function strokeEntry(e, x, y, width)
+local function strokeEntry(e, width)
   local s = e.s
   for i = 1, #s do
     lg.line(s[i])
@@ -272,7 +272,7 @@ function Text.display(str, x, y, size, opts)
       local t = i / gl
       lg.setColor(gc[1], gc[2], gc[3], (gc[4] or 1) * ga * alpha / gl * 0.9)
       lg.setLineWidth(e.lw + gr * 2 * t)
-      strokeEntry(e, 0, 0, e.lw + gr * 2 * t)
+      strokeEntry(e, e.lw + gr * 2 * t)
     end
     lg.setBlendMode(bm, am)
   end
@@ -293,13 +293,13 @@ function Text.display(str, x, y, size, opts)
     lg.setLineWidth(e.lw)
     lg.push()
     lg.translate(dx, dy)
-    strokeEntry(e, 0, 0, e.lw)
+    strokeEntry(e, e.lw)
     lg.pop()
   end
 
   lg.setColor(color[1], color[2], color[3], (color[4] or 1) * alpha)
   lg.setLineWidth(e.lw)
-  strokeEntry(e, 0, 0, e.lw)
+  strokeEntry(e, e.lw)
 
   lg.pop()
   lg.setLineJoin(prevJoin)
@@ -337,13 +337,18 @@ function Text.wrap(str, size, width, opts)
   return lines
 end
 
+local blockOpts = {}
+
 --- Draw wrapped display type. Returns the total height used.
 function Text.displayBlock(str, x, y, size, width, opts)
   local lines = type(str) == "table" and str or Text.wrap(str, size, width, opts)
   local lh = (opts and opts.lineHeight) or 1.42
+  for k in pairs(blockOpts) do blockOpts[k] = nil end
+  if opts then for k, v in pairs(opts) do blockOpts[k] = v end end
+  blockOpts.width = width
+  blockOpts.maxWidth = nil
   for i = 1, #lines do
-    Text.display(lines[i], x, y + (i - 1) * size * lh, size,
-                 opts and setmetatable({ width = width }, { __index = opts }) or { width = width })
+    Text.display(lines[i], x, y + (i - 1) * size * lh, size, blockOpts)
   end
   return #lines * size * lh
 end

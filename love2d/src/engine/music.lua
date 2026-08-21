@@ -59,7 +59,7 @@ local STATES = {
   },
   boss = {
     mode = "phrygianDominant", root = 1, bpm = 104, barsPerChord = 1,
-    prog = { 1, 1, 2, 1 },
+    prog = { 1, 2, 1, 7 },      -- the b2 leaning on the tonic: threat, not menace-by-volume
     layers = { pad = 0.5, bass = 1.0, arp = 0.3, bell = 0.2, perc = 1.0, choir = 0.7 },
     density = 1.0,
   },
@@ -73,8 +73,8 @@ local STATES = {
     -- one voice. Nothing under it. This is the whole point of the game.
     mode = "ionian", root = 2, bpm = 52, barsPerChord = 4,
     prog = { 1, 6, 4, 1 },
-    layers = { pad = 0, bass = 0, arp = 0, bell = 0.75, perc = 0, choir = 0 },
-    density = 0.22,
+    layers = { pad = 0, bass = 0, arp = 0, bell = 1.0, perc = 0, choir = 0 },
+    density = 0.3,
   },
 }
 
@@ -86,6 +86,7 @@ local CYCLE_MODES = { "lydian", "lydian", "ionian", "ionian", "mixolydian", "dor
 local M = {
   state = "title", def = STATES.title,
   mode = SCALES.lydian, modeName = "lydian",
+  prog = STATES.title.prog,
   root = 2, bpm = 62, targetBpm = 62,
   intensity = 0, o2 = 0, cycle = 1,
   playing = false,
@@ -118,7 +119,7 @@ local function chordTones(deg, extra)
 end
 
 local function chordName()
-  local deg = M.def.prog[M.chordIndex]
+  local deg = M.prog[M.chordIndex]
   local root = (M.root + semisOf(deg)) % 12
   local third = semisOf(deg + 2) - semisOf(deg)
   local quality = (third <= 3) and "m" or ""
@@ -156,6 +157,7 @@ end
 function Music.setState(name, opts)
   local d = STATES[name]
   if not d then return end
+  if not Audio.loaded then Music.load() end
   opts = opts or {}
   M.state = name
   M.def = d
@@ -178,14 +180,20 @@ function Music.setState(name, opts)
     M.mode = SCALES[modeName] or SCALES.ionian
     M.modeName = modeName
     M.root = newRoot
+    M.prog = d.prog
     M.chordIndex = 1
     M.pending = nil
     M.playing = true
     M.bpm = d.bpm
     M.firstStep = true      -- fire the downbeat now, not a bar from now
+    M.snap = true           -- and come in at level, rather than fading up from nothing
   end
   M.fade = (opts.fadeBars or 3) * barSeconds()
   setTargetsFromDef()
+  if M.snap then
+    for _, l in ipairs(LAYERS) do M.gains[l] = M.targets[l] end
+    M.snap = nil
+  end
   Signal.emit("music:state", name)
 end
 
@@ -228,7 +236,7 @@ local function stepTick(step)
   local d = M.def
   local dens = d.density or 0.7
   local it = M.intensity
-  local tones = chordTones(d.prog[M.chordIndex], (M.state == "boss") and 7 or 9)
+  local tones = chordTones(M.prog[M.chordIndex], (M.state == "boss") and 7 or 9)
 
   ---------------------------------------------------------------- pad bed
   if g.pad > 0.02 and sib == 0 then
@@ -268,7 +276,7 @@ local function stepTick(step)
     if sib % every == 0 and rng:chance(0.55 + dens * 0.4) then
       local reach = 3 + floor(M.o2 * 4)             -- and reaches further up
       local idx = 1 + (floor(step / every) % reach)
-      local semis = M.root + semisOf(d.prog[M.chordIndex] + (idx - 1) * 2) + 12
+      local semis = M.root + semisOf(M.prog[M.chordIndex] + (idx - 1) * 2) + 12
       note("pluck", semis, {
         volume = g.arp * (0.45 + 0.3 * M.o2) * (sib % 4 == 0 and 1 or 0.72),
         pan = ((step % 5) - 2) * 0.22,
@@ -283,7 +291,7 @@ local function stepTick(step)
     if slot and rng:chance(dens * 0.75 + 0.15) then
       local deg = M.motif[M.motifPos]
       M.motifPos = M.motifPos % #M.motif + 1
-      local semis = M.root + semisOf(d.prog[M.chordIndex] + deg - 1) + 12
+      local semis = M.root + semisOf(M.prog[M.chordIndex] + deg - 1) + 12
       note("bell", semis, {
         volume = g.bell * (sib == 0 and 0.8 or 0.6),
         pan = ((M.motifPos % 3) - 1) * 0.3,
@@ -314,18 +322,20 @@ end
 local function barTick()
   M.bar = M.bar + 1
   M.barsSinceChord = M.barsSinceChord + 1
-  if M.barsSinceChord >= (M.def.barsPerChord or 1) then
+  if M.pending then
+    -- harmony only ever changes on a bar line, so a state change is felt as a
+    -- modulation rather than heard as a seam. Layer gains keep crossfading.
+    M.mode = SCALES[M.pending.mode] or M.mode
+    M.modeName = M.pending.mode
+    M.root = M.pending.root
+    M.prog = M.pending.prog
+    M.chordIndex = 1
     M.barsSinceChord = 0
-    M.chordIndex = M.chordIndex % #M.def.prog + 1
-    if M.chordIndex == 1 and M.pending then
-      -- land modal changes at the top of the progression: the shift is felt,
-      -- not heard as a seam
-      M.mode = SCALES[M.pending.mode] or M.mode
-      M.modeName = M.pending.mode
-      M.root = M.pending.root
-      M.pending = nil
-      Signal.emit("music:mode", M.modeName)
-    end
+    M.pending = nil
+    Signal.emit("music:mode", M.modeName)
+  elseif M.barsSinceChord >= (M.def.barsPerChord or 1) then
+    M.barsSinceChord = 0
+    M.chordIndex = M.chordIndex % #M.prog + 1
   end
 end
 
@@ -367,8 +377,8 @@ end
 function Music.debug()
   return {
     state = M.state, mode = M.modeName, root = NAMES[(M.root % 12) + 1],
-    bpm = M.bpm, bar = M.bar, beat = M.beatInBar + 1, step = M.stepInBar + 1,
-    chord = chordName(), chordIndex = M.chordIndex, prog = M.def.prog,
+    bpm = M.bpm, bar = M.bar + 1, beat = M.beatInBar + 1, step = M.stepInBar + 1,
+    chord = chordName(), chordIndex = M.chordIndex, prog = M.prog,
     gains = M.gains, targets = M.targets, layers = LAYERS,
     intensity = M.intensity, o2 = M.o2, cycle = M.cycle,
     playing = M.playing, notes = M.lastNotes, pending = M.pending,

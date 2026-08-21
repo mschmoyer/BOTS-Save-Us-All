@@ -68,10 +68,14 @@ SHAPE_FN.disc = function(u, v, r)
   return a, U.clamp(1.06 - lr * 0.60, 0.34, 1)
 end
 
+-- a spindle, not a capsule: it tapers to a point at both ends so a stretched
+-- streak reads as motion rather than as a bar
 SHAPE_FN.streak = function(u, v, r)
-  local d = sdSeg(u, v, -0.62, 0, 0.62, 0)
-  local a = U.smoothstep(0.30, 0.02, d)
-  return a, 0.5 + 0.5 * g2(d, 8)
+  if abs(u) > 0.97 then return 0, 0 end
+  local w = 0.29 * (1 - u * u) ^ 0.7
+  local d = abs(v) - w
+  local a = U.smoothstep(0.03, -0.055, d)
+  return a, 0.42 + 0.58 * g2(d + w * 0.5, 6)
 end
 
 SHAPE_FN.spark = function(u, v, r)
@@ -82,45 +86,51 @@ SHAPE_FN.spark = function(u, v, r)
   return a, 0.62 + 0.38 * core
 end
 
+-- shrapnel: a convex quad with a sharp leading point, solved as a signed
+-- distance so the silhouette stays crisp at any spin
+local SHARD_X = { 0.95, -0.10, -0.88, -0.34 }
+local SHARD_Y = { -0.04, -0.30,  0.02,  0.24 }
 SHAPE_FN.shard = function(u, v, r)
-  -- an angular sliver: a thin triangle, sharp point trailing
-  local ax, ay = 0.86, 0.0
-  local bx, by = -0.70, -0.30
-  local cx, cy = -0.52, 0.36
-  local function side(px, py, x1, y1, x2, y2)
-    return (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+  local d = -1e9
+  for i = 1, 4 do
+    local j = i % 4 + 1
+    local ax, ay = SHARD_X[i], SHARD_Y[i]
+    local ex, ey = SHARD_X[j] - ax, SHARD_Y[j] - ay
+    local l = sqrt(ex * ex + ey * ey)
+    local s = ((u - ax) * -ey + (v - ay) * ex) / l
+    if s > d then d = s end
   end
-  local s1 = side(u, v, ax, ay, bx, by)
-  local s2 = side(u, v, bx, by, cx, cy)
-  local s3 = side(u, v, cx, cy, ax, ay)
-  local inside = (s1 <= 0 and s2 <= 0 and s3 <= 0) or (s1 >= 0 and s2 >= 0 and s3 >= 0)
-  local dmin = math.min(abs(s1), abs(s2), abs(s3))
-  local a = inside and U.smoothstep(0.0, 0.05, dmin) * 0.35 + (inside and 0.65 or 0) or 0
-  if not inside then a = U.smoothstep(0.05, 0.0, dmin) * 0.35 end
-  -- lit along the leading edge
-  return U.saturate(a), U.clamp(0.55 + 0.55 * (u + 0.7) * 0.6, 0.35, 1)
+  local a = U.smoothstep(0.035, -0.02, d)
+  local l = 0.5 + 0.5 * U.saturate((u + 0.75) / 1.5) - 0.18 * U.saturate(v * 2)
+  return a, U.clamp(l, 0.32, 1)
 end
 
+-- an asymmetric leaf: broad near the stem, drawn out to a tip, with a midrib
 SHAPE_FN.leaf = function(u, v, r)
-  local x = u * 1.18
-  if abs(x) > 1 then return 0, 0 end
-  local w = 0.46 * sqrt(1 - x * x) * (0.55 + 0.45 * (1 - abs(x)))
-  local d = abs(v) - w
-  local a = U.smoothstep(0.02, -0.06, d)
-  local rib = g2(v, 26) * (1 - abs(x)) * 0.35
-  return a, U.clamp(0.95 - rib - abs(v) * 0.5, 0.3, 1)
+  local t = (u + 0.86) / 1.72
+  if t <= 0 or t >= 1 then return 0, 0 end
+  local w = 0.72 * sqrt(t) * (1 - t) ^ 0.6
+  local vv = v - 0.07 * sin(t * pi)          -- a little curl
+  local d = abs(vv) - w
+  local a = U.smoothstep(0.025, -0.05, d)
+  if t < 0.10 then                            -- stem
+    a = math.max(a, U.smoothstep(0.045, 0.012, abs(vv)) * (1 - t / 0.10))
+  end
+  local rib = g2(vv, 22) * 0.30
+  local edge = U.smoothstep(-0.02, -0.16, d) * 0.18
+  return a, U.clamp(0.98 - rib - edge - abs(vv) * 0.55, 0.3, 1)
 end
 
 SHAPE_FN.smoke = function(u, v, r)
   local a = 0
-  local ox = { 0.00, 0.30, -0.26, 0.06, -0.18 }
-  local oy = { 0.00, -0.18, -0.10, 0.30, 0.24 }
-  local sc = { 2.1, 3.0, 3.1, 3.2, 3.4 }
-  for i = 1, 5 do
+  local ox = { 0.00, 0.34, -0.32, 0.10, -0.22, 0.24 }
+  local oy = { 0.00, -0.24, -0.12, 0.34, 0.28, 0.18 }
+  local sc = { 1.7, 2.3, 2.4, 2.4, 2.6, 2.8 }
+  for i = 1, 6 do
     local dx, dy = u - ox[i], v - oy[i]
-    a = a + g2(sqrt(dx * dx + dy * dy), sc[i]) * 0.55
+    a = a + g2(sqrt(dx * dx + dy * dy), sc[i]) * 0.5
   end
-  a = U.saturate(a) * U.smoothstep(1.0, 0.72, r)
+  a = U.saturate(a) * U.smoothstep(1.08, 0.62, r)
   local lr = sqrt((u + 0.26) * (u + 0.26) + (v + 0.26) * (v + 0.26))
   return a, U.clamp(1.0 - lr * 0.48, 0.4, 1)
 end
@@ -155,10 +165,11 @@ SHAPE_FN.bubble = function(u, v, r)
   return U.saturate(rim + fill + hl), 0.65 + 0.35 * U.saturate(rim + hl)
 end
 
+-- teardrop lying along +u so `align` points the fat head down-range
 SHAPE_FN.drop = function(u, v, r)
-  local d = sdSeg(u, v, 0, -0.72, 0, 0.46)
-  local taper = 0.16 * U.smoothstep(-0.8, 0.4, v) + 0.03
-  local a = U.smoothstep(taper, taper * 0.3, d)
+  local d = sdSeg(u, v, -0.74, 0, 0.42, 0)
+  local taper = 0.05 + 0.17 * U.smoothstep(-0.85, 0.45, u)
+  local a = U.smoothstep(taper, taper * 0.25, d)
   return a, 0.55 + 0.45 * g2(d, 10)
 end
 
@@ -178,8 +189,9 @@ end
 
 SHAPE_FN.blob = function(u, v, r)
   local th = atan2(v, u)
-  local rr = 0.60 + 0.15 * sin(3 * th + 1.1) + 0.09 * sin(5 * th + 2.4) + 0.05 * sin(8 * th)
-  local a = U.smoothstep(rr, rr - 0.16, r)
+  local rr = 0.66 + 0.075 * sin(3 * th + 1.1) + 0.055 * sin(5 * th + 2.4)
+                  + 0.04 * sin(7 * th + 0.6) + 0.025 * sin(11 * th + 3.1)
+  local a = U.smoothstep(rr, rr - 0.20, r)
   local lr = sqrt((u + 0.24) * (u + 0.24) + (v + 0.24) * (v + 0.24))
   return a, U.clamp(1.02 - lr * 0.5, 0.4, 1)
 end
@@ -217,7 +229,12 @@ local CURVES = {
   smoothOut = function(t) local k = 1 - t return k * k end,
   sharpOut  = function(t) local k = 1 - t return k * k * k end,
   lateOut   = function(t) return 1 - t * t * t end,
-  grow      = function(t) return 0.15 + 0.85 * t end,
+  grow      = function(t) return 0.26 + 0.74 * t end,
+  puff      = function(t) return 0.52 + 0.48 * t end,
+  riseIn    = function(t)
+    if t < 0.16 then return ease.outBack(t / 0.16) end
+    return 1 - 0.18 * (t - 0.16) / 0.84
+  end,
   swell     = function(t) local k = 1 - t return 1 - k * k * k end,
   shrink    = function(t) return (1 - t) ^ 0.6 end,
   pop       = function(t)
@@ -305,7 +322,7 @@ DEFS.ash = {
   count = { 1, 2 }, life = { 5, 10 }, emit = "box", boxW = 900, boxH = 560,
   speed = { 8, 26 }, spread = TAU, drag = 0.5, grav = 9, wind = 0.7,
   swirl = 14, swirlFreq = 1.1,
-  size = { 2.4, 5.4 }, sizeCurve = "hold", alphaCurve = "lateOut", alpha = 0.7,
+  size = { 2.8, 6.0 }, sizeCurve = "hold", alphaCurve = "lateOut", alpha = 0.85,
   spin = { -1.4, 1.4 },
   colors = { c(R.rock[4], 0.55), c(R.rock[3], 0.75), c(R.rock[2], 0) },
 }
@@ -315,7 +332,7 @@ DEFS.rain = {
   count = { 2, 4 }, life = { 0.42, 0.62 }, emit = "box", boxW = 1000, boxH = 120,
   speed = { 760, 940 }, angle = pi * 0.5 - 0.16, spread = 0.05,
   drag = 0, grav = 220, wind = 0.15, align = true, stretch = 0.006,
-  size = { 5, 9 }, sizeCurve = "hold", alphaCurve = "hold", alpha = 0.42,
+  size = { 6, 10 }, sizeCurve = "hold", alphaCurve = "hold", alpha = 0.6,
   colors = { c(R.water[4], 0.5), c(R.water[4], 0.85), c(R.water[3], 0.5) },
   onDeath = "rain_splash", onDeathChance = 0.55,
 }
@@ -337,7 +354,7 @@ DEFS.mist = {
   layer = "ground", blend = "alpha", shape = "smoke", rate = 2.2,
   count = 1, life = { 9, 15 }, emit = "box", boxW = 900, boxH = 400,
   speed = { 5, 16 }, spread = TAU, drag = 0.3, wind = 0.5,
-  size = { 150, 300 }, sizeCurve = "grow", alphaCurve = "breathe", alpha = 0.12,
+  size = { 150, 300 }, sizeCurve = "grow", alphaCurve = "breathe", alpha = 0.2,
   spin = { -0.12, 0.12 },
   colors = { c(P.tod.night.fog, 0.5), c(R.water[4], 0.55), c(P.inkFaint, 0.3) },
 }
@@ -345,9 +362,9 @@ DEFS.mist = {
 ------------------------------------------------------------------- player
 DEFS.footstep = {
   layer = "ground", blend = "alpha", shape = "smoke",
-  count = { 3, 5 }, life = { 0.4, 0.72 }, emit = "disc", radius = { 0, 5 },
+  count = { 4, 6 }, life = { 0.4, 0.72 }, emit = "disc", radius = { 0, 5 },
   speed = { 22, 62 }, spread = 1.5, drag = 4.6, grav = -6,
-  size = { 8, 17 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.5,
+  size = { 10, 21 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.66,
   spin = { -1.6, 1.6 },
   colors = { c(R.sand[4], 0.55), c(R.sand[3], 0.4), c(R.soil[3], 0) },
 }
@@ -357,7 +374,7 @@ DEFS.dash_burst = {
     count = 1, life = 0.34, emit = "point",
     ring0 = 6, ring1 = 62, ringW = 7, ringSegs = 40, ringCurve = "swell",
     alphaCurve = "smoothOut", alpha = 0.85,
-    colors = { c(W, 0.9), c(R.sand[4], 0.7), c(R.sand[2], 0) } },
+    colors = { c(R.sand[4], 0.9), c(R.sand[3], 0.6), c(R.sand[2], 0) } },
   { layer = "world", blend = "add", shape = "streak",
     count = { 8, 11 }, life = { 0.18, 0.34 }, emit = "disc", radius = { 2, 10 },
     speed = { 220, 480 }, spread = 1.15, drag = 7.5, align = true, stretch = 0.0125,
@@ -366,7 +383,7 @@ DEFS.dash_burst = {
   { layer = "ground", blend = "alpha", shape = "smoke",
     count = { 6, 9 }, life = { 0.34, 0.62 }, emit = "disc", radius = { 3, 14 },
     speed = { 60, 190 }, spread = 2.4, drag = 5.2,
-    size = { 12, 26 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.45,
+    size = { 15, 31 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.6,
     spin = { -2.4, 2.4 },
     colors = { c(R.sand[4], 0.6), c(R.sand[3], 0.35), c(R.soil[2], 0) } },
 }
@@ -382,15 +399,15 @@ DEFS.dash_trail = {
 DEFS.land = {
   { layer = "ground", blend = "alpha", shape = "ring",
     count = 1, life = 0.4, emit = "point",
-    ring0 = 4, ring1 = 54, ringW = 6, ringSegs = 36, ringCurve = "swell",
-    alphaCurve = "smoothOut", alpha = 0.7,
+    ring0 = 4, ring1 = 54, ringW = 9, ringSegs = 36, ringCurve = "swell",
+    alphaCurve = "smoothOut", alpha = 0.8,
     colors = { c(R.sand[4], 0.85), c(R.soil[3], 0) } },
   { layer = "ground", blend = "alpha", shape = "smoke",
-    count = { 7, 10 }, life = { 0.4, 0.8 }, emit = "disc", radius = { 2, 12 },
-    speed = { 70, 175 }, spread = 1.0, angle = 0, drag = 5.4, grav = -14,
-    size = { 12, 24 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.5,
+    count = { 9, 13 }, life = { 0.4, 0.8 }, emit = "disc", radius = { 2, 12 },
+    speed = { 70, 175 }, spread = TAU, drag = 5.4, grav = -14,
+    size = { 15, 30 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.68,
     spin = { -2, 2 },
-    colors = { c(R.sand[4], 0.7), c(R.sand[2], 0.4), c(R.soil[2], 0) } },
+    colors = { c(R.sand[4], 0.8), c(R.sand[3], 0.5), c(R.soil[2], 0) } },
   { layer = "world", blend = "alpha", shape = "shard",
     count = { 4, 7 }, life = { 0.35, 0.6 }, emit = "disc", radius = { 0, 8 },
     speed = { 120, 260 }, spread = 1.9, drag = 2.2, grav = 900,
@@ -401,9 +418,9 @@ DEFS.land = {
 
 DEFS.hurt_spray = {
   { layer = "air", blend = "alpha", shape = "shard",
-    count = { 9, 13 }, life = { 0.35, 0.66 }, emit = "disc", radius = { 0, 6 },
+    count = { 14, 19 }, life = { 0.35, 0.66 }, emit = "disc", radius = { 0, 6 },
     speed = { 150, 400 }, spread = 1.5, drag = 3.4, grav = 620,
-    size = { 4, 8.5 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    size = { 8, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -16, 16 }, tumble = 11,
     colors = { lt(P.danger, 0.5), c(P.danger), dk(P.danger, 0.55, 0) } },
   { layer = "air", blend = "add", shape = "flare",
@@ -447,27 +464,33 @@ DEFS.impact = {
     colors = { c(W, 1), lt(R.ember[4], 0.4, 0.6), c(R.ember[3], 0) } },
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.24, emit = "point",
-    ring0 = 5, ring1 = 58, ringW = 8, ringSegs = 32, ringCurve = "swell",
+    ring0 = 5, ring1 = 58, ringW = 12, ringSegs = 32, ringCurve = "swell",
     alphaCurve = "sharpOut",
-    colors = { c(W, 0.95), c(R.ember[4], 0.6), c(R.ember[3], 0) } },
+    colors = { lt(R.ember[4], 0.55, 0.95), c(R.ember[4], 0.7), c(R.ember[3], 0) } },
   { layer = "air", blend = "alpha", shape = "shard",
-    count = { 10, 15 }, life = { 0.26, 0.5 }, emit = "disc", radius = { 0, 7 },
+    count = { 13, 18 }, life = { 0.26, 0.5 }, emit = "disc", radius = { 0, 7 },
     speed = { 220, 520 }, spread = TAU, drag = 5.5, grav = 320,
-    size = { 5, 11 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    size = { 7, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -20, 20 }, tumble = 13,
     colors = { c(W, 1), c(R.ember[4]), c(R.ember[2], 0) } },
   { layer = "air", blend = "add", shape = "spark",
-    count = { 6, 9 }, life = { 0.15, 0.3 }, emit = "point",
+    count = { 8, 12 }, life = { 0.15, 0.3 }, emit = "point",
     speed = { 260, 620 }, spread = TAU, drag = 7, align = true, stretch = 0.00875,
-    size = { 7, 13 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
+    size = { 10, 18 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
     colors = { c(W, 1), lt(R.ember[4], 0.3, 0.9), c(R.ember[3], 0) } },
+  { layer = "world", blend = "alpha", shape = "smoke",
+    count = { 4, 6 }, life = { 0.3, 0.6 }, emit = "disc", radius = { 0, 10 },
+    speed = { 60, 170 }, spread = TAU, drag = 5,
+    size = { 14, 30 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.4,
+    spin = { -2.5, 2.5 },
+    colors = { c(R.rock[4], 0.6), c(R.rock[3], 0.35), c(R.rock[1], 0) } },
 }
 
 DEFS.pulse_ring = {
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.62, emit = "point",
-    ring0 = 14, ring1 = 210, ringW = 24, ringSegs = 72, ringCurve = "swell",
-    alphaCurve = "smoothOut", alpha = 0.55,
+    ring0 = 14, ring1 = 210, ringW = 34, ringSegs = 72, ringCurve = "swell",
+    alphaCurve = "smoothOut", alpha = 0.7,
     colors = { c(W, 0.8), c(P.o2, 0.6), c(P.accentCool, 0) } },
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.5, emit = "point",
@@ -487,9 +510,9 @@ DEFS.pulse_ring = {
 
 DEFS.hit_spark = {
   layer = "air", blend = "add", shape = "streak",
-  count = { 5, 8 }, life = { 0.1, 0.22 }, emit = "point",
+  count = { 7, 11 }, life = { 0.1, 0.24 }, emit = "point",
   speed = { 200, 460 }, spread = 1.6, drag = 9, align = true, stretch = 0.0125,
-  size = { 5, 10 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
+  size = { 8, 15 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
   colors = { c(W, 1), lt(R.ember[4], 0.4, 0.9), c(R.ember[3], 0) },
 }
 
@@ -502,11 +525,11 @@ DEFS.crit = {
     count = 2, life = { 0.3, 0.42 }, emit = "point",
     ring0 = 8, ring1 = 96, ringW = 9, ringSegs = 44, ringCurve = "swell",
     alphaCurve = "sharpOut",
-    colors = { c(W, 1), c(P.warn, 0.8), c(R.ember[2], 0) } },
+    colors = { lt(P.warn, 0.55, 1), c(P.warn, 0.85), c(R.ember[2], 0) } },
   { layer = "air", blend = "add", shape = "spark",
     count = { 12, 16 }, life = { 0.2, 0.42 }, emit = "point",
     speed = { 340, 760 }, spread = TAU, drag = 6.2, align = true, stretch = 0.0075,
-    size = { 9, 17 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
+    size = { 13, 24 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
     colors = { c(W, 1), c(P.warn, 0.9), c(R.ember[2], 0) } },
   { layer = "air", blend = "alpha", shape = "shard",
     count = { 8, 12 }, life = { 0.3, 0.6 }, emit = "point",
@@ -526,9 +549,9 @@ DEFS.plant_burst = {
   -- 2. the ring
   { layer = "ground", blend = "add", shape = "ring",
     count = 1, life = 0.52, emit = "point",
-    ring0 = 5, ring1 = 66, ringW = 7, ringSegs = 40, ringCurve = "swell",
+    ring0 = 5, ring1 = 66, ringW = 8, ringSegs = 40, ringCurve = "swell",
     alphaCurve = "smoothOut",
-    colors = { c(W, 0.9), c(R.leafHi[4], 0.8), c(R.leaf[3], 0) } },
+    colors = { lt(R.leafHi[4], 0.5, 0.95), c(R.leafHi[4], 0.8), c(R.leaf[3], 0) } },
   -- 3. leaves thrown out, settling
   { layer = "world", blend = "alpha", shape = "leaf",
     count = { 5, 7 }, life = { 0.8, 1.5 }, emit = "disc", radius = { 0, 6 },
@@ -539,10 +562,10 @@ DEFS.plant_burst = {
     colors = { c(R.leafHi[4]), c(R.leaf[3]), c(R.leaf[2], 0) } },
   -- 4. rising sparkles - the joy
   { layer = "air", blend = "add", shape = "mote",
-    count = { 12, 17 }, life = { 0.7, 1.4 }, emit = "disc", radius = { 2, 16 },
+    count = { 17, 23 }, life = { 0.7, 1.4 }, emit = "disc", radius = { 2, 16 },
     speed = { 30, 90 }, angle = -pi * 0.5, spread = 1.4, drag = 1.6, grav = -95,
     swirl = 30, swirlFreq = 3.0,
-    size = { 5, 10 }, sizeCurve = "softIn", alphaCurve = "softIn",
+    size = { 7, 13 }, sizeCurve = "softIn", alphaCurve = "softIn",
     pulse = 0.35, pulseFreq = 9,
     colors = { c(W, 1), c(P.accent, 0.95), lt(R.leafHi[4], 0.3, 0.5), c(P.accent, 0) } },
   -- 5. base dust
@@ -559,7 +582,7 @@ DEFS.grow_up = {
     count = 3, life = { 0.5, 0.85 }, emit = "point",
     ring0 = 40, ring1 = 8, ringW = 5, ringSegs = 34, ringCurve = "swell",
     alphaCurve = "breathe",
-    colors = { c(P.accent, 0.8), c(W, 0.9), c(R.leafHi[4], 0) } },
+    colors = { c(P.accent, 0.8), lt(P.accent, 0.45, 0.9), c(R.leafHi[4], 0) } },
   { layer = "air", blend = "add", shape = "plus",
     count = { 10, 14 }, life = { 0.7, 1.3 }, emit = "ring", radius = { 14, 30 },
     speed = { 18, 44 }, angle = -pi * 0.5, spread = 0.7, drag = 1.1, grav = -120,
@@ -601,43 +624,50 @@ DEFS.cobalt_shimmer = {
 }
 
 DEFS.cobalt_pickup = {
+  -- sparks fall inward from a spread of radii, so they arrive as a rush
   { layer = "air", blend = "add", shape = "streak",
-    count = { 12, 16 }, life = { 0.26, 0.42 }, emit = "ring", radius = { 40, 74 },
-    speed = { 150, 260 }, inward = true, drag = -2.2, align = true, stretch = 0.0125,
-    size = { 6, 11 }, sizeCurve = "shrink", alphaCurve = "lateOut",
-    colors = { c(R.cobalt[3], 0.5), c(R.cobalt[4], 1), c(W, 1) } },
+    count = { 20, 26 }, life = { 0.2, 0.46 }, emit = "ring", radius = { 26, 82 },
+    speed = { 120, 250 }, inward = true, drag = -2.6, align = true, stretch = 0.014,
+    size = { 7, 13 }, sizeCurve = "shrink", alphaCurve = "lateOut",
+    colors = { c(R.cobalt[3], 0.4), c(R.cobalt[4], 1), c(W, 1) } },
+  { layer = "air", blend = "add", shape = "mote",
+    count = { 8, 12 }, life = { 0.25, 0.5 }, emit = "ring", radius = { 30, 78 },
+    speed = { 90, 190 }, inward = true, drag = -2.2,
+    size = { 5, 9 }, sizeCurve = "shrink", alphaCurve = "lateOut",
+    colors = { c(R.cobalt[4], 0.5), c(W, 1) } },
+  -- the core lighting up as they land
   { layer = "air", blend = "add", shape = "flare",
-    count = 1, life = 0.26, emit = "point",
-    size = { 10, 10 }, sizeCurve = "grow", alphaCurve = "fadeIn",
-    colors = { c(R.cobalt[4], 0), c(W, 0.9) } },
+    count = 1, life = 0.5, emit = "point",
+    size = { 46, 46 }, sizeCurve = "softIn", alphaCurve = "softIn",
+    colors = { c(R.cobalt[4], 0.6), c(W, 1), c(R.cobalt[3], 0) } },
   { layer = "air", blend = "add", shape = "ring",
-    count = 1, life = 0.34, emit = "point",
-    ring0 = 66, ring1 = 4, ringW = 3.5, ringSegs = 34, ringCurve = "swell",
+    count = 1, life = 0.42, emit = "point",
+    ring0 = 78, ring1 = 5, ringW = 5, ringSegs = 34, ringCurve = "swell",
     alphaCurve = "lateOut",
-    colors = { c(R.cobalt[3], 0.5), c(R.cobalt[4], 0.9), c(W, 0) } },
+    colors = { c(R.cobalt[3], 0.35), c(R.cobalt[4], 0.9), c(W, 0) } },
 }
 
 DEFS.deposit_pop = {
   { layer = "air", blend = "alpha", shape = "shard",
-    count = { 7, 10 }, life = { 0.4, 0.75 }, emit = "disc", radius = { 0, 6 },
+    count = { 9, 13 }, life = { 0.4, 0.75 }, emit = "disc", radius = { 0, 6 },
     speed = { 130, 280 }, angle = -pi * 0.5, spread = 2.0, drag = 2.6, grav = 700,
-    size = { 5, 10 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    size = { 7, 13 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -14, 14 }, tumble = 10,
     colors = { c(W, 1), c(R.cobalt[4]), c(R.cobalt[2], 0) } },
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.3, emit = "point",
-    ring0 = 4, ring1 = 46, ringW = 5, ringSegs = 30, ringCurve = "swell",
+    ring0 = 4, ring1 = 46, ringW = 6, ringSegs = 30, ringCurve = "swell",
     alphaCurve = "sharpOut",
-    colors = { c(W, 0.9), c(R.cobalt[4], 0.7), c(R.cobalt[3], 0) } },
+    colors = { lt(R.cobalt[4], 0.5, 0.9), c(R.cobalt[4], 0.75), c(R.cobalt[3], 0) } },
 }
 
 --------------------------------------------------------------------- bots
 DEFS.bot_boot = {
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.42, emit = "point",
-    ring0 = 52, ring1 = 12, ringW = 4, ringSegs = 30, ringCurve = "swell",
+    ring0 = 52, ring1 = 12, ringW = 5, ringSegs = 30, ringCurve = "swell",
     alphaCurve = "breathe",
-    colors = { c(P.eye, 0.6), c(W, 0.95), c(P.eye, 0) } },
+    colors = { c(P.eye, 0.6), lt(P.eye, 0.4, 0.95), c(P.eye, 0) } },
   { layer = "air", blend = "add", shape = "streak",
     count = { 8, 10 }, life = { 0.2, 0.36 }, emit = "disc", radius = { 2, 8 },
     speed = { 130, 260 }, spread = TAU, drag = 11, align = true, stretch = 0.0125,
@@ -676,9 +706,9 @@ DEFS.bot_death = {
     count = { 8, 12 }, life = { 1.4, 2.6 }, emit = "disc", radius = { 2, 12 },
     speed = { 20, 70 }, spread = TAU, drag = 2.4, grav = -22, wind = 0.35,
     swirl = 12, swirlFreq = 1.1,
-    size = { 18, 46 }, sizeCurve = "grow", alphaCurve = "lateOut", alpha = 0.42,
+    size = { 22, 54 }, sizeCurve = "puff", alphaCurve = "lateOut", alpha = 0.55,
     spin = { -1.2, 1.2 },
-    colors = { c(R.rock[2], 0.7), c(R.rock[3], 0.45), c(R.rock[1], 0) } },
+    colors = { c(R.rock[4], 0.7), c(R.rock[3], 0.5), c(R.rock[1], 0) } },
   -- lingering embers in the wreck
   { layer = "air", blend = "add", shape = "dot",
     count = { 5, 8 }, life = { 1.8, 3.4 }, emit = "disc", radius = { 0, 10 },
@@ -698,14 +728,14 @@ DEFS.love_heart = {
     count = { 3, 5 }, life = { 1.7, 2.6 }, emit = "disc", radius = { 2, 12 },
     speed = { 16, 34 }, angle = -pi * 0.5, spread = 0.7, drag = 0.9, grav = -22,
     swirl = 15, swirlFreq = 1.5,
-    size = { 13, 21 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.95,
+    size = { 18, 29 }, sizeCurve = "riseIn", alphaCurve = "softIn", alpha = 0.95,
     spin = { -0.5, 0.5 },
     colors = { c(P.love, 0.8), lt(P.love, 0.35, 1), c(P.love, 0) } },
   { layer = "air", blend = "add", shape = "halo",
     count = { 3, 5 }, life = { 1.7, 2.6 }, emit = "disc", radius = { 2, 12 },
     speed = { 16, 34 }, angle = -pi * 0.5, spread = 0.7, drag = 0.9, grav = -22,
     swirl = 15, swirlFreq = 1.5,
-    size = { 34, 52 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.22,
+    size = { 42, 64 }, sizeCurve = "riseIn", alphaCurve = "softIn", alpha = 0.15,
     colors = { c(P.love, 0.7), c(P.love, 0.5), c(P.love, 0) } },
   { layer = "air", blend = "add", shape = "mote",
     count = { 5, 8 }, life = { 1.1, 2.0 }, emit = "disc", radius = { 4, 22 },
@@ -720,7 +750,7 @@ DEFS.confused_bubble = {
     count = { 2, 3 }, life = { 0.9, 1.5 }, emit = "disc", radius = { 2, 10 },
     speed = { 14, 30 }, angle = -pi * 0.5, spread = 1.1, drag = 1.3, grav = -30,
     swirl = 26, swirlFreq = 2.8,
-    size = { 12, 22 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.85,
+    size = { 12, 22 }, sizeCurve = "riseIn", alphaCurve = "softIn", alpha = 0.85,
     spin = { -1.2, 1.2 },
     colors = { c(P.inkDim, 0.8), c(P.ink, 0.9), c(P.inkFaint, 0) } },
   { layer = "air", blend = "alpha", shape = "dot",
@@ -743,10 +773,10 @@ DEFS.blight_spore = {
 
 DEFS.blight_death = {
   { layer = "air", blend = "add", shape = "mote",
-    count = { 22, 30 }, life = { 0.5, 1.1 }, emit = "disc", radius = { 0, 12 },
+    count = { 26, 34 }, life = { 0.5, 1.1 }, emit = "disc", radius = { 0, 12 },
     speed = { 40, 170 }, spread = TAU, drag = 4.6, grav = -60,
     swirl = 40, swirlFreq = 5,
-    size = { 4, 10 }, sizeCurve = "shrink", alphaCurve = "flick",
+    size = { 6, 14 }, sizeCurve = "shrink", alphaCurve = "flick",
     colors = { lt(R.blight[4], 0.4, 1), c(R.blight[4], 0.9), c(R.blight[2], 0) } },
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.34, emit = "point",
@@ -756,16 +786,16 @@ DEFS.blight_death = {
   { layer = "world", blend = "alpha", shape = "smoke",
     count = { 5, 8 }, life = { 0.7, 1.4 }, emit = "disc", radius = { 0, 10 },
     speed = { 20, 70 }, spread = TAU, drag = 3.4, grav = -30,
-    size = { 14, 34 }, sizeCurve = "grow", alphaCurve = "smoothOut", alpha = 0.45,
+    size = { 16, 38 }, sizeCurve = "puff", alphaCurve = "smoothOut", alpha = 0.5,
     spin = { -2, 2 },
     colors = { c(R.blight[2], 0.7), c(R.blight[1], 0.4), c(R.blight[1], 0) } },
 }
 
 DEFS.acid_splash = {
   { layer = "world", blend = "alpha", shape = "blob",
-    count = { 8, 12 }, life = { 0.35, 0.7 }, emit = "disc", radius = { 0, 8 },
+    count = { 10, 14 }, life = { 0.35, 0.7 }, emit = "disc", radius = { 0, 8 },
     speed = { 90, 240 }, spread = TAU, drag = 2.4, grav = 620,
-    size = { 5, 12 }, sizeCurve = "shrink", alphaCurve = "lateOut",
+    size = { 7, 15 }, sizeCurve = "shrink", alphaCurve = "lateOut",
     spin = { -6, 6 },
     colors = { lt(P.acid, 0.4, 1), c(P.acid, 0.9), dk(P.acid, 0.5, 0) } },
   { layer = "ground", blend = "alpha", shape = "blob",
@@ -788,7 +818,7 @@ DEFS.rift_open = {
     count = 2, life = { 0.4, 0.6 }, emit = "point",
     ring0 = 8, ring1 = 130, ringW = 12, ringSegs = 50, ringCurve = "swell",
     alphaCurve = "sharpOut",
-    colors = { c(W, 0.9), c(R.rift[4], 0.8), c(R.rift[2], 0) } },
+    colors = { lt(R.rift[4], 0.5, 0.95), c(R.rift[4], 0.85), c(R.rift[2], 0) } },
   { layer = "air", blend = "alpha", shape = "shard",
     count = { 16, 22 }, life = { 0.4, 0.9 }, emit = "disc", radius = { 0, 14 },
     speed = { 200, 560 }, spread = TAU, drag = 4.4,
@@ -844,7 +874,7 @@ DEFS.slam_dust = {
   { layer = "world", blend = "alpha", shape = "smoke",
     count = { 20, 26 }, life = { 0.8, 1.6 }, emit = "ring", radius = { 20, 90 },
     speed = { 140, 340 }, spread = 0.55, drag = 3.2, grav = -30,
-    size = { 24, 60 }, sizeCurve = "grow", alphaCurve = "smoothOut", alpha = 0.5,
+    size = { 28, 68 }, sizeCurve = "puff", alphaCurve = "smoothOut", alpha = 0.7,
     spin = { -1.8, 1.8 },
     colors = { c(R.sand[3], 0.75), c(R.soil[3], 0.45), c(R.soil[1], 0) } },
   { layer = "world", blend = "alpha", shape = "shard",
@@ -877,9 +907,9 @@ DEFS.armour_break = {
 DEFS.core_expose = {
   { layer = "air", blend = "add", shape = "ring",
     count = 3, life = { 0.6, 1.0 }, emit = "point",
-    ring0 = 12, ring1 = 180, ringW = 10, ringSegs = 56, ringCurve = "swell",
+    ring0 = 12, ring1 = 180, ringW = 11, ringSegs = 56, ringCurve = "swell",
     alphaCurve = "smoothOut",
-    colors = { c(W, 1), c(P.danger, 0.8), c(R.blight[2], 0) } },
+    colors = { lt(P.danger, 0.55, 1), c(P.danger, 0.85), c(R.blight[2], 0) } },
   { layer = "air", blend = "add", shape = "halo",
     count = 1, life = 1.1, emit = "point",
     size = { 60, 230 }, sizeCurve = "swell", alphaCurve = "breathe", alpha = 0.5,
@@ -1098,7 +1128,13 @@ local function fire(e, x, y, o)
       local d = sqrt(random()) * r
       px, py = x + cos(a2) * d, y + sin(a2) * d
     elseif em == "ring" then
-      px, py = x + cos(ang) * r, y + sin(ang) * r
+      -- placement runs right around the ring (or `ringSpread` of it) and the
+      -- velocity is radial from wherever the particle landed
+      local pa
+      if e.ringSpread then pa = baseA + (random() - 0.5) * e.ringSpread
+      else pa = random() * TAU end
+      px, py = x + cos(pa) * r, y + sin(pa) * r
+      ang = pa + (random() - 0.5) * spread
     elseif em == "box" then
       px = x + (random() - 0.5) * e.boxW * area
       py = y + (random() - 0.5) * e.boxH * area
@@ -1344,16 +1380,27 @@ function VFX.update(dt)
 end
 
 ---------------------------------------------------------------------- draw
+-- Three concentric strokes: a wide dim halo, a body, and a thin hot core.
+-- A single stroke reads as a wireframe circle; this reads as a shockwave.
 local function drawRing(p, t)
   local e = p.e
   local g = love.graphics
   local r = p.r0 + (p.r1 - p.r0) * e.ringFn(t)
   if r < 0.5 then return end
-  local w = p.w0 * (1 - t) ^ 0.65
-  if w < 0.5 then w = 0.5 end
-  g.setColor(p.cr, p.cg, p.cb, p.ca)
-  g.setLineWidth(w)
-  g.circle("line", p.x, p.y, r, e.ringSegs)
+  local w = p.w0 * (1 - t) ^ 0.55
+  if w < 0.7 then w = 0.7 end
+  local segs = e.ringSegs
+  local cr, cg, cb, ca = p.cr, p.cg, p.cb, p.ca
+  g.setColor(cr, cg, cb, ca * 0.13)
+  g.setLineWidth(w * 2.5)
+  g.circle("line", p.x, p.y, r, segs)
+  g.setColor(cr, cg, cb, ca * 0.38)
+  g.setLineWidth(w * 1.35)
+  g.circle("line", p.x, p.y, r, segs)
+  local k = 0.2
+  g.setColor(cr + (W[1] - cr) * k, cg + (W[2] - cg) * k, cb + (W[3] - cb) * k, ca)
+  g.setLineWidth(w * 0.5 < 0.9 and 0.9 or w * 0.5)
+  g.circle("line", p.x, p.y, r, segs)
 end
 
 local ARC_SEGS = 20

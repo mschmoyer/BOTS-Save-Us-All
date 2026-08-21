@@ -45,7 +45,8 @@ Post.tuning = {
   grainAmount = 0.024,
   shockPx     = 16,     -- peak displacement of a shockwave ring, in pixels
   shockThick  = 34,
-  tintAmount  = 0.34,
+  tintAmount  = 0.55,
+  fogAmount   = 0.13,   -- how much of the atmosphere colour washes the frame
   tonemap     = 0.9,
 }
 
@@ -53,7 +54,11 @@ Post.stats = { passes = 0, ms = 0 }
 
 ------------------------------------------------------------------ grade state
 local gTint = { 1, 1, 1 }
+local gWarm = { 1, 1, 1 }
+local gSplit = 0.7
 local gLift = { 0, 0, 0 }
+local gFog  = { 1, 1, 1 }
+local gFogAmount = 0
 local gExposure, gContrast, gSaturation = 1, 1, 1
 local gBloom = 1
 
@@ -112,12 +117,16 @@ vec4 effect(vec4 vc, Image tex, vec2 tc, vec2 sc) {
 local SRC_GRADE = [[
 extern Image bloomTex;
 extern float bloomAmount;
-extern vec3  tint;
+extern vec3  tint;        // shadow / midtone colour: the sky
+extern vec3  warm;        // highlight colour: the key light
+extern vec3  fogColor;
+extern float fogAmount;
 extern vec3  lift;
 extern float exposure;
 extern float contrast;
 extern float saturation;
 extern float tintAmount;
+extern float splitAmount;
 extern float tonemapAmount;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
@@ -126,26 +135,35 @@ vec3 aces(vec3 x) {
   return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
 }
 
+// normalise a colour to unit luminance, so using it as a gain shifts hue
+// instead of dimming or blowing out the frame
+vec3 unitLuma(vec3 c) { return c / max(dot(c, LUMA), 0.001); }
+
 vec4 effect(vec4 vc, Image tex, vec2 tc, vec2 sc) {
   vec3 c = Texel(tex, tc).rgb;
   c += Texel(bloomTex, tc).rgb * bloomAmount;
 
   c *= exposure;
-
-  // gain toward the time-of-day tint, normalised so the tint shifts hue
-  // rather than dimming the frame
-  float tl = max(dot(tint, LUMA), 0.001);
-  c *= mix(vec3(1.0), tint / tl, tintAmount);
-
   c = mix(c, aces(c), tonemapAmount);
+
+  // desaturate the albedo *first* -- otherwise the saturation step below would
+  // simply undo the grade we are about to apply
+  float l0 = dot(c, LUMA);
+  c = mix(vec3(l0), c, saturation);
+
+  // split tone: shadows take the sky, highlights take the key light. This is
+  // the step that makes a phase read as that phase.
+  vec3 gShadow = mix(vec3(1.0), unitLuma(tint), tintAmount);
+  vec3 gHigh   = mix(vec3(1.0), unitLuma(warm), tintAmount * splitAmount);
+  c *= mix(gShadow, gHigh, smoothstep(0.12, 0.72, l0));
+
+  // atmosphere: a thin wash of the phase's own air over everything
+  c = mix(c, fogColor * (0.35 + 1.3 * dot(c, LUMA)), fogAmount);
 
   // lift: the sky's colour bleeds into the shadows, strongest where it is dark
   c += lift * (1.0 - c);
 
   c = (c - 0.5) * contrast + 0.5;
-
-  float l = dot(c, LUMA);
-  c = mix(vec3(l), c, saturation);
 
   return vec4(max(c, 0.0), 1.0);
 }
@@ -305,6 +323,18 @@ end
 
 function Post.setBloom(amount) gBloom = amount or 1 end
 
+--- Highlight half of the split tone: the colour of the key light.
+function Post.setSplit(warmColor, amount)
+  if warmColor then gWarm[1], gWarm[2], gWarm[3] = warmColor[1], warmColor[2], warmColor[3] end
+  gSplit = amount or gSplit
+end
+
+--- The atmosphere wash. `strength` is the day/night fog strength (0..1).
+function Post.setFog(color, strength)
+  if color then gFog[1], gFog[2], gFog[3] = color[1], color[2], color[3] end
+  gFogAmount = strength or 0
+end
+
 ------------------------------------------------------------------- shockwaves
 --- A screen-space distortion ring. `x, y` are **screen** pixels.
 function Post.addShockwave(x, y, radius, strength, life)
@@ -443,7 +473,11 @@ function Post.render(opts)
   snd(S.grade, "exposure", gExposure)
   snd(S.grade, "contrast", gContrast)
   snd(S.grade, "saturation", gSaturation)
+  snd(S.grade, "warm", gWarm)
+  snd(S.grade, "splitAmount", gSplit)
   snd(S.grade, "tintAmount", T.tintAmount)
+  snd(S.grade, "fogColor", gFog)
+  snd(S.grade, "fogAmount", gFogAmount * T.fogAmount)
   snd(S.grade, "tonemapAmount", T.tonemap)
   g.draw(scene, 0, 0)
   Post.stats.passes = Post.stats.passes + 1
@@ -480,7 +514,9 @@ function Post.render(opts)
   g.setShader(S.screen)
   sendSize[1], sendSize[2] = SW, SH
   snd(S.screen, "texSize", sendSize)
-  S.screen:send("shock", shockSend[1], shockSend[2], shockSend[3], shockSend[4])
+  if S.screen:hasUniform("shock") then
+    S.screen:send("shock", shockSend[1], shockSend[2], shockSend[3], shockSend[4])
+  end
   snd(S.screen, "shockThick", T.shockThick * (SW / W))
   snd(S.screen, "shockPx", T.shockPx * (SW / W))
   snd(S.screen, "caAmount", doCA and T.caAmount or 0)

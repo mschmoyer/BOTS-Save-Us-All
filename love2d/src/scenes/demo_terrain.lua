@@ -19,9 +19,8 @@ function S:enter()
   local w, h = love.graphics.getDimensions()
   self.seed = envSeed()
 
-  local t0 = love.timer.getTime()
-  self.terrain = Terrain.new(self.seed)
-  self.genTime = love.timer.getTime() - t0
+  -- deferred: generation and baking are both chunked through bakeStep()
+  self.terrain = Terrain.newDeferred(self.seed)
 
   self.cam = Camera.new(w, h)
   self.cam:setBounds(self.terrain:bounds())
@@ -55,27 +54,30 @@ local function routePoint(route, s)
 end
 
 function S:update(dt)
-  self.t = self.t + dt
   self.frames = self.frames + 1
 
   if not self.terrain.baked then
     self.terrain:bakeStep(0.30)
     return
   end
-
+  self.t = self.t + dt
   self.terrain:update(dt)
 
-  -- one lap in ~34 s; the shot frames land on different parts of the island
-  local s = self.t * 0.0295
+  -- open on the whole island, then descend and start the patrol
+  local descend = U.ease.inOutCubic(U.saturate((self.t - 1.3) / 1.9))
+  self.cam.zoom = U.lerp(0.365, 1.0, descend) + 0.06 * math.sin(self.t * 0.31) * descend
+
+  local s = math.max(0, self.t - 2.2) * 0.0330
   local x, y = routePoint(self.route, s)
+  x = U.lerp(self.terrain.w * 0.5, x, descend)
+  y = U.lerp(self.terrain.h * 0.5, y, descend)
   self.cam.tx, self.cam.ty = x, y
-  self.cam.x = U.damp(self.cam.x, x, 6, dt)
-  self.cam.y = U.damp(self.cam.y, y, 6, dt)
-  self.cam.zoom = 0.94 + 0.10 * math.sin(self.t * 0.21)
+  self.cam.x = U.damp(self.cam.x, x, 7, dt)
+  self.cam.y = U.damp(self.cam.y, y, 7, dt)
   self.cam:clampToBounds()
 
   -- prove the reclamation path works: heal one scar as the demo runs
-  if self.t > 2.0 and not self.healed and self.terrain.scarCentres[1] then
+  if self.t > 4.4 and not self.healed and self.terrain.scarCentres[1] then
     local c = self.terrain.scarCentres[1]
     for k = 1, 5 do
       local a = k / 5 * U.TAU
@@ -125,8 +127,8 @@ function S:legend()
   local lines = {
     string.format("SEED %d      island %dx%d      grid %dx%d @ %d",
                   self.seed, T.w, T.h, T.gw, T.gh, T.cell),
-    string.format("gen %.0f ms      bake %.0f ms      canvas %.1f MB      tiles drawn %d/%d",
-                  self.genTime * 1000, (T.bakeTime or 0) * 1000, T:memoryEstimate(),
+    string.format("gen %.0f ms      bake+gen %.0f ms      canvas %.1f MB      tiles drawn %d/%d",
+                  (T.genTime or 0) * 1000, (T.bakeTime or 0) * 1000, T:memoryEstimate(),
                   T.tilesDrawn or 0, #T.tiles),
     string.format("camera %.0f, %.0f      zoom %.2f      t %.1fs",
                   cx, cy, self.cam.zoom, self.t),

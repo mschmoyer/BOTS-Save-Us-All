@@ -73,7 +73,7 @@ function N.ridge(x, y, oct, s)
 end
 
 --------------------------------------------------------------------- constants
-local CELL       = 10        -- field sampling resolution, world units
+local CELL       = 8         -- field sampling resolution, world units
 local TILE_W     = 850       -- ground tile canvases: 4 x 3 covers 3400 x 2400 exactly
 local TILE_H     = 800
 local SD_MAX     = 420       -- signed shore distance encoded into 8 bits over +-SD_MAX
@@ -175,7 +175,8 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 
   float elev  = A.r;
   vec2  grad  = A.gb * 2.0 - 1.0;
-  float sd    = (A.a * 2.0 - 1.0) * uSdMax;
+  float se    = A.a * 2.0 - 1.0;
+  float sd    = se * abs(se) * uSdMax;
   float moist = B.r;
   float fert  = B.g;
   float scar  = B.b;
@@ -189,7 +190,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 
   // crinkle the coastline so it is never a smooth interpolated curve
   // (must match CRINKLE in water.lua)
-  float sdw = sd + (d1 - 0.5) * 26.0 + (d2 - 0.5) * 13.0 + (d3 - 0.5) * 6.0;
+  float sdw = sd + (d1 - 0.5) * 24.0 + (d2 - 0.5) * 17.0 + (d3 - 0.5) * 9.0;
   float alpha = smoothstep(-1.2, 1.2, sdw);
   if (alpha <= 0.002) { return vec4(0.0); }
 
@@ -197,18 +198,28 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float e = 3.0;
   float mx = vn((w + vec2(e, 0.0)) * 0.075) - vn((w - vec2(e, 0.0)) * 0.075);
   float my = vn((w + vec2(0.0, e)) * 0.075) - vn((w - vec2(0.0, e)) * 0.075);
-  vec3 nrm = normalize(vec3(-grad.x - mx * 0.55, -grad.y - my * 0.55, 1.0));
+  vec3 nrm = normalize(vec3(-grad.x - mx * 0.32, -grad.y - my * 0.32, 1.0));
   vec3 L   = normalize(vec3(uSun, uSunZ));
   float lam = dot(nrm, L);
-  float lit = clamp(0.86 + (lam - uSunZ) * 1.40, 0.48, 1.40);
+  float lit = clamp(0.88 + (lam - uSunZ) * 1.25, 0.52, 1.34);
 
   // ---- meadow ----------------------------------------------------------
-  float lush = clamp(fert * 0.75 + moist * 0.45 + (d1 - 0.5) * 0.85, 0.0, 1.0);
+  float marshHint = smoothstep(0.48, 0.70, moist) * (1.0 - smoothstep(0.22, 0.44, elev));
+  float lush = clamp(fert * 0.72 + moist * 0.42 + (d1 - 0.5) * 0.80, 0.0, 1.0);
   vec3 gA = ramp(cGrass[0], cGrass[1], cGrass[2], cGrass[3],
-                 0.45 + lush * 2.05 + (d2 - 0.5) * 0.85 + (d3 - 0.5) * 0.30);
+                 0.55 + lush * 1.70 + (d2 - 0.5) * 0.70 + (d3 - 0.5) * 0.26);
   vec3 gB = ramp(cMoss[0], cMoss[1], cMoss[2], cMoss[3],
-                 0.55 + lush * 1.85 + (d2 - 0.5) * 0.70);
-  vec3 col = mix(gA, gB, smoothstep(0.34, 0.74, drift));
+                 0.40 + lush * 1.60 + (d2 - 0.5) * 0.60);
+  // large slow drift between a warm sunlit sward and cool deep moss, so the
+  // island has regions rather than one uniform green
+  vec3 col = mix(gA, gB, smoothstep(0.30, 0.78, drift));
+  col *= 0.93 + 0.16 * fbm3(w * 0.00072 + 47.0);
+  // sun-bleached dry grass, in broad regions where the moisture runs out
+  float dry = smoothstep(0.60, 0.26, moist)
+            * smoothstep(0.34, 0.66, fbm3(w * 0.00095 + 123.0)) * (1.0 - marshHint);
+  vec3 dryC = mix(ramp(cGrass[0], cGrass[1], cGrass[2], cGrass[3], 1.9 + (d2 - 0.5) * 0.6),
+                  ramp(cSand[0], cSand[1], cSand[2], cSand[3], 2.1 + (d1 - 0.5) * 0.7), 0.62);
+  col = mix(col, dryC * 0.86, dry * 0.72);
 
   // dry dirt patches gnawing into the grass
   float dirt = smoothstep(0.575, 0.760, fbm3(w * 0.0068 + 61.0) + (d2 - 0.5) * 0.20);
@@ -217,7 +228,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   col = mix(col, soilC, dirt * 0.85);
 
   // ---- marsh -----------------------------------------------------------
-  float marshT = smoothstep(0.52, 0.74, moist) * (1.0 - smoothstep(0.20, 0.40, elev));
+  float marshT = marshHint;
   vec3 marshC = mix(ramp(cMoss[0], cMoss[1], cMoss[2], cMoss[3], 0.35 + d2 * 1.5),
                     ramp(cWater[0], cWater[1], cWater[2], cWater[3], 1.05), 0.30);
   float puddle = smoothstep(0.58, 0.72, fbm3(w * 0.0105 + 91.0)) * marshT;
@@ -225,7 +236,10 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   col = mix(col, marshC, marshT);
 
   // ---- beach -----------------------------------------------------------
-  float beachW = uBeach * (0.62 + 0.85 * d1);
+  // wide sandy bays in some places, almost none on the rocky headlands
+  float bayW = fbm3(w * 0.00088 + 211.0);
+  float beachW = uBeach * (0.22 + 2.10 * bayW * (0.55 + 0.75 * d1))
+               * (1.0 - smoothstep(0.34, 0.62, slope) * 0.85);
   float beachT = 1.0 - smoothstep(0.0, beachW, sdw);
   beachT = smoothstep(0.05, 0.55, beachT);
   vec3 sandC = ramp(cSand[0], cSand[1], cSand[2], cSand[3],
@@ -259,19 +273,33 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 
   // contact shadow where the ground drops steeply, regardless of biome
   col *= 1.0 - smoothstep(0.35, 0.85, slope) * 0.16;
+  // and a gentle bowl shadow in the low basins, for depth
+  col *= 1.0 - (1.0 - smoothstep(0.02, 0.26, elev)) * 0.10 * (1.0 - beachT);
 
   // ---- blight scar -----------------------------------------------------
-  float scarT = smoothstep(0.16, 0.52, scar) * (1.0 - beachT * 0.55);
+  float scarT = smoothstep(0.06, 0.62, scar) * (1.0 - beachT * 0.55);
   if (scarT > 0.002) {
-    float veins = rdg3(w * 0.0125 + 131.0);
+    float veins = rdg3(w * 0.0215 + 131.0);
     float grey = dot(col, vec3(0.30, 0.59, 0.11));
-    vec3 dead = mix(vec3(grey), ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.5 + d2 * 1.2), 0.55);
-    dead = mix(dead, cBlight[0], 0.34);
-    float crack = smoothstep(0.70, 0.94, veins);
-    dead = mix(dead, cBlight[1], crack * 0.55);
-    dead = mix(dead, cBlight[2], smoothstep(0.88, 0.98, veins) * 0.30);
+    // ash and dead soil first: the ground reads poisoned, not painted purple
+    vec3 dead = mix(vec3(grey * 0.80), ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3],
+                                            0.25 + d2 * 1.1), 0.50);
+    dead = mix(dead, cBlight[0], 0.40);
+    float crack = smoothstep(0.66, 0.93, veins + (d3 - 0.5) * 0.20);
+    dead = mix(dead, cBlight[1], crack * 0.65);
+    dead += cBlight[3] * smoothstep(0.90, 0.995, veins) * 0.22;
+    // a bruised rim where the blight is still eating into living ground
+    col = mix(col, mix(col, cBlight[1], 0.35),
+              smoothstep(0.02, 0.30, scar) * (1.0 - smoothstep(0.30, 0.55, scar)));
     col = mix(col, dead, scarT);
   }
+
+  // ---- macro value composition -----------------------------------------
+  // highlands read bright and warm, lowlands sink and cool: this is what makes
+  // the island legible as topography from a distance
+  col *= 0.82 + 0.42 * elev;
+  col = mix(col, col * vec3(1.06, 1.02, 0.94), smoothstep(0.35, 0.85, elev) * 0.6);
+  col = mix(col, col * vec3(0.93, 0.98, 1.07), (1.0 - smoothstep(0.05, 0.34, elev)) * 0.5);
 
   // ---- light and shoreline shading -------------------------------------
   col *= lit;
@@ -311,7 +339,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float e = 3.0;
   float mx = vn((w + vec2(e, 0.0)) * 0.075) - vn((w - vec2(e, 0.0)) * 0.075);
   float my = vn((w + vec2(0.0, e)) * 0.075) - vn((w - vec2(0.0, e)) * 0.075);
-  vec3 nrm = normalize(vec3(-grad.x - mx * 0.55, -grad.y - my * 0.55, 1.0));
+  vec3 nrm = normalize(vec3(-grad.x - mx * 0.32, -grad.y - my * 0.32, 1.0));
   float land = step(0.5, A.a);
   return vec4(nrm * 0.5 + 0.5, land);
 }
@@ -357,15 +385,19 @@ float fbm4(vec2 p) {
   return s / n;
 }
 float crinkle(vec2 w) {
-  return (fbm4(w * 0.0125 + 5.0) - 0.5) * 26.0
-       + (fbm3(w * 0.0480 + 17.3) - 0.5) * 13.0
-       + (vn(w * 0.1400 + 91.0) - 0.5) * 6.0;
+  return (fbm4(w * 0.0125 + 5.0) - 0.5) * 24.0
+       + (fbm3(w * 0.0480 + 17.3) - 0.5) * 17.0
+       + (vn(w * 0.1400 + 91.0) - 0.5) * 9.0;
 }
 
 vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   vec2 w = uView.xy + tc * uView.zw;
   vec2 uv = clamp(w / uWorld, vec2(0.0), vec2(1.0));
-  float sd = (Texel(shore, uv).r * 2.0 - 1.0) * uSdMax;
+  float se = Texel(shore, uv).r * 2.0 - 1.0;
+  float sd = se * abs(se) * uSdMax;
+  // outside the map there is only open ocean, never a smeared edge texel
+  vec2 od = max(vec2(0.0) - w, w - uWorld);
+  sd = sd - length(max(od, vec2(0.0))) * 1.6;
   if (sd < -70.0 || sd > 110.0) { return vec4(0.0); }
   sd = sd + crinkle(w);
   if (sd < -2.0 || sd > 46.0) { return vec4(0.0); }
@@ -388,7 +420,9 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 --------------------------------------------------------------------- the class
 local Terrain = Class("Terrain")
 
-function Terrain:init(seed)
+local function noyield() end
+
+function Terrain:init(seed, opts)
   self.seed = seed or 20190101
   self.w, self.h = TW.w, TW.h
   self.cell = CELL
@@ -396,21 +430,30 @@ function Terrain:init(seed)
   self.gh = floor(self.h / CELL) + 1
   self.time = 0
   self.baked = false
+  self.generated = false
   self.progress = 0
-  self:_generate()
+  self._yield = noyield
+  self.deferred = (opts and opts.defer) or false
+  if not self.deferred then self:_generate() end
 end
+
+--- Generate nothing up front: bakeStep() will do the fields and the canvases,
+--- a slice at a time, so a loading screen can drive the whole thing.
+function Terrain.newDeferred(seed) return Terrain.new(seed, { defer = true }) end
 
 function Terrain:bounds() return 0, 0, self.w, self.h end
 
 ---------------------------------------------------------------------- generate
 function Terrain:_generate()
   local t0 = love.timer and love.timer.getTime() or os.clock()
+  local yield = self._yield
   local gw, gh, cell = self.gw, self.gh, self.cell
   local n = gw * gh
   local sb = (self.seed % 977) * 3
 
   local s1, s2, s3, s4 = sb + 1, sb + 2, sb + 3, sb + 4
   local s5, s6, s7, s8 = sb + 5, sb + 6, sb + 7, sb + 8
+  local s9 = sb + 9
 
   local elev, moist, land = {}, {}, {}
   local scar, heal = {}, {}
@@ -418,32 +461,41 @@ function Terrain:_generate()
   local rx, ry = self.w * 0.5, self.h * 0.5
 
   for gy = 0, gh - 1 do
+    if gy % 24 == 0 then yield(gy / gh * 0.80) end
     local wy = gy * cell
     local base = gy * gw
     for gx = 0, gw - 1 do
       local wx = gx * cell
       local i = base + gx + 1
 
-      -- domain warp: bays and peninsulas instead of a circle
-      local w1 = N.fbm(wx * 0.00088 + 4.1, wy * 0.00088 - 2.3, 3, s1)
-      local w2 = N.fbm(wx * 0.00088 - 7.7, wy * 0.00088 + 5.9, 3, s1 + 40)
-      local qx = wx + (w1 - 0.5) * 700
-      local qy = wy + (w2 - 0.5) * 600
+      -- two-scale domain warp: bays and peninsulas instead of a circle
+      local w1 = N.fbm(wx * 0.00052 + 4.1, wy * 0.00052 - 2.3, 3, s1)
+      local w2 = N.fbm(wx * 0.00052 - 7.7, wy * 0.00052 + 5.9, 3, s1 + 40)
+      local v1 = N.fbm(wx * 0.00205 + 19.0, wy * 0.00205 + 3.0, 3, s1 + 80)
+      local v2 = N.fbm(wx * 0.00205 - 11.0, wy * 0.00205 - 8.0, 3, s1 + 120)
+      local qx = wx + (w1 - 0.5) * 1280 + (v1 - 0.5) * 300
+      local qy = wy + (w2 - 0.5) * 1080 + (v2 - 0.5) * 250
 
       local dx, dy = (qx - cx) / rx, (qy - cy) / ry
       local r = sqrt(dx * dx + dy * dy)
       local ang = atan2(dy, dx)
-      -- periodic in angle, so the falloff radius itself is lumpy
-      local lobe = 0.50 + 0.30 * N.fbm(cos(ang) * 1.9 + 11.0, sin(ang) * 1.9 + 6.0, 3, s2)
-      local mask = U.smoothstep(lobe + 0.30, lobe - 0.15, r)
+      -- periodic in angle, so the falloff radius itself grows lobes
+      local lobe = 0.46 + 0.40 * N.fbm(cos(ang) * 3.4 + 11.0, sin(ang) * 3.4 + 6.0, 4, s2)
+      local mask = U.smoothstep(lobe + 0.30, lobe - 0.16, r)
 
-      local cont = N.fbm(wx * 0.00118 + 11.0, wy * 0.00118 + 7.0, 5, s3)
+      local cont = N.fbm(wx * 0.00090 + 11.0, wy * 0.00090 + 7.0, 5, s3)
       local det  = N.fbm(wx * 0.00390 - 3.0, wy * 0.00390 + 2.0, 4, s4)
-      local lv = mask * 1.22 + (cont - 0.5) * 1.20 + (det - 0.5) * 0.26 - 0.585
+      local lv = mask * 1.30 + (cont - 0.5) * 1.34 + (det - 0.5) * 0.26 - 0.598
 
-      -- offshore islets in the shallow ring
-      local isl = N.fbm(wx * 0.0026 + 41.0, wy * 0.0026 + 17.0, 3, s5)
-      lv = lv + U.smoothstep(0.70, 0.94, isl) * U.smoothstep(1.30, 0.72, r) * 0.55
+      -- two scales of bay bitten out of the silhouette: broad gulfs and inlets
+      local bay1 = N.fbm(qx * 0.00062 + 301.0, qy * 0.00062 - 143.0, 3, s9)
+      local bay2 = N.fbm(wx * 0.00140 - 77.0, wy * 0.00140 + 211.0, 3, s9 + 30)
+      lv = lv - U.smoothstep(0.47, 0.86, bay1) * 1.10 * U.smoothstep(0.08, 0.86, r)
+              - U.smoothstep(0.60, 0.92, bay2) * 0.70 * U.smoothstep(0.26, 1.00, r)
+
+      -- offshore islets and skerries in the shallow ring
+      local isl = N.fbm(wx * 0.0031 + 41.0, wy * 0.0031 + 17.0, 3, s5)
+      lv = lv + U.smoothstep(0.62, 0.90, isl) * U.smoothstep(1.42, 0.78, r) * 0.72
 
       land[i] = lv
 
@@ -471,10 +523,15 @@ function Terrain:_generate()
 
   self.elev, self.moist, self.landv, self.scar, self.heal = elev, moist, land, scar, heal
 
+  yield(0.82)
   self:_distanceField()
+  yield(0.86)
   self:_scars()
+  yield(0.92)
   self:_classify()
+  yield(0.97)
   self:_buildFields()
+  self.generated = true
 
   self.genTime = (love.timer and love.timer.getTime() or os.clock()) - t0
 end
@@ -556,23 +613,34 @@ function Terrain:_scars()
       for _, c in ipairs(centres) do
         if U.dist(wx, wy, c.x, c.y) < 620 then ok = false break end
       end
-      if ok then centres[#centres + 1] = { x = wx, y = wy, r = rng:range(230, 400) } end
+      if ok then
+        centres[#centres + 1] = { x = wx, y = wy, r = rng:range(175, 305),
+                                  ang = rng:angle(), ecc = rng:range(1.35, 2.30) }
+      end
     end
   end
   self.scarCentres = centres
 
   for _, c in ipairs(centres) do
-    local g0x = max(0, floor((c.x - c.r * 1.5) / cell))
-    local g1x = min(gw - 1, ceil((c.x + c.r * 1.5) / cell))
-    local g0y = max(0, floor((c.y - c.r * 1.5) / cell))
-    local g1y = min(gh - 1, ceil((c.y + c.r * 1.5) / cell))
+    local ca, sa = cos(-c.ang), sin(-c.ang)
+    local reach = c.r * c.ecc * 1.9
+    local g0x = max(0, floor((c.x - reach) / cell))
+    local g1x = min(gw - 1, ceil((c.x + reach) / cell))
+    local g0y = max(0, floor((c.y - reach) / cell))
+    local g1y = min(gh - 1, ceil((c.y + reach) / cell))
     for gy = g0y, g1y do
       for gx = g0x, g1x do
         local i = gy * gw + gx + 1
         local wx, wy = gx * cell, gy * cell
-        local d = U.dist(wx, wy, c.x, c.y) / c.r
-        local wob = N.fbm(wx * 0.0042 + 5.0, wy * 0.0042 - 3.0, 3, sN)
-        local v = U.smoothstep(1.02, 0.22, d + (wob - 0.5) * 0.70)
+        -- warp the sample before measuring, so the blight has an eaten edge
+        local ox = (N.fbm(wx * 0.0026 + 5.0, wy * 0.0026 - 3.0, 3, sN) - 0.5) * c.r * 1.45
+        local oy = (N.fbm(wx * 0.0026 + 55.0, wy * 0.0026 + 31.0, 3, sN + 7) - 0.5) * c.r * 1.45
+        local px, py = wx + ox - c.x, wy + oy - c.y
+        local ex = (px * ca - py * sa) / (c.r * c.ecc)
+        local ey = (px * sa + py * ca) / c.r
+        local d = sqrt(ex * ex + ey * ey)
+        local fine = N.fbm(wx * 0.0090 - 21.0, wy * 0.0090 + 13.0, 3, sN + 19)
+        local v = U.smoothstep(1.00, 0.30, d + (fine - 0.5) * 0.34)
         if v > scar[i] then scar[i] = v end
       end
     end
@@ -657,7 +725,10 @@ function Terrain:_buildFields()
   for i = 1, gw * gh do
     local gx = U.clamp(gradx[i], -1, 1) * 0.5 + 0.5
     local gy = U.clamp(grady[i], -1, 1) * 0.5 + 0.5
-    local dd = U.clamp(sd[i] / SD_MAX, -1, 1) * 0.5 + 0.5
+    -- signed-sqrt encoding: 8 bits, but almost all of the precision lands
+    -- where it matters (within a few units of the waterline)
+    local t = U.clamp(sd[i] / SD_MAX, -1, 1)
+    local dd = (t < 0 and -sqrt(-t) or sqrt(t)) * 0.5 + 0.5
     ka = ka + 1
     a[ka] = ch(floor(elev[i] * 255 + 0.5), floor(gx * 255 + 0.5),
                floor(gy * 255 + 0.5), floor(dd * 255 + 0.5))
@@ -851,6 +922,15 @@ end
 
 function Terrain:_bakeCoroutine()
   return coroutine.wrap(function()
+    local p0 = 0
+    if not self.generated then
+      p0 = 0.34
+      self._yield = function(p) coroutine.yield(p * p0) end
+      self:_generate()
+      self._yield = noyield
+    end
+    local ps = 1 - p0
+    local function emit(p) coroutine.yield(p0 + ps * p) end
     self:_makeShaders()
 
     local cols = ceil(self.w / TILE_W)
@@ -881,14 +961,14 @@ function Terrain:_bakeCoroutine()
         love.graphics.setBlendMode("alpha")
         love.graphics.setCanvas()
         done = done + 1
-        coroutine.yield(done / (total * 2 + 2) * 0.9)
+        emit(done / (total * 2 + 2) * 0.9)
 
         -- vector marks, in four passes so a slow machine can breathe
         for part = 0, 3 do
           love.graphics.setCanvas(canvas)
           self:_scatterMarks(tile, part, 4)
           love.graphics.setCanvas()
-          coroutine.yield((done + (part + 1) / 4) / (total * 2 + 2) * 0.9)
+          emit((done + (part + 1) / 4) / (total * 2 + 2) * 0.9)
         end
         done = done + 1
       end
@@ -908,7 +988,7 @@ function Terrain:_bakeCoroutine()
     love.graphics.draw(self._white, 0, 0, 0, nw, nh)
     love.graphics.setShader()
     love.graphics.setCanvas()
-    coroutine.yield(0.95)
+    emit(0.95)
 
     -- signed shore distance field for the water shader
     self.shoreCanvas = love.graphics.newCanvas(SHORE_W, SHORE_H)
@@ -921,7 +1001,7 @@ function Terrain:_bakeCoroutine()
     love.graphics.setShader()
     love.graphics.setCanvas()
     put(self._foamSh, "shore", self.shoreCanvas)
-    coroutine.yield(1.0)
+    emit(1.0)
   end)
 end
 
@@ -984,7 +1064,7 @@ function Terrain:_scatterMarks(tile, part, parts)
   local R = P.ramp
   local rng = U.rng(self.seed * 131 + (tile.x * 7 + tile.y) * 977 + part * 31)
   local cell = self.cell
-  local per = floor(TILE_W * TILE_H / 148 / parts)   -- ~4600 candidates per tile
+  local per = floor(TILE_W * TILE_H / 112 / parts)   -- ~6000 candidates per tile
   local x0, y0 = tile.x, tile.y
 
   local grassShadow = R.grass[1]
@@ -996,7 +1076,7 @@ function Terrain:_scatterMarks(tile, part, parts)
     if wx <= self.w and wy <= self.h then
       local i = self:_idx(wx, wy)
       local d = self.sd[i]
-      if d > 3 then
+      if d > 18 then
         local b = self.biome[i]
         local lx, ly = wx - x0, wy - y0
         local fert = self.fert[i]
@@ -1005,6 +1085,9 @@ function Terrain:_scatterMarks(tile, part, parts)
 
         if b == B_MEADOW or (b == B_MARSH and rng:chance(0.35)) then
           local roll = rng:next()
+          -- flowers grow in drifts, not evenly sprinkled
+          local bloom = N.fbm(wx * 0.0055 + 301.0, wy * 0.0055 - 77.0, 3, self.seed % 401 + 60)
+          if roll >= 0.62 and roll < 0.80 and bloom < 0.56 then roll = 0.30 end
           if roll < 0.62 then
             local hgt = (5 + rng:next() * 8) * (0.55 + fert * 0.75)
             local base = P.shade(R.grass, 1.0 + rng:next() * 0.7, 0.85)
@@ -1012,17 +1095,15 @@ function Terrain:_scatterMarks(tile, part, parts)
             love.graphics.setColor(P.alpha(grassShadow, 0.30))
             love.graphics.ellipse("fill", lx + 1.2, ly + 1.0, 2.4, 1.1, 6)
             tuft(lx, ly, hgt, (rng:next() - 0.5) * 5, 1.1 + rng:next() * 0.9, base, tip)
-          elseif roll < 0.74 then
+          elseif roll < 0.80 then
             -- flower speck
             local pick = rng:next()
-            local fc = (pick < 0.34 and P.love) or (pick < 0.68 and P.warn) or P.ink
-            love.graphics.setColor(P.alpha(P.darken(fc, 0.35), 0.5))
-            love.graphics.circle("fill", lx + 0.8, ly + 0.8, 1.5 + rng:next(), 5)
-            love.graphics.setColor(P.alpha(fc, 0.72 + rng:next() * 0.25))
-            love.graphics.circle("fill", lx, ly, 1.2 + rng:next() * 1.3, 5)
-            love.graphics.setColor(P.alpha(P.lighten(fc, 0.55), 0.8))
-            love.graphics.circle("fill", lx - 0.5, ly - 0.5, 0.6, 4)
-          elseif roll < 0.86 then
+            local fc = (pick < 0.40 and P.love) or (pick < 0.80 and P.warn) or P.accent
+            love.graphics.setColor(P.alpha(P.darken(fc, 0.45), 0.40))
+            love.graphics.circle("fill", lx + 0.7, ly + 0.7, 1.1 + rng:next() * 0.7, 5)
+            love.graphics.setColor(P.alpha(fc, 0.52 + rng:next() * 0.20))
+            love.graphics.circle("fill", lx, ly, 0.9 + rng:next() * 0.9, 5)
+          elseif roll < 0.93 then
             -- pebble with a sun-side highlight
             local r = 1.6 + rng:next() * 3.2
             love.graphics.setColor(P.alpha(P.darken(R.rock[1], 0.2), 0.4))
@@ -1032,9 +1113,9 @@ function Terrain:_scatterMarks(tile, part, parts)
             love.graphics.setColor(P.alpha(R.rock[4], 0.5))
             love.graphics.ellipse("fill", lx - r * 0.3, ly - r * 0.3, r * 0.42, r * 0.3, 5)
           else
-            -- dirt fleck
-            love.graphics.setColor(P.alpha(P.shade(R.soil, 1.5 + rng:next()), 0.20 + rng:next() * 0.2))
-            love.graphics.ellipse("fill", lx, ly, 5 + rng:next() * 14, 3 + rng:next() * 8, 8)
+            -- bare earth showing through, low and wide
+            love.graphics.setColor(P.alpha(P.shade(R.soil, 1.4 + rng:next() * 0.8), 0.07 + rng:next() * 0.09))
+            love.graphics.ellipse("fill", lx, ly, 9 + rng:next() * 22, 4 + rng:next() * 9, 10)
           end
 
         elseif b == B_MARSH then

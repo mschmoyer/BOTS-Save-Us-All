@@ -9,6 +9,12 @@ local TF   = require("src.assets.typeface")
 
 local S = { t = 0, odo = { v = 0 } }
 
+local seen, count = {}, 0
+for _, g in pairs(TF.glyphs) do
+  if not seen[g] then seen[g] = true; count = count + 1 end
+end
+S.glyphCount = count
+
 local ALPHA1 = "ABCDEFGHIJKLM"
 local ALPHA2 = "NOPQRSTUVWXYZ"
 local ALPHA  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -41,8 +47,13 @@ local function rule(x, y, w, color, alpha)
   love.graphics.line(x, y, x + w, y)
 end
 
-local function tag(str, x, y, color)
-  Text.display(str, x, y, 11, { color = color or P.inkFaint, tracking = 0.30, weight = 0.10 })
+local TAG = { tracking = 0.30, weight = 0.10 }
+local function tag(str, x, y, color, align)
+  TAG.color = color or P.inkFaint
+  TAG.align = align
+  local w = Text.display(str, x, y, 11, TAG)
+  TAG.align = nil
+  return w
 end
 
 ------------------------------------------------------------------- page one
@@ -50,9 +61,10 @@ function S:drawType()
   local w, h = love.graphics.getDimensions()
   local M = 56
 
-  tag("ROOTSTOCK", M, 40, P.accent)
-  tag("A HAND-VECTORED DISPLAY FACE  /  ALL CAPS  /  " .. #TF.charset() .. " GLYPHS", M + 132, 40)
-  tag("SPECIMEN 01", w - M - 78, 40, P.inkFaint)
+  local tw = tag("ROOTSTOCK", M, 40, P.accent)
+  tag("A HAND-VECTORED DISPLAY FACE  /  ALL CAPS  /  " .. S.glyphCount .. " GLYPHS",
+      M + tw + 26, 40)
+  tag("SPECIMEN 01", w - M, 40, P.inkFaint, "right")
   rule(M, 62, w - M * 2)
 
   -- headline lockup ------------------------------------------------------
@@ -68,8 +80,6 @@ function S:drawType()
                { color = P.accentCool, tracking = 0.10, weight = 0.10 })
   Text.display("SURVIVE 7 CYCLES. GROW A FOREST.", M + hw + 44, 140, 15,
                { color = P.inkDim, tracking = 0.22, weight = 0.095 })
-  Text.display("0", M + hw + 44, 168, 32, { color = P.inkFaint, alpha = 0.0 })
-
   rule(M, 232, w - M * 2, P.inkFaint, 0.3)
 
   -- size ladder ----------------------------------------------------------
@@ -124,7 +134,7 @@ function S:drawType()
   tag("HUD", 660, 528)
   Text.number(self.odo.v, 660, 546, 40, { color = P.o2, comma = true, tracking = 0.03 })
   Text.display("O2", 660, 594, 14, { color = P.inkDim, tracking = 0.24 })
-  Text.number(87.4, 700, 590, 20, { color = P.accent, decimals = 1, suffix = "%", tracking = 0.03 })
+  Text.number(87.4, 706, 592, 18, { color = P.accent, decimals = 1, suffix = "%", tracking = 0.03 })
 
   tag("TYPE-ON", 900, 528)
   local prog = U.saturate((self.t % 4) / 2.4)
@@ -141,7 +151,7 @@ function S:drawType()
   -- footer ---------------------------------------------------------------
   rule(M, h - 62, w - M * 2, P.inkFaint, 0.3)
   tag("CAP 1.000   OVERSHOOT 0.020   DEFAULT WEIGHT 0.105   TRACKING 0.035", M, h - 48)
-  tag("PAGE 1 OF 2  --  TYPOGRAPHY", w - M - 190, h - 48, P.accent)
+  tag("PAGE 1 OF 3  --  TYPOGRAPHY", w - M, h - 48, P.accent, "right")
 end
 
 ------------------------------------------------------------------- page two
@@ -177,14 +187,18 @@ end)
 
 cell("BLOB  (SEEDED)", function(x, y, w, h, t)
   local cx, cy = x + w / 2, y + h / 2
-  for i = 1, 3 do
-    local sd = 100 + i * 37
-    Draw.setColor(P.ramp.leaf[i + 1], 0.92)
-    Draw.blob(cx + (i - 2) * 24, cy + (i - 2) * 6, 34 - i * 3, 20, sd, 0.24, 0.9, "fill", t * 0.15)
+  for i = 1, 4 do
+    local sd = 3 + i * 17
+    local bx = cx + (i - 2.5) * 26
+    local by = cy + math.sin(i * 2.1) * 10
+    Draw.setColor(P.ramp.leaf[2], 0.5)
+    Draw.blob(bx, by + 5, 32, 22, sd, 0.26, 0.86, "fill", t * 0.12)
+    Draw.setColor(P.shade(P.ramp.leaf, 2.4 + i * 0.4), 0.95)
+    Draw.blob(bx, by, 30, 22, sd, 0.26, 0.86, "fill", t * 0.12)
   end
-  Draw.setColor(P.ramp.leafHi[4], 0.7)
+  Draw.setColor(P.ramp.leafHi[4], 0.8)
   love.graphics.setLineWidth(1.5)
-  Draw.blob(cx - 24, cy - 6, 31, 20, 137, 0.24, 0.9, "line", t * 0.15)
+  Draw.blob(cx - 39, cy + math.sin(2.1) * 10, 30, 22, 20, 0.26, 0.86, "line", t * 0.12)
 end)
 
 cell("SOFT SHADOW", function(x, y, w, h)
@@ -200,7 +214,8 @@ end)
 
 cell("GLOW  (ADDITIVE)", function(x, y, w, h, t)
   local cx, cy = x + w / 2, y + h / 2
-  Draw.glow(cx, cy, 52 + math.sin(t * 2) * 5, P.accent, 0.85, 3)
+  Draw.glow(cx, cy, 66 + math.sin(t * 2) * 6, P.accent, 0.9, 3)
+  Draw.glow(cx - 52, cy + 34, 30, P.ramp.ember[3], 0.9, 2)
   Draw.setColor(P.white, 0.95)
   love.graphics.circle("fill", cx, cy, 6)
 end)
@@ -302,11 +317,12 @@ end)
 
 cell("SCANLINES", function(x, y, w, h, t)
   Draw.setColor(P.ramp.water[2], 0.55)
-  Draw.roundRect("fill", x, y, w, h, 8)
+  love.graphics.rectangle("fill", x, y, w, h)
   Draw.scanlineRect(x, y, w, h, 5, P.o2, 0.30, t * 12, 2)
-  Draw.setColor(P.o2, 0.6)
+  Draw.linearGradient(x, y, w, h, P.alpha(P.o2, 0.20), P.alpha(P.black, 0), math.pi * 0.5)
+  Draw.setColor(P.o2, 0.5)
   love.graphics.setLineWidth(1)
-  Draw.roundRect("line", x, y, w, h, 8)
+  love.graphics.rectangle("line", x + 0.5, y + 0.5, w - 1, h - 1)
 end)
 
 cell("NOISE SPECKLE", function(x, y, w, h)
@@ -349,9 +365,10 @@ end)
 function S:drawPrims()
   local w, h = love.graphics.getDimensions()
   local M = 44
-  tag("ENGINE / DRAW", M, 40, P.accent)
-  tag("THE SHAPE VOCABULARY  /  " .. #CELLS .. " PRIMITIVES  /  CACHED MESHES, ZERO PER-FRAME ALLOCATION", M + 132, 40)
-  tag("SPECIMEN 02", w - M - 78, 40)
+  local tw = tag("ENGINE / DRAW", M, 40, P.accent)
+  tag("THE SHAPE VOCABULARY  /  " .. #CELLS ..
+      " PRIMITIVES  /  CACHED MESHES, ZERO PER-FRAME ALLOCATION", M + tw + 26, 40)
+  tag("SPECIMEN 02", w - M, 40, nil, "right")
   rule(M, 62, w - M * 2)
 
   local cols, rows = 6, 4
@@ -384,14 +401,80 @@ function S:drawPrims()
   end
 
   rule(M, h - 40, w - M * 2, P.inkFaint, 0.3)
-  tag("PAGE 2 OF 2  --  PRIMITIVES", w - M - 200, h - 30, P.accent)
+  tag("PAGE 2 OF 3  --  PRIMITIVES", w - M, h - 30, P.accent, "right")
+end
+
+----------------------------------------------------------------- page three
+-- Construction sheet: the face at monumental size against its guides, then
+-- the same letters shrunk to HUD and caption sizes to prove it holds up.
+local BIG = "GSR&QK26"
+
+function S:drawDetail()
+  local w, h = love.graphics.getDimensions()
+  local M = 56
+  local tw = tag("CONSTRUCTION", M, 40, P.accent)
+  tag("CAP LINE  /  BASELINE  /  OVERSHOOT  /  CROSSBAR AT 0.475", M + tw + 26, 40)
+  tag("SPECIMEN 03", w - M, 40, nil, "right")
+  rule(M, 62, w - M * 2)
+
+  local size = 190
+  local top = 128
+  local base = top + size
+  local ov = size * TF.overshoot
+
+  -- guides
+  Draw.setColor(P.accentCool, 0.30)
+  love.graphics.setLineWidth(1)
+  love.graphics.line(M, top, w - M, top)
+  love.graphics.line(M, base, w - M, base)
+  Draw.setColor(P.danger, 0.28)
+  Draw.dashedLine(M, top - ov, w - M, top - ov, 9, 7, 0, 1)
+  Draw.dashedLine(M, base + ov, w - M, base + ov, 9, 7, 0, 1)
+  Draw.setColor(P.accent, 0.18)
+  Draw.dashedLine(M, top + size * 0.475, w - M, top + size * 0.475, 5, 9, 0, 1)
+
+  tag("CAP", M - 4, top - 20, P.accentCool)
+  tag("BASE", M - 4, base + 10, P.accentCool)
+
+  local x = M + 4
+  for ch in Text.chars(BIG) do
+    x = x + Text.display(ch, x, top, size, { color = P.ink, tracking = 0 }) + size * 0.06
+  end
+
+  rule(M, 400, w - M * 2, P.inkFaint, 0.3)
+
+  -- the same glyphs down the scale
+  tag("SAME LETTERS, HUD AND CAPTION SIZES", M, 418)
+  local sizes = { 56, 36, 24, 18, 14, 12 }
+  local yy = 440
+  local right = w - M - 78
+  for i = 1, #sizes do
+    local sz = sizes[i]
+    local sample = BIG .. "  " .. ALPHA
+    local opt = { color = P.ink, tracking = 0.045, maxWidth = right - M - 30 }
+    Text.display(sample, M, yy, sz, opt)
+    Text.display(sz .. " PX", right, yy + sz * 0.22, 11,
+                 { color = P.inkFaint, tracking = 0.18 })
+    yy = yy + sz * 1.5 + 8
+  end
+
+  rule(M, yy + 6, w - M * 2, P.inkFaint, 0.3)
+  tag("MIXED SETTING", M, yy + 22)
+  Text.display("CYCLE 4  --  DUSK IN 00:12  --  O2 62.5%  --  SEED-07 IS DOWN", M, yy + 42, 22,
+               { color = P.warn, tracking = 0.06 })
+  Text.display("PLANTER 10   BUILDER 35   REPULSOR 5   SENTRY 25   HARVESTER 20   BEACON 30",
+               M, yy + 78, 15, { color = P.inkDim, tracking = 0.10 })
+
+  tag("PAGE 3 OF 3  --  CONSTRUCTION", w - M, h - 30, P.accent, "right")
 end
 
 ------------------------------------------------------------------------ draw
 function S:draw()
   love.graphics.clear(P.black)
   backdrop()
-  if self.t < 1.4 then self:drawType() else self:drawPrims() end
+  if self.t < 1.4 then self:drawType()
+  elseif self.t < 2.6 then self:drawPrims()
+  else self:drawDetail() end
   Draw.reset()
 end
 

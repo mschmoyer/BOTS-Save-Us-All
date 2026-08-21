@@ -631,7 +631,14 @@ end
 
 -------------------------------------------------------------------------- draw
 local function addDraw(list, e) list[#list + 1] = e end
-local function bySortKey(a, b) return a:sortKey() < b:sortKey() end
+
+--- Depth key. Entities may supply `sortKey`; anything else sorts on its feet.
+local function depthOf(e)
+  if e.sortKey then return e:sortKey() end
+  local z = e.z
+  return e.y + (type(z) == "number" and z or 0)
+end
+local function bySortKey(a, b) return depthOf(a) < depthOf(b) end
 
 function World:draw(camera)
   self.camera = camera
@@ -665,7 +672,7 @@ function World:draw(camera)
   for i = #dl, 1, -1 do dl[i] = nil end
   for i = 1, #self.trees do
     local t = self.trees[i]
-    if t.alive and camera:visible(t.x, t.y, 240) then addDraw(dl, t) end
+    if t.alive and camera:visible(t.x, t.y, 240) then t.isTree = true addDraw(dl, t) end
   end
   for l = 1, #lists do
     local list = lists[l]
@@ -681,7 +688,7 @@ function World:draw(camera)
   local sx, sy = math.cos(sunA), math.sin(sunA)
   for i = 1, #dl do
     local e = dl[i]
-    if e.kind == "tree" then e:draw(sx, sy) else e:draw() end
+    if e.isTree then e:draw(sx, sy) else e:draw() end
   end
 
   if VFX.draw then VFX.draw("world") end
@@ -690,13 +697,44 @@ function World:draw(camera)
   self:drawSpeech()
 end
 
+--- A small speech bubble above a bot. Self-contained so the world never depends
+--- on the HUD being loaded.
+local bubbleFont
+function World:drawBubble(x, y, text, a)
+  if a <= 0.01 then return end
+  bubbleFont = bubbleFont or love.graphics.newFont(12)
+  local g = love.graphics
+  local prevFont = g.getFont()
+  g.setFont(bubbleFont)
+  local tw = bubbleFont:getWidth(text)
+  local th = bubbleFont:getHeight()
+  local padX, padY = 9, 5
+  local w, h = tw + padX * 2, th + padY * 2
+  local bx, by = x - w / 2, y - h
+
+  g.setColor(P.black[1], P.black[2], P.black[3], 0.72 * a)
+  if Draw.roundRect then Draw.roundRect("fill", bx, by, w, h, 6)
+  else g.rectangle("fill", bx, by, w, h, 6) end
+  g.polygon("fill", x - 5, by + h - 1, x + 5, by + h - 1, x, by + h + 6)
+
+  g.setColor(P.inkDim[1], P.inkDim[2], P.inkDim[3], 0.25 * a)
+  if Draw.roundRect then Draw.roundRect("line", bx, by, w, h, 6)
+  else g.rectangle("line", bx, by, w, h, 6) end
+
+  g.setColor(P.ink[1], P.ink[2], P.ink[3], 0.95 * a)
+  g.print(text, bx + padX, by + padY)
+  g.setColor(1, 1, 1, 1)
+  g.setFont(prevFont)
+end
+
 function World:drawSpeech()
   for i = 1, #self.speeches do
     local s = self.speeches[i]
     local a = U.saturate(math.min(s.t * 4, (s.dur - s.t) * 2))
     local who = s.who
     if who.alive and self.camera:visible(who.x, who.y, 60) then
-      Draw.speechBubble(who.x, who.y - (who.radius or 12) * 2.6, s.line, a)
+      local rise = U.smoothstep(0, 0.35, s.t) * 6
+      self:drawBubble(who.x, who.y - (who.radius or 12) * 2.4 - rise, s.line, a)
     end
   end
 end

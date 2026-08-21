@@ -16,8 +16,8 @@
 --   Lighting.finish()
 --
 -- Point lights are a single cached falloff texture drawn additively, so LÖVE
--- batches all of them into one draw call: hundreds are free. Cone lights use
--- cached fan meshes, quantised by half-angle. Nothing here allocates per frame.
+-- batches all of them into one draw call: hundreds are free. Cone lights are
+-- one analytic shader quad each. Nothing here allocates per frame.
 local U = require("src.core.util")
 
 local L = {}
@@ -38,8 +38,8 @@ local scale = 0.5
 local quality = 1
 
 local falloff = {}          -- [1..3] soft / normal / tight
-local coneMesh = {}         -- [quantised half-angle bucket] -> Mesh
-local shader
+local quad                  -- unit quad used by the cone shader
+local shader, coneShader
 
 local ambR, ambG, ambB, ambS = 1, 1, 1, 1
 local ambSend = { 0, 0, 0 }
@@ -57,11 +57,11 @@ L.sunAngle  = math.pi * 0.5
 L.sunLength = 0.5
 L.enabled   = true
 
--- quality presets: canvas scale, cone rings, cone segments
+-- quality presets: light-buffer resolution scale
 local Q = {
-  [0] = { scale = 0.34, rings = 6,  segs = 16 },
-  [1] = { scale = 0.50, rings = 10, segs = 28 },
-  [2] = { scale = 1.00, rings = 14, segs = 40 },
+  [0] = { scale = 0.34 },
+  [1] = { scale = 0.50 },
+  [2] = { scale = 1.00 },
 }
 
 --------------------------------------------------------------------- shaders
@@ -109,53 +109,29 @@ local function makeFalloff(k)
   return img
 end
 
---- Fan mesh for a cone light, unit radius, pointing along +x, half-angle `half`.
-local function makeCone(half, rings, segs)
-  local verts = {}
-  local n = 0
-  local k = 14
-  local edge = 1 / (1 + k)
-  local norm = 1 / (1 - edge)
-  local function falloffAt(d)
-    if d >= 1 then return 0 end
-    return U.saturate((1 / (1 + k * d * d) - edge) * norm * U.smoothstep(1.0, 0.9, d))
-  end
-  local function push(r, a)
-    -- soft angular shoulder so the cone edge is a gradient, not a blade, and a
-    -- round isotropic bulb at the source: a real lamp spills before it beams
-    local t = math.abs(a) / half
-    local ang = 1 - U.smoothstep(0.18, 1.0, t) ^ 0.8
-    ang = U.lerp(1, ang, U.smoothstep(0.0, 0.30, r))
-    local v = falloffAt(r) * ang
-    n = n + 1
-    verts[n] = { math.cos(a) * r, math.sin(a) * r, 0, 0, 1, 1, 1, v }
-  end
-  for i = 0, rings - 1 do
-    local r0 = i / rings
-    local r1 = (i + 1) / rings
-    for j = 0, segs - 1 do
-      local a0 = -half + (j / segs) * half * 2
-      local a1 = -half + ((j + 1) / segs) * half * 2
-      push(r0, a0); push(r1, a0); push(r1, a1)
-      push(r0, a0); push(r1, a1); push(r0, a1)
-    end
-  end
-  local m = love.graphics.newMesh(verts, "triangles", "static")
-  m:setTexture(nil)
-  return m
-end
+--- Cone lights are drawn analytically: one quad, one shader, exact soft edges
+--- at any angle. Cheap, because there are only ever a handful of them.
+local CONE_SRC = [[
+extern float halfAngle;
+extern float kFall;
+extern float edge;
+extern float norm;
+vec4 effect(vec4 vc, Image tex, vec2 tc, vec2 sc) {
+  vec2 p = (tc - 0.5) * 2.0;          // -1..1, +x is the beam direction
+  float d = length(p);
+  if (d >= 1.0) { return vec4(0.0, 0.0, 0.0, 0.0); }
+  float a = abs(atan(p.y, p.x));
+  // soft angular shoulder, and an isotropic bulb near the source: a real lamp
+  // spills before it beams
+  float ang = 1.0 - smoothstep(0.40, 1.0, a / halfAngle);
+  ang = mix(1.0, ang, smoothstep(0.0, 0.17, d));
+  float fall = clamp((1.0 / (1.0 + kFall * d * d) - edge) * norm, 0.0, 1.0);
+  fall *= smoothstep(1.0, 0.86, d);
+  return vec4(vc.rgb * (fall * ang), 0.0);
+}
+]]
 
-local function coneFor(half)
-  -- quantise to 6-degree buckets so a sweeping sentry reuses one mesh
-  local bucket = math.max(1, math.min(30, U.round(math.deg(half) / 6)))
-  local m = coneMesh[bucket]
-  if not m then
-    local q = Q[quality] or Q[1]
-    m = makeCone(math.rad(bucket * 6), q.rings, q.segs)
-    coneMesh[bucket] = m
-  end
-  return m
-end
+local CONE_K = 3.4
 
 ----------------------------------------------------------------------- canvas
 local function allocate(w, h)
@@ -173,7 +149,17 @@ end
 function L.init(w, h)
   w = w or love.graphics.getWidth()
   h = h or love.graphics.getHeight()
-  if not shader then shader = love.graphics.newShader(COMPOSITE_SRC) end
+  if not shader then
+    shader = love.graphics.newShader(COMPOSITE_SRC)
+    coneShader = love.graphics.newShader(CONE_SRC)
+    coneShader:send("kFall", CONE_K)
+    coneShader:send("edge", 1 / (1 + CONE_K))
+    coneShader:send("norm", 1 / (1 - 1 / (1 + CONE_K)))
+  end
+  if not quad then
+    quad = love.graphics.newMesh({ { -1, -1, 0, 0 }, { 1, -1, 1, 0 },
+                                   { 1, 1, 1, 1 }, { -1, 1, 0, 1 } }, "fan", "static")
+  end
   if not falloff[1] then
     falloff[1] = makeFalloff(5)    -- soft: a wide, gentle wash
     falloff[2] = makeFalloff(14)   -- normal
@@ -191,7 +177,6 @@ function L.setQuality(q)
   if q == quality and canvas then return end
   quality = q
   scale = Q[q].scale
-  for k in pairs(coneMesh) do coneMesh[k]:release() coneMesh[k] = nil end
   if scrW > 0 then allocate(scrW, scrH) end
 end
 
@@ -239,15 +224,15 @@ function L.shadowOffset(height)
   return math.cos(L.sunAngle) * l, math.sin(L.sunAngle) * l * 0.62
 end
 
---- Add a light in **world** space.
+--- Add a light in **world** space. Returns its index, or nil if it was culled.
 --- opts: { flicker = 0..1, angle = rad, cone = rad half-angle, softness = 0..1 }
 function L.addLight(x, y, radius, color, intensity, opts)
-  if not L.enabled or count >= MAXLIGHTS or radius <= 0 then return end
+  if not L.enabled or count >= MAXLIGHTS or radius <= 0 then return nil end
   -- cull: anything whose disc cannot touch the view is free to skip
   local sx = (x - camX) * camZoom + scrW * 0.5
   local sy = (y - camY) * camZoom + scrH * 0.5
   local sr = radius * camZoom
-  if sx + sr < 0 or sy + sr < 0 or sx - sr > scrW or sy - sr > scrH then return end
+  if sx + sr < 0 or sy + sr < 0 or sx - sr > scrW or sy - sr > scrH then return nil end
 
   local i = count + 1
   count = i
@@ -263,16 +248,16 @@ function L.addLight(x, y, radius, color, intensity, opts)
   else
     lsoft[i], lang[i], lcone[i], lflick[i] = 2, nil, nil, nil
   end
+  return i
 end
 
 --- Cone light without an options table (no allocation at the call site).
 function L.addCone(x, y, radius, color, intensity, angle, half, flicker, softness)
-  L.addLight(x, y, radius, color, intensity)
-  if count > 0 and lx[count] then
-    local i = count
-    lang[i], lcone[i], lflick[i] = angle, half, flicker
-    if softness then lsoft[i] = softness < 0.34 and 3 or (softness < 0.67 and 2 or 1) end
-  end
+  local i = L.addLight(x, y, radius, color, intensity)
+  if not i then return nil end
+  lang[i], lcone[i], lflick[i] = angle, half, flicker
+  if softness then lsoft[i] = softness < 0.34 and 3 or (softness < 0.67 and 2 or 1) end
+  return i
 end
 
 function L.lightCount() return count end
@@ -325,16 +310,24 @@ function L.finish()
       end
     end
   end
-  -- cones
+  -- cones: analytic, so the edge stays soft at any half-angle
+  local coneOn = false
   for i = 1, count do
     if lcone[i] then
       local k = li[i] * flickerOf(i)
       if k > 0.004 then
+        if not coneOn then
+          g.setShader(coneShader)
+          g.setBlendMode("add", "premultiplied")
+          coneOn = true
+        end
+        coneShader:send("halfAngle", math.max(lcone[i], 0.02))
         g.setColor(cr[i] * k, cg[i] * k, cb[i] * k, 1)
-        g.draw(coneFor(lcone[i]), lx[i], ly[i], lang[i] or 0, lr[i], lr[i])
+        g.draw(quad, lx[i], ly[i], lang[i] or 0, lr[i], lr[i])
       end
     end
   end
+  if coneOn then g.setShader() end
 
   -- ---- composite ------------------------------------------------------------
   g.origin()

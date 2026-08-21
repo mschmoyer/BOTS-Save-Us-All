@@ -25,9 +25,15 @@ local START = { day = 0.00,   dusk = 0.40,    night = 0.52,   dawn = 0.88 }
 
 -- Scalar lighting response per phase. The *colours* all come from P.tod; these
 -- are the numbers the palette does not carry.
-local AMB    = { day = 1.00, dusk = 0.66, night = 0.42, dawn = 0.76 } -- ambient strength
-local CONTR  = { day = 1.05, dusk = 1.08, night = 1.14, dawn = 1.05 } -- grade contrast
-local SATU   = { day = 1.00, dusk = 0.96, night = 0.82, dawn = 0.92 } -- grade saturation
+local AMB    = { day = 1.00, dusk = 0.50, night = 0.38, dawn = 0.66 } -- ambient strength
+local CONTR  = { day = 1.05, dusk = 1.12, night = 1.16, dawn = 1.06 } -- grade contrast
+-- How much of the phase's hue goes into the *ambient* (which multiplies albedo)
+-- rather than into the grade. Pushing a saturated hue through a multiply is what
+-- makes a sunset look like mud, so the warm phases keep the ambient near-neutral
+-- and let the grade carry the colour; night keeps its blue, because moonlight
+-- really does recolour everything it touches.
+local AMBTINT = { day = 0.30, dusk = 0.55, night = 0.92, dawn = 0.50 }
+local SATU   = { day = 1.00, dusk = 0.66, night = 0.58, dawn = 0.78 } -- grade saturation
 local GAIN   = { day = 0.04, dusk = 0.11, night = 0.17, dawn = 0.08 } -- additive light gain
 local BLOOM  = { day = 0.50, dusk = 0.80, night = 1.00, dawn = 0.70 } -- bloom response
 
@@ -89,7 +95,8 @@ local function recompute()
   DN.clock = (START[p] + SPAN[p] * DN.t) % 1
 
   -- ambient / atmosphere -----------------------------------------------------
-  mixInto(DN.ambient, a.amb, b.amb, w)
+  mixInto(mixA, a.amb, b.amb, w)
+  mixInto(DN.ambient, P.white, mixA, lerp(AMBTINT[p], AMBTINT[nx], w))
   mixInto(DN.fogColor, a.fog, b.fog, w)
   DN.exposure        = lerp(a.exposure, b.exposure, w)
   DN.fogStrength     = lerp(a.strength, b.strength, w)
@@ -112,12 +119,12 @@ local function recompute()
   -- key light colour: the ambient hue, pushed warm when low and toward the
   -- moon's steel when the sun is below the horizon.
   local night = U.saturate(-DN.sunHeight)
-  mixInto(mixA, DN.ambient, P.ramp.ember[4], low * 0.35 * (1 - night))
-  mixInto(DN.sunColor, mixA, P.ramp.metal[4], night * 0.5)
+  mixInto(DN.sunColor, DN.ambient, P.ramp.ember[4], low * 0.45 * (1 - night))
+  mixInto(DN.sunColor, DN.sunColor, P.ramp.metal[4], night * 0.55)
 
   -- oxygen: a dead sky is brown, hazy and flat; a healthy one is clean and blue
   local o2 = DN.o2
-  mixInto(DN.fogColor, DN.fogColor, P.ramp.cobalt[3], 0.34 * o2)
+  mixInto(DN.fogColor, DN.fogColor, P.ramp.cobalt[3], 0.18 * o2)
   DN.fogStrength = DN.fogStrength * lerp(1.28, 0.60, o2)
   DN.saturation  = DN.saturation * lerp(0.78, 1.08, o2)
   DN.exposure    = DN.exposure * lerp(0.94, 1.05, o2)
@@ -125,10 +132,10 @@ local function recompute()
   -- the grade tint: mostly the atmosphere, pulled toward the ambient so lit
   -- surfaces do not turn to fog.
   mixInto(DN.skyTint, DN.fogColor, DN.ambient, 0.45)
-  mixInto(DN.skyTint, DN.skyTint, P.ramp.cobalt[4], 0.12 * o2)
+  mixInto(DN.skyTint, DN.skyTint, P.ramp.cobalt[4], 0.06 * o2)
 
   -- shadows take the sky's colour, strongest when the ambient is weakest
-  local liftAmt = 0.10 * (1 - DN.ambientStrength) + 0.015
+  local liftAmt = 0.20 * (1 - DN.ambientStrength) + 0.02
   DN.lift[1] = DN.skyTint[1] * liftAmt
   DN.lift[2] = DN.skyTint[2] * liftAmt
   DN.lift[3] = DN.skyTint[3] * liftAmt
@@ -199,6 +206,8 @@ function DN.apply(Post, Lighting)
   if Post then
     Post.setGrade(DN.skyTint, DN.exposure, DN.contrast, DN.saturation, DN.lift)
     Post.setBloom(DN.bloom)
+    Post.setFog(DN.fogColor, DN.fogStrength)
+    Post.setSplit(DN.sunColor, 0.75)
   end
 end
 

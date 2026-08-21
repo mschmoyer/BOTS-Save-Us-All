@@ -27,6 +27,16 @@ local SPOLY2 = {}   -- second simultaneous point list
 local SPTS   = {}   -- love.graphics.points payload
 local SVERT  = { {}, {}, {}, {} }  -- 4 reusable mesh vertices
 
+--- Deterministic 0..1 hash. U.hash2 multiplies past 2^53 and loses every
+--- low bit, so the drawing layer keeps its own: sine-scramble, stable in
+--- doubles, identical on every platform LOVE runs on.
+local function hash(a, b, c)
+  local n = a * 127.1 + b * 311.7 + (c or 0) * 74.7
+  local s = sin(n) * 43758.5453123
+  return s - floor(s)
+end
+Draw.hash = hash
+
 local function trim(t, n)
   for i = #t, n + 1, -1 do t[i] = nil end
   return t
@@ -87,7 +97,10 @@ local FALLOFF = {
   -- soft, wide: radial gradients
   smooth = function(t) local k = 1 - t return k * k * (3 - 2 * k) end,
   -- tight core, long tail: light bloom
-  glow   = function(t) local k = 1 - t return k * k * k * (0.35 + 0.65 * k) end,
+  glow   = function(t)
+    local k = 1 - t
+    return k * (0.42 + 0.58 * k)
+  end,
   -- plateau then quick falloff: contact shadows
   shadow = function(t)
     local k = U.saturate((t - 0.12) / 0.88)
@@ -145,6 +158,41 @@ local function quadMesh()
     meshes.__quad = m
   end
   return m
+end
+
+-- Star-shaped (concave-but-fan-able) fills go through one reusable Mesh in
+-- "fan" mode: exact, one draw call, and immune to however the polygon
+-- triangulator feels about a 5-pointed star today.
+local FAN_CAP = 192
+local fanVerts = nil
+
+local function fanMesh()
+  local m = meshes.__fan
+  if not m then
+    fanVerts = {}
+    for i = 1, FAN_CAP do fanVerts[i] = { 0, 0, 0, 0, 1, 1, 1, 1 } end
+    m = lg.newMesh(fanVerts, "fan", "stream")
+    meshes.__fan = m
+  end
+  return m
+end
+
+--- Fill a closed point list as a fan around (cx, cy). Current colour applies.
+function Draw.fillFan(cx, cy, pts, n)
+  local m = fanMesh()
+  local count = n * 0.5
+  if count + 2 > FAN_CAP then count = FAN_CAP - 2 end
+  local v = fanVerts[1]
+  v[1], v[2] = cx, cy
+  for i = 1, count do
+    v = fanVerts[i + 1]
+    v[1], v[2] = pts[i * 2 - 1], pts[i * 2]
+  end
+  v = fanVerts[count + 2]
+  v[1], v[2] = pts[1], pts[2]
+  m:setVertices(fanVerts)
+  m:setDrawRange(1, count + 2)
+  lg.draw(m)
 end
 
 local function setV(i, x, y, c, aMul)
@@ -219,8 +267,8 @@ function Draw.glow(x, y, r, color, intensity, layers)
   lg.setBlendMode("add", "alphamultiply")
   local g = ramp("glow")
   for i = 1, layers do
-    local k = 1 - (i - 1) / layers * 0.66
-    setColor(color, intensity * (0.55 + 0.45 * (1 - k)) / layers * 1.6)
+    local k = 1 - (i - 1) / layers * 0.62
+    setColor(color, intensity / layers * 0.95)
     lg.draw(g, x, y, 0, r * k, r * k)
   end
   lg.setBlendMode(bm, am)
@@ -334,8 +382,8 @@ function Draw.blobPoints(out, x, y, r, points, seed, wobble, squash, rot)
   squash = squash or 1
   rot    = rot or 0
   seed   = seed or 0
-  local h1, h2, h3 = U.hash2(seed, 1, 7), U.hash2(seed, 2, 7), U.hash2(seed, 3, 7)
-  local h4, h5     = U.hash2(seed, 4, 7), U.hash2(seed, 5, 7)
+  local h1, h2, h3 = hash(seed, 1), hash(seed, 2), hash(seed, 3)
+  local h4, h5     = hash(seed, 4), hash(seed, 5)
   local k1 = 2 + floor(h4 * 2)
   local k2 = 4 + floor(h5 * 3)
   local k3 = 7 + floor(h1 * 3)
@@ -365,7 +413,7 @@ function Draw.blob(x, y, r, points, seed, wobble, squash, mode, rot)
     lg.line(pts)
     trim(pts, n - 2)
   else
-    lg.polygon("fill", pts)
+    Draw.fillFan(x, y, pts, n)
   end
 end
 
@@ -417,7 +465,7 @@ function Draw.star(x, y, rOuter, rInner, points, rot, mode)
     n = n + 1; SPOLY[n] = SPOLY[1]; n = n + 1; SPOLY[n] = SPOLY[2]
     lg.line(SPOLY); trim(SPOLY, n - 2)
   else
-    lg.polygon("fill", SPOLY)
+    Draw.fillFan(x, y, SPOLY, n)
   end
 end
 
@@ -551,8 +599,8 @@ function Draw.noiseSpeckle(x, y, w, h, seed, density, color, alpha, size)
   local count = U.clamp(floor(w * h * density), 1, 4000)
   local n = 0
   for i = 1, count do
-    local u = U.hash2(seed, i, 11)
-    local v = U.hash2(seed, i, 29)
+    local u = hash(seed, i, 11)
+    local v = hash(seed, i, 29)
     n = n + 1; SPTS[n] = x + u * w
     n = n + 1; SPTS[n] = y + v * h
   end
@@ -600,8 +648,8 @@ function Draw.stipple(x, y, w, h, spacing, seed, color, alpha, size)
   local n = 0
   for j = 0, rows - 1 do
     for i = 0, cols - 1 do
-      local jx = U.hash2(i, j + seed * 977, 3) - 0.5
-      local jy = U.hash2(i + seed * 131, j, 5) - 0.5
+      local jx = hash(i, j, seed + 3) - 0.5
+      local jy = hash(i, j, seed + 91) - 0.5
       n = n + 1; SPTS[n] = x + (i + 0.5 + jx * 0.8) * spacing
       n = n + 1; SPTS[n] = y + (j + 0.5 + jy * 0.8) * spacing
     end

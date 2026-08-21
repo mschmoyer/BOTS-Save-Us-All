@@ -63,16 +63,21 @@ float fbm3(vec2 p) {
 // Byte-identical to crinkle() in terrain.lua's ground shader: the sea, the foam
 // and the sand must all agree on where the shoreline is.
 float crinkle(vec2 w) {
-  return (fbm4(w * 0.0125 + 5.0) - 0.5) * 26.0
-       + (fbm3(w * 0.0480 + 17.3) - 0.5) * 13.0
-       + (vn(w * 0.1400 + 91.0) - 0.5) * 6.0;
+  return (fbm4(w * 0.0125 + 5.0) - 0.5) * 24.0
+       + (fbm3(w * 0.0480 + 17.3) - 0.5) * 17.0
+       + (vn(w * 0.1400 + 91.0) - 0.5) * 9.0;
 }
 
 float shoreDist(vec2 w) {
   vec2 uv = clamp(w / uWorld, vec2(0.0), vec2(1.0));
-  float d = (Texel(shore, uv).r * 2.0 - 1.0) * uSdMax;
-  if (d > -160.0 && d < 160.0) { d = d + crinkle(w); }
-  return d;
+  float se = Texel(shore, uv).r * 2.0 - 1.0;
+  float d = se * abs(se) * uSdMax;
+  // outside the map there is only open ocean. Without this the clamped edge
+  // texel smears its value along the whole row.
+  vec2 od = max(vec2(0.0) - w, w - uWorld);
+  d = d - length(max(od, vec2(0.0))) * 1.6;
+  d = d + crinkle(w) * (1.0 - smoothstep(80.0, 260.0, abs(d)));
+  return max(d, -uSdMax);
 }
 
 vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
@@ -95,16 +100,16 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // deep -> shallow ramp
   vec3 col = mix(cShallow, cMid, smoothstep(0.02, 0.42, dep));
   col = mix(col, cDeep, smoothstep(0.38, 1.0, dep));
-  col *= 0.90 + 0.20 * n3;
+  col *= 0.94 + 0.12 * n3;
 
-  // the shelf: a darker ring where the seabed falls away
-  col *= 1.0 - smoothstep(0.30, 0.55, dep) * (1.0 - smoothstep(0.60, 0.95, dep)) * 0.12;
-
-  // swell shading and crest highlights
+  // swell shading: gentle, and it fades out in the deep so the open sea reads
+  // as one calm mass instead of camouflage
+  float calm = 1.0 - smoothstep(0.35, 0.90, dep);
   float swell = (n1 - 0.5) + (n2 - 0.5) * 0.45;
-  col += vec3(swell * 0.055);
-  float crest = smoothstep(0.60, 0.82, n1 + (n2 - 0.5) * 0.40);
-  col = mix(col, cSky, crest * 0.085 * (0.35 + 0.65 * (1.0 - dep)));
+  // multiplicative, so the near-black deep does not turn into camouflage
+  col *= 1.0 + swell * 0.30 * (0.30 + 0.70 * calm);
+  float crest = smoothstep(0.56, 0.94, n1 + (n2 - 0.5) * 0.35);
+  col = mix(col, cSky, crest * 0.055 * calm);
 
   // foam bands parallel to the coast, riding on the swell
   float nearShore = 1.0 - smoothstep(0.0, 190.0, -sdw);
@@ -117,9 +122,9 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float surge = 0.55 + 0.45 * sin(uTime * 1.05 + fbm3(w * 0.0045) * 6.2);
   float lip = edge * edge * surge;
 
-  float foam = clamp(bands * 0.55 + lip * 0.95, 0.0, 1.0);
+  float foam = clamp(bands * 0.42 + lip * 0.92, 0.0, 1.0);
   foam *= step(0.0, -sdw + 2.0);
-  col = mix(col, cFoam, foam * 0.85);
+  col = mix(col, cFoam, foam * 0.78);
 
   // sparkle: two slowly drifting noise fields multiplied and hard-thresholded,
   // so only a scattering of crests catches the sun
@@ -127,8 +132,8 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float s1 = vn(sp + vec2(uTime * 0.09, -uTime * 0.05));
   float s2 = vn(sp * 1.73 - vec2(uTime * 0.07, uTime * 0.11));
   float spark = smoothstep(0.90, 1.0, s1 * s2 * 2.30);
-  spark *= smoothstep(0.55, 0.86, n1) * (1.0 - foam * 0.85) * (1.0 - dep * 0.55);
-  col += cFoam * spark * 0.40;
+  spark *= smoothstep(0.55, 0.86, n1) * (1.0 - foam * 0.85) * calm;
+  col += cFoam * spark * 0.35;
 
   // hide the land under a fully transparent-to-the-ground colour: the terrain
   // canvases are drawn on top, this only shows through their antialiased edge

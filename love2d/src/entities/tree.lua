@@ -56,13 +56,13 @@ local TAU = U.TAU
 local TUNE = {
   buckets       = 10,     -- growth buckets in the mesh library
   variants      = 5,      -- skeletons per species
-  detailSegs    = 11,     -- ring vertices per canopy blob, full detail
-  lodSegs       = 6,      -- ... and for the cheap far-away mesh
-  shadowSegs    = 7,
+  detailSegs    = 14,     -- ring vertices per canopy blob, full detail
+  lodSegs       = 7,      -- ... and for the cheap far-away mesh
+  shadowSegs    = 8,
 
-  seedSize      = 0.11,   -- draw scale at growth 0
+  seedSize      = 0.15,   -- draw scale at growth 0
   sizeCurve     = 0.70,   -- exponent of the size ramp - fast early, slow late
-  elderScale    = 1.14,   -- elders get visibly bigger and heavier
+  elderScale    = 1.22,   -- elders get visibly bigger and heavier
   elderTrunk    = 1.30,
 
   popAmount     = 0.15,   -- stage-change squash & stretch
@@ -80,10 +80,11 @@ local TUNE = {
   hitDecay      = 4.4,
   hitScale      = 0.34,
 
-  sunContrast   = 0.46,   -- how hard the sun shades the blob "normals"
+  sunContrast   = 0.72,   -- how hard the sun shades the blob "normals"
   rimPower      = 1.00,
+  rimAlpha      = 0.42,
   rimElder      = 1.55,   -- elders take a golden rim
-  shadowAlpha   = 0.40,
+  shadowAlpha   = 0.52,
   shadowSquash  = 0.34,   -- vertical flattening of the projected canopy
 
   chewSag       = 0.13,   -- radians of lean a fully chewed tree droops
@@ -102,8 +103,9 @@ local TUNE = {
   gustLeaf      = 2.6,    -- ... scaled by gust strength
   chewLeaf      = 9.0,
 
-  lodPixels     = 30,     -- on-screen height under which the cheap mesh is used
-  shadowPixels  = 16,     -- ... under which shadows are skipped entirely
+  lodPixels     = 52,     -- on-screen height under which the cheap mesh is used
+  rimPixels     = 96,     -- ... above which the additive rim pass is worth it
+  shadowPixels  = 24,     -- ... under which shadows are skipped entirely
   cullPad       = 90,
 }
 
@@ -122,61 +124,66 @@ local TUNE = {
 local SPECIES = {
   {
     key = "broadleaf", label = "Broadleaf",
-    height = 128, heightVar = 0.19, weight = 30,
-    trunk = 0.090, trunkR = 0.052, root = 1.0,
-    depth = 4, kids = { 2, 3, 2, 2 }, spread = 0.60, curl = 0.05, droop = -0.03,
-    lenTaper = 0.74, widTaper = 0.60, at = { 0.66, 0.99 },
-    leafFrom = 4, clusters = 2, blobR = 0.90, blobSpread = 0.55, crown = 0.46,
+    height = 132, heightVar = 0.19, weight = 30,
+    trunk = 0.082, trunkR = 0.050, root = 1.0,
+    depth = 4, kids = { 2, 3, 2, 2 }, spread = 0.62, curl = 0.05, droop = -0.03,
+    lenTaper = 0.74, widTaper = 0.60, at = { 0.62, 0.99 },
+    leafFrom = 4, clusters = 3, blobR = 0.80, blobSpread = 0.60, crown = 0.42,
     ramp = P.ramp.leaf, hue = { 1.00, 1.00, 1.00 },
-    bark = P.ramp.bark, barkShade = 2.0,
+    bark = P.ramp.bark, barkShade = 1.55,
     flex = 1.00, o2 = 1.00,
     growSpread = 0.66, growSpan = 0.30, growJitter = 0.06,
   },
   {
     key = "conifer", label = "Conifer",
-    height = 176, heightVar = 0.16, weight = 22,
-    trunk = 0.050, trunkR = 0.036, root = 1.0,
-    depth = 2, kids = { 8, 2 }, spread = 1.20, curl = 0.0, droop = 0.26,
-    lenTaper = 0.46, widTaper = 0.34, at = { 0.14, 0.99 }, conic = true,
-    leafFrom = 2, clusters = 2, blobR = 1.05, blobSpread = 0.46, crown = 0.16,
-    ramp = P.ramp.leaf, hue = { 0.80, 1.00, 1.08 },
-    bark = P.ramp.bark, barkShade = 1.4,
+    height = 196, heightVar = 0.16, weight = 22,
+    trunk = 0.078, trunkR = 0.034, root = 1.0,
+    depth = 3, kids = { 6, 3, 1 }, spread = 1.00, curl = 0.0, droop = 0.42,
+    lenTaper = 0.54, widTaper = 0.42, at = { 0.22, 0.95 },
+    conic = true, leader = true, leaderTaper = 0.80,
+    leafFrom = 2, clusters = 1, blobR = 1.15, blobSpread = 0.30, crown = 0,
+    blobSq = 0.56,
+    ramp = P.ramp.leaf, hue = { 0.76, 1.00, 1.10 },
+    bark = P.ramp.bark, barkShade = 1.15,
     flex = 0.60, o2 = 1.15,
     growSpread = 0.58, growSpan = 0.26, growJitter = 0.05,
   },
   {
     key = "scrub", label = "Scrub",
-    height = 64, heightVar = 0.24, weight = 20,
-    trunk = 0.115, trunkR = 0.070, root = 0.40,
-    depth = 3, kids = { 4, 2, 2 }, spread = 0.98, curl = 0.0, droop = 0.10,
-    lenTaper = 0.82, widTaper = 0.64, at = { 0.10, 0.58 },
-    leafFrom = 3, clusters = 2, blobR = 1.15, blobSpread = 0.68, crown = 0.38,
-    ramp = P.ramp.moss, hue = { 1.04, 1.00, 0.90 },
-    bark = P.ramp.bark, barkShade = 2.3,
+    height = 66, heightVar = 0.24, weight = 20,
+    trunk = 0.110, trunkR = 0.068, root = 0.42,
+    depth = 3, kids = { 4, 2, 2 }, spread = 1.02, curl = 0.0, droop = 0.12,
+    lenTaper = 0.84, widTaper = 0.64, at = { 0.10, 0.58 },
+    leafFrom = 3, clusters = 3, blobR = 0.92, blobSpread = 0.66, crown = 0.34,
+    blobSq = 0.88,
+    ramp = P.ramp.moss, hue = { 1.06, 1.00, 0.88 },
+    bark = P.ramp.bark, barkShade = 1.8,
     flex = 1.35, o2 = 0.55,
     growSpread = 0.50, growSpan = 0.30, growJitter = 0.08,
   },
   {
     key = "gnarl", label = "Gnarl",
-    height = 150, heightVar = 0.15, weight = 16,
-    trunk = 0.140, trunkR = 0.084, root = 1.0,
-    depth = 4, kids = { 2, 2, 3, 2 }, spread = 0.90, curl = 0.30, droop = -0.06,
-    lenTaper = 0.72, widTaper = 0.68, at = { 0.44, 0.98 },
-    leafFrom = 4, clusters = 2, blobR = 0.86, blobSpread = 0.72, crown = 0.52,
-    ramp = P.ramp.leafHi, hue = { 1.08, 0.97, 0.80 },
-    bark = P.ramp.bark, barkShade = 1.6,
+    height = 152, heightVar = 0.15, weight = 16,
+    trunk = 0.145, trunkR = 0.086, root = 1.0,
+    depth = 4, kids = { 2, 2, 3, 2 }, spread = 0.98, curl = 0.34, droop = -0.05,
+    lenTaper = 0.73, widTaper = 0.70, at = { 0.40, 0.98 },
+    leafFrom = 4, clusters = 3, blobR = 0.72, blobSpread = 0.76, crown = 0.46,
+    blobSq = 0.92,
+    ramp = P.ramp.leafHi, hue = { 1.12, 0.96, 0.74 },
+    bark = P.ramp.bark, barkShade = 1.35,
     flex = 0.55, o2 = 1.45,
     growSpread = 0.72, growSpan = 0.34, growJitter = 0.07,
   },
   {
     key = "slender", label = "Slender",
-    height = 158, heightVar = 0.14, weight = 12,
-    trunk = 0.040, trunkR = 0.029, root = 1.0,
-    depth = 3, kids = { 3, 2, 2 }, spread = 0.42, curl = 0.09, droop = -0.14,
-    lenTaper = 0.64, widTaper = 0.54, at = { 0.58, 0.99 },
-    leafFrom = 3, clusters = 3, blobR = 0.74, blobSpread = 0.52, crown = 0.30,
-    ramp = P.ramp.leafHi, hue = { 0.97, 1.03, 0.95 },
-    bark = P.ramp.rock, barkShade = 2.9,
+    height = 162, heightVar = 0.14, weight = 12,
+    trunk = 0.038, trunkR = 0.028, root = 1.0,
+    depth = 3, kids = { 3, 2, 2 }, spread = 0.40, curl = 0.09, droop = -0.16,
+    lenTaper = 0.66, widTaper = 0.54, at = { 0.54, 0.99 },
+    leafFrom = 3, clusters = 3, blobR = 0.62, blobSpread = 0.50, crown = 0.24,
+    blobSq = 1.06,
+    ramp = P.ramp.leafHi, hue = { 0.94, 1.04, 0.98 },
+    bark = P.ramp.rock, barkShade = 2.7,
     flex = 1.55, o2 = 0.85,
     growSpread = 0.56, growSpan = 0.28, growJitter = 0.06,
   },
@@ -197,8 +204,10 @@ Tree.stages = STAGES
 -- Wind, sun shading, leaf loss and the shadow projection all live on the GPU
 -- so the CPU only ever uploads one vec4 per tree.
 local SHARED_VS = [[
+#ifdef VERTEX
 attribute vec4 TreeData;   // x: height 0..1  y: canopy lag  z: blob id  w: rim weight
 attribute vec2 BlobOff;    // offset from this vertex's blob/segment centre
+#endif
 uniform vec4 uT;           // x: sway  y: lagged sway  z: leaf loss  w: unused
 ]]
 
@@ -285,7 +294,7 @@ vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
 
 local FORMAT = {
   { "VertexPosition", "float", 2 },
-  { "VertexColor",    "byte",  4 },
+  { "VertexColor",    "float", 4 },
   { "TreeData",       "float", 4 },
   { "BlobOff",        "float", 2 },
 }
@@ -315,10 +324,10 @@ Tree.shadersAvailable = function() return shadersOK end
 -- topology can never change as a tree grows.
 local skelCache = {}
 
-local function genNode(r, sp, depth, atFrac, parentBirth)
+local function genNode(r, sp, depth, atFrac, parentBirth, isLeader)
   local birth = depth / (sp.depth + 1) * sp.growSpread
               + r:next() * sp.growJitter
-              + ((sp.conic and depth == 1) and atFrac * 0.30 or 0)
+              + ((sp.conic and not isLeader) and atFrac * 0.22 or 0)
   -- a branch can never appear before the branch it hangs off
   birth = min(max(birth, parentBirth + 0.055), 0.93)
 
@@ -327,36 +336,51 @@ local function genNode(r, sp, depth, atFrac, parentBirth)
   if depth < sp.depth then
     local k = sp.kids[depth + 1] or 2
     n.kids = {}
+    -- Species with a central leader keep growing one dominant shoot straight up
+    -- and hang whorls of side branches off it. That is what makes a conifer a
+    -- spire instead of a bush.
+    local lead = sp.leader and isLeader
+    local nw = lead and (k - 1) or k
     for i = 1, k do
-      local f = (k == 1) and 0 or ((i - 1) / (k - 1) * 2 - 1)
+      local leaderKid = lead and (i == 1)
+      local wi = leaderKid and 0 or (lead and (i - 1) or i)
+      local f = (nw <= 1) and 0 or ((wi - 1) / (nw - 1) * 2 - 1)
+
       local at
-      if sp.conic and depth == 0 then
-        at = U.lerp(sp.at[1], sp.at[2], (i - 0.5) / k) + r:gauss() * 0.02
+      if leaderKid then
+        at = 0.985
+      elseif sp.conic then
+        at = U.lerp(sp.at[1], sp.at[2], (wi - 0.5) / max(nw, 1)) + r:gauss() * 0.03
       else
         at = U.lerp(sp.at[1], sp.at[2], r:next())
       end
       at = U.clamp(at, 0.05, 0.995)
 
-      local kid = genNode(r, sp, depth + 1, at, birth)
+      local kid = genNode(r, sp, depth + 1, at, birth, leaderKid)
       kid.at = at
-      -- conifers alternate strictly left/right up the ladder; everything else fans
-      local side = (sp.conic and depth == 0) and ((i % 2 == 0) and 1 or -1) or f
-      if side == 0 then side = (r:next() < 0.5) and -0.22 or 0.22 end
-      local sgn = side >= 0 and 1 or -1
-      kid.ang = side * sp.spread * (0.68 + r:next() * 0.64)
-              + r:gauss() * 0.13 + sp.curl * (depth + 1) * 0.5 + sgn * sp.droop
-      if sp.conic and depth == 0 then
-        kid.lenF = sp.lenTaper * (1.70 - at * 1.20) * (0.86 + r:next() * 0.28)
-        kid.widF = sp.widTaper * (1.40 - at * 0.60)
+      if leaderKid then
+        kid.ang  = r:gauss() * 0.05 + sp.curl * 0.2
+        kid.lenF = (sp.leaderTaper or 0.82) * (0.94 + r:next() * 0.12)
+        kid.widF = (sp.widTaper + 1) * 0.5
       else
-        kid.lenF = sp.lenTaper * (0.80 + r:next() * 0.42)
-        kid.widF = sp.widTaper * (0.88 + r:next() * 0.26)
+        local side = sp.conic and ((wi % 2 == 0) and 1 or -1) or f
+        if side == 0 then side = (r:next() < 0.5) and -0.22 or 0.22 end
+        local sgn = side >= 0 and 1 or -1
+        kid.ang = side * sp.spread * (0.68 + r:next() * 0.64)
+                + r:gauss() * 0.13 + sp.curl * (depth + 1) * 0.5 + sgn * sp.droop
+        if sp.conic then
+          kid.lenF = sp.lenTaper * (1.55 - at * 1.10) * (0.86 + r:next() * 0.28)
+          kid.widF = sp.widTaper * (1.30 - at * 0.50)
+        else
+          kid.lenF = sp.lenTaper * (0.80 + r:next() * 0.42)
+          kid.widF = sp.widTaper * (0.88 + r:next() * 0.26)
+        end
       end
       n.kids[i] = kid
     end
   end
 
-  if depth >= sp.leafFrom then
+  do
     n.blobs = {}
     local nb = sp.clusters
     for i = 1, nb do
@@ -365,11 +389,12 @@ local function genNode(r, sp, depth, atFrac, parentBirth)
       n.blobs[i] = {
         ox = cos(a) * d, oy = sin(a) * d * 0.80 - 0.12,
         r  = sp.blobR * (0.72 + r:next() * 0.56),
-        layer = (nb == 1) and 1 or ((i == 1 and 0) or (i == nb and 2) or 1),
+        layer = (nb == 1) and floor(r:next() * 3)
+                or ((i == 1 and 0) or (i == nb and 2) or 1),
         p1 = r:angle(), p2 = r:angle(), p3 = r:angle(),
         tone = r:next(),
         id = r:next(),
-        sq = 0.80 + r:next() * 0.26,
+        sq = (0.80 + r:next() * 0.26) * (sp.blobSq or 1),
       }
     end
   end
@@ -401,7 +426,7 @@ local function getSkeleton(spi, variant)
   if sk then return sk end
   local sp = SPECIES[spi]
   local r = U.rng(9176 + spi * 7919 + variant * 104729)
-  local root = genNode(r, sp, 0, 0, -1)
+  local root = genNode(r, sp, 0, 0, -1, true)
   root.birth = 0
   root.ang, root.at, root.lenF, root.widF = 0, 0, 1, 1
   local crown = genCrown(r, sp)
@@ -414,7 +439,7 @@ local function getSkeleton(spi, variant)
     local x1, y1 = x + cos(ang) * l, y + sin(ang) * l
     if -y1 > maxY then maxY = -y1 end
     if abs(x1) > maxR then maxR = abs(x1) end
-    if node.blobs then
+    if node.blobs and node.depth >= sp.leafFrom then
       for i = 1, #node.blobs do
         local b = node.blobs[i]
         local bx = x1 + b.ox * len
@@ -451,11 +476,7 @@ end
 local B = { V = nil, I = nil }
 
 local function pushV(V, x, y, r, g, b, a, h, lag, id, rim, ox, oy)
-  V[#V + 1] = {
-    x, y,
-    U.clamp(r * 255, 0, 255), U.clamp(g * 255, 0, 255), U.clamp(b * 255, 0, 255), a * 255,
-    h, lag, id, rim, ox, oy,
-  }
+  V[#V + 1] = { x, y, r, g, b, a, h, lag, id, rim, ox, oy }
 end
 
 --- A tapered quad for one branch segment.
@@ -484,14 +505,14 @@ local function emitBlob(V, I, cx, cy, r, blob, invY, segs, cr, cg, cb, alpha, la
   pushV(V, cx, cy, cr, cg, cb, alpha, hC, lag, blob.id, 0, 0, 0)
   for i = 0, segs - 1 do
     local a = i / segs * TAU
-    local rr = r * (0.80
-                    + 0.15 * sin(a * 3 + blob.p1)
-                    + 0.10 * sin(a * 5 + blob.p2)
-                    + 0.07 * sin(a * 2 + blob.p3))
+    local rr = r * (0.87
+                    + 0.10 * sin(a * 2 + blob.p1)
+                    + 0.055 * sin(a * 3 + blob.p2)
+                    + 0.035 * sin(a * 5 + blob.p3))
     local ox = cos(a) * rr
     local oy = sin(a) * rr * blob.sq
     -- vertical gradient: lighter on top, denser underneath
-    local k = 0.84 - (oy / max(r, 1e-5)) * 0.24
+    local k = 0.90 - (oy / max(r, 1e-5)) * 0.15
     pushV(V, cx + ox, cy + oy, cr * k, cg * k, cb * k, alpha,
           U.saturate(-(cy + oy) * invY), lag, blob.id, rimW, ox, oy)
   end
@@ -521,16 +542,17 @@ local function emitContact(V, I, rx, ry, segs)
 end
 
 local LAYER_LAG   = { 0.62, 0.80, 1.00 }
-local LAYER_SHADE = { 1.20, 2.15, 2.75 }
+local LAYER_SHADE = { 1.05, 2.10, 2.92 }
 local LAYER_ALPHA = { 1.00, 1.00, 1.00 }
-local LAYER_RIM   = { 0.15, 0.55, 1.00 }
-local LAYER_PUSH  = { -0.10, 0.0, 0.07 }   -- parallax: back layer up, front layer down
+local LAYER_RIM   = { 0.10, 0.50, 1.00 }
+local LAYER_PUSH  = { -0.14, 0.0, 0.09 }   -- parallax: back layer up, front layer down
 
 --- Lay the skeleton out at growth `g` and bake it into a mesh.
 --- `kind` is "full" | "lod" | "shadow".
 local function buildMesh(sk, g, kind)
   local sp = sk.sp
-  local invY = 1 / sk.normY
+  local sc = 1 / sk.normY      -- everything is laid out in units of adult height
+  local invY = 1               -- ... so local y IS the height factor
   local V = {}
   local Ilayer = { {}, {}, {}, {} }     -- back blobs, trunk, mid blobs, front blobs
   local segs = (kind == "full" and TUNE.detailSegs)
@@ -539,7 +561,7 @@ local function buildMesh(sk, g, kind)
   local shadow = (kind == "shadow")
   local span = sp.growSpan
 
-  local maxY, maxR, trunkW = 0.001, 0.001, sp.trunk
+  local maxY, maxR, trunkW = 0.001, 0.001, sp.trunk * sc
 
   local function walk(node, x, y, ang, len, wid)
     -- the seedling is already poking out of the ground at growth 0
@@ -564,14 +586,27 @@ local function buildMesh(sk, g, kind)
       emitSeg(V, Ilayer[2], x, y, x1, y1, w0, w1, invY, br, bg, bb, 0.35)
     end
 
-    if node.blobs then
+    -- A node carries foliage if it is a designed leaf node, or if it is the
+    -- furthest thing that has grown so far - that is what makes a sapling a
+    -- leafy little thing instead of a bare stick.
+    local tip = true
+    if node.kids then
+      for i = 1, #node.kids do
+        local kb = node.kids[i].birth
+        if U.smoothstep(kb, kb + span, g) > 0.02 then tip = false break end
+      end
+    end
+    if node.blobs and (tip or node.depth >= sp.leafFrom) then
+      local designed = node.depth >= sp.leafFrom
+      local rmul = designed and 1 or (0.50 + 0.17 * node.depth)
+      local eb = designed and e or (0.38 + 0.62 * e)
       for i = 1, #node.blobs do
         local b = node.blobs[i]
         local layer = b.layer + 1
         if not (kind == "lod" and layer == 1 and i > 1) then
-          local br_ = b.r * len * e
-          local bx = x1 + b.ox * len * e
-          local by = y1 + (b.oy + LAYER_PUSH[layer]) * len * e
+          local br_ = b.r * len * eb * rmul
+          local bx = x1 + b.ox * len * eb * rmul
+          local by = y1 + (b.oy + LAYER_PUSH[layer]) * len * eb * rmul
           if br_ > 0.004 then
             if -(by - br_) > maxY then maxY = -(by - br_) end
             if abs(bx) + br_ > maxR then maxR = abs(bx) + br_ end
@@ -602,12 +637,11 @@ local function buildMesh(sk, g, kind)
     end
   end
 
-  walk(sk.root, 0, 0, -math.pi / 2, sp.root, sp.trunk)
+  walk(sk.root, 0, 0, -math.pi / 2, sp.root * sc, sp.trunk * sc)
 
   -- crown mass, sized from whatever the tree currently reaches
   if sk.crown then
-    local leafBirth = sp.leafFrom / (sp.depth + 1) * sp.growSpread
-    local cg = U.smoothstep(leafBirth, leafBirth + span * 1.15, g)
+    local cg = U.smoothstep(0.06, 0.42, g)
     if cg > 0.02 then
       local cr = maxR * cg
       local cyBase = -maxY * 0.62
@@ -645,11 +679,11 @@ local function buildMesh(sk, g, kind)
     for i = 1, #src do n = n + 1; I[n] = src[i] end
   end
 
-  if #V < 3 or n < 3 then return nil, maxY * invY, maxR * invY end
+  if #V < 3 or n < 3 then return nil, maxY, maxR end
 
   local mesh = love.graphics.newMesh(FORMAT, V, "triangles", "static")
   mesh:setVertexMap(I)
-  return mesh, maxY * invY, maxR * invY
+  return mesh, maxY, maxR
 end
 
 -------------------------------------------------------------- mesh library
@@ -751,7 +785,7 @@ local function bind(shader)
 end
 
 local RIM_WARM = P.mix(P.warn, P.ink, 0.30)
-local RIM_GOLD = P.mix(P.warn, P.ember[4], 0.45)
+local RIM_GOLD = P.mix(P.warn, P.ramp.ember[4], 0.45)
 local DEAD_TINT = P.mix(P.ramp.soil[3], P.ramp.sand[2], 0.4)
 local SHADOW_COL = P.ramp.rock[1]
 local STUMP_COL = P.ramp.bark[2]
@@ -1184,7 +1218,7 @@ function Tree:draw(sunDirX, sunDirY)
       local e = eld / 8
       local rc = e > 0.05 and RIM_GOLD or RIM_WARM
       uRimC[1], uRimC[2], uRimC[3] = rc[1], rc[2], rc[3]
-      uRimC[4] = 0.30 + e * 0.34
+      uRimC[4] = TUNE.rimAlpha + e * 0.34
       shTree:send("uRim", uRimC)
     end
     local dk = floor(self.death * 16)
@@ -1210,7 +1244,7 @@ end
 --- Optional additive pass: rim light and backlight through the canopy.
 function Tree:drawCanopyLight()
   if not shadersOK or not self.onScreen or self.fade <= 0 then return end
-  if self.height * (Tree.zoom or 1) < TUNE.lodPixels then return end
+  if self.height * (Tree.zoom or 1) < TUNE.rimPixels then return end
   local mesh = LIB.full[self.key]
   if not mesh then return end
   if cur.shader ~= shRim then

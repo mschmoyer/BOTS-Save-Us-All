@@ -43,6 +43,12 @@ function Game:enter(opts)
   self.buildSel = 1
   self.showPerf = false
 
+  if (os.getenv("BOTS_AUTOPLAY") or "") ~= "" then
+    self.world.player.agent = require("src.game.autoplay").new(self.world)
+    self.showPerf = true
+  end
+  self.speed = tonumber(os.getenv("BOTS_SPEED") or "") or 1
+
   DayNight.set("day", 0)
   Music.setState("day")
   if Story.begin then Story.begin(self.world, "prologue") end
@@ -78,6 +84,7 @@ end
 ------------------------------------------------------------------------ update
 function Game:update(dt, realDt)
   local world = self.world
+  dt = dt * (self.speed or 1)
 
   if Input.pressed("pause") and not Screen.busy() then
     Screen.push(require("src.scenes.pause"), self)

@@ -477,8 +477,8 @@ function Buf:onepole(opts)
   local hp = (opts.type == "hp")
   local inv = 1 / self.rate
   -- Coefficients are refreshed every STRIDE samples: transcendentals dominate
-  -- the cost and a 2.7 kHz modulation rate is far more than any sweep needs.
-  local STRIDE = 8
+  -- the cost and a 1.4 kHz modulation rate is far more than any sweep needs.
+  local STRIDE = 16
   local function run(ch)
     local z, a = 0, 0
     for i = 1, self.n do
@@ -495,38 +495,52 @@ function Buf:onepole(opts)
   return self
 end
 
---- Chamberlin state-variable filter. type "lp"|"hp"|"bp"|"notch", q resonance.
+--- Topology-preserving state-variable filter (Simper/Cytomic). Unconditionally
+--- stable at any cutoff, unlike the classic Chamberlin form, which self-
+--- oscillates above ~fs/6 and quietly turns every bright sweep into a drone.
+--- type "lp"|"hp"|"bp"|"notch", q = resonance.
 function Buf:svf(opts)
   local dur = self.n / self.rate
   local cFn = Synth.freqFn(opts.cutoff or 1200, dur)
-  local q = max(0.5, opts.q or 0.9)
+  local q = max(0.4, opts.q or 0.9)
   local mode = opts.type or "lp"
   local m = (mode == "lp" and 1) or (mode == "hp" and 2) or (mode == "bp" and 3) or 4
   local inv = 1 / self.rate
   local drive = opts.drive or 1
-  local damp = 1 / q
-  local STRIDE = 8
+  local k = 1 / q
+  -- Coefficients refresh every STRIDE samples: tan() dominates the cost and a
+  -- 1.4 kHz modulation rate is far finer than any sweep in the game needs.
+  local STRIDE = 16
+  local nyq = self.rate * 0.49
+  -- constant cutoff: solve the coefficients once
+  local c1, c2, c3
+  if type(opts.cutoff) == "number" then
+    local g = math.tan(pi * U.clamp(opts.cutoff, 15, nyq) * inv)
+    c1 = 1 / (1 + g * (g + k)); c2 = g * c1; c3 = g * c2
+  end
   local function run(ch)
-    local lo, band, f = 0, 0, 0
+    local ic1, ic2 = 0, 0
+    local a1, a2, a3 = c1 or 0, c2 or 0, c3 or 0
     for i = 1, self.n do
-      if (i - 1) % STRIDE == 0 then
-        local fc = U.clamp(cFn((i - 1) * inv), 20, self.rate * 0.24)
-        f = 2 * sin(pi * fc * inv)
+      if c1 == nil and (i - 1) % STRIDE == 0 then
+        local fc = U.clamp(cFn((i - 1) * inv), 15, nyq)
+        local g = math.tan(pi * fc * inv)
+        a1 = 1 / (1 + g * (g + k))
+        a2 = g * a1
+        a3 = g * a2
       end
-      local input = ch[i] * drive
-      -- two half-rate passes (Chamberlin's stability trick)
-      local hi = input - lo - damp * band
-      band = band + f * hi
-      lo = lo + f * band
-      hi = input - lo - damp * band
-      band = band + f * hi
-      lo = lo + f * band
+      local x = ch[i] * drive
+      local v3 = x - ic2
+      local v1 = a1 * ic1 + a2 * v3
+      local v2 = ic2 + a2 * ic1 + a3 * v3
+      ic1 = 2 * v1 - ic1
+      ic2 = 2 * v2 - ic2
       local out
-      if m == 1 then out = lo
-      elseif m == 2 then out = hi
-      elseif m == 3 then out = band
-      else out = hi + lo end
-      if out ~= out or out > 64 or out < -64 then out = 0 lo = 0 band = 0 end
+      if m == 1 then out = v2
+      elseif m == 2 then out = x - k * v1 - v2
+      elseif m == 3 then out = v1
+      else out = x - k * v1 end
+      if out ~= out then out = 0 ic1 = 0 ic2 = 0 end
       ch[i] = out
     end
   end

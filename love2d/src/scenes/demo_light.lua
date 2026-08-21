@@ -23,6 +23,7 @@ local cam
 local rng
 local shockTimer = 0
 local frameMs, lastT = 0, nil
+local acc, accN, accMin = 0, 0, 1e9   -- rolling frame-time stats for the bench
 local coneA, coneB = 0, 0
 
 -- persistent option tables: addLight must never allocate at the call site
@@ -58,7 +59,7 @@ local function bakeGround()
     g.ellipse("fill", px, py, 62, 34)
   end
   -- rock scatter
-  for _ = 1, 46 do
+  for _ = 1, 26 do
     local x, y = r:range(0, WORLD_W), r:range(0, WORLD_H)
     local rad = r:range(14, 44)
     g.setColor(P.shade(P.ramp.rock, r:range(1.4, 2.4), 1))
@@ -145,6 +146,20 @@ function S:enter()
                  s = rng:range(0.7, 2.1), ph = rng:angle() }
   end
 
+  -- bench switches, so the same scene can measure the cost of each stage:
+  --   BOTS_POST=0  BOTS_LIGHT=0  BOTS_PSCALE=0.5  BOTS_LQ=0
+  if (os.getenv("BOTS_POST") or "") == "0" then
+    Post.settings.bloom = false
+    Post.settings.ca, Post.settings.grain = false, false
+    Post.settings.vignette, Post.settings.distort = false, false
+    self.noPost = true
+  end
+  if (os.getenv("BOTS_LIGHT") or "") == "0" then Lighting.enabled = false end
+  local ps = tonumber(os.getenv("BOTS_PSCALE") or "")
+  if ps then Post.setScale(ps) end
+  local lq = tonumber(os.getenv("BOTS_LQ") or "")
+  if lq then Lighting.setQuality(lq) end
+
   -- 6-second cycle: 2s day, 1s dusk, 2s night, 1s dawn
   DN.durations.day, DN.durations.dusk = 2, 1
   DN.durations.night, DN.durations.dawn = 2, 1
@@ -223,14 +238,18 @@ local function drawTrees()
   for i = 1, #S.trees do
     local t = S.trees[i]
     g.setColor(bark[1], bark[2], bark[3], 1)
-    g.rectangle("fill", t.x - 5, t.y - 6, 10, t.r * 0.7, 3)
+    g.rectangle("fill", t.x - 5, t.y - 8, 10, t.r * 0.75, 3)
+    local cy = t.y - t.r * 0.4
     g.setColor(leaf[1], leaf[2], leaf[3], 1)
-    g.circle("fill", t.x, t.y - t.r * 0.35, t.r)
-    g.setColor(hi[1], hi[2], hi[3], 0.85)
-    g.circle("fill", t.x - t.r * 0.16, t.y - t.r * 0.5, t.r * 0.6)
+    g.circle("fill", t.x, cy, t.r)
+    g.circle("fill", t.x - t.r * 0.62, cy + t.r * 0.24, t.r * 0.58)
+    g.circle("fill", t.x + t.r * 0.6, cy + t.r * 0.2, t.r * 0.54)
+    -- the lit side of the canopy, opposite the shadow
+    g.setColor(hi[1], hi[2], hi[3], 0.55)
+    g.circle("fill", t.x + rimx * t.r * 0.3, cy + rimy * t.r * 0.3, t.r * 0.62)
     -- rim light on the sun-facing side
-    g.setColor(sc[1], sc[2], sc[3], 0.22)
-    g.circle("fill", t.x + rimx * t.r * 0.5, t.y - t.r * 0.35 + rimy * t.r * 0.5, t.r * 0.3)
+    g.setColor(sc[1], sc[2], sc[3], 0.18)
+    g.circle("fill", t.x + rimx * t.r * 0.58, cy + rimy * t.r * 0.58, t.r * 0.3)
   end
 end
 
@@ -310,7 +329,18 @@ end
 
 function S:draw()
   local now = love.timer.getTime()
-  if lastT then frameMs = frameMs + ((now - lastT) * 1000 - frameMs) * 0.12 end
+  if lastT then
+    local ms = (now - lastT) * 1000
+    frameMs = frameMs + (ms - frameMs) * 0.12
+    if self.t > 0.5 then                    -- skip warm-up frames
+      acc, accN = acc + ms, accN + 1
+      if ms < accMin then accMin = ms end
+      if accN % 120 == 0 then
+        print(string.format("[bench] frames=%d avg=%.2fms min=%.2fms post_cpu=%.2fms lights=%d",
+              accN, acc / accN, accMin, Post.stats.ms, Lighting.lightCount()))
+      end
+    end
+  end
   lastT = now
 
   local g = love.graphics
