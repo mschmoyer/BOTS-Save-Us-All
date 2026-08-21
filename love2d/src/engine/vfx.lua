@@ -302,8 +302,10 @@ local function dk(col, k, a) local m = P.darken(col, k) return { m[1], m[2], m[3
 --   size {a,b}  sizeCurve  alphaCurve  alpha (master)
 --   colors { {r,g,b,a}, ... }  evenly spaced stops across the lifetime
 --   spin {a,b}  align true  stretch (px/s -> extra length)  tumble freq
+--   settle secs   (debris: stops dead where it is, and stays put)
 --   pulse amp    pulseFreq   flickerAmt
 --   ring0 ring1 ringW ringSegs ringCurve   (shape="ring")
+--   ringWob 0..1  ringWobN lobes           (a blast wave, not a circle)
 --   arcR0 arcR1 arcW arcSpan arcHead arcTail (shape="arc")
 --   onDeath "effect"  onDeathChance
 --   rate n/s (for VFX.stream)   detail 0..2 (skipped below that quality)
@@ -472,27 +474,30 @@ DEFS.shove_arc = {
     colors = { c(W, 1), c(P.o2, 0.7), c(P.accentCool, 0) } },
 }
 
+-- Three of the five stops here opened on pure white, additive, on the one
+-- effect that fires on every hit the rig takes and every shove into a dug-in
+-- Maw. Ember is hot enough; white is a hole in the frame.
 DEFS.impact = {
   { layer = "air", blend = "add", shape = "flare",
     count = 1, life = 0.11, emit = "point",
     size = { 76, 76 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut",
-    colors = { c(W, 1), lt(R.ember[4], 0.4, 0.6), c(R.ember[3], 0) } },
+    colors = { lt(R.ember[4], 0.35, 0.95), lt(R.ember[4], 0.15, 0.6), c(R.ember[3], 0) } },
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.24, emit = "point",
     ring0 = 5, ring1 = 58, ringW = 12, ringSegs = 32, ringCurve = "swell",
-    alphaCurve = "sharpOut",
-    colors = { lt(R.ember[4], 0.55, 0.95), c(R.ember[4], 0.7), c(R.ember[3], 0) } },
+    ringWob = 0.10, ringWobN = 4, alphaCurve = "sharpOut",
+    colors = { lt(R.ember[4], 0.45, 0.95), c(R.ember[4], 0.7), c(R.ember[3], 0) } },
   { layer = "world", blend = "alpha", shape = "shard",
-    count = { 9, 13 }, life = { 0.26, 0.5 }, emit = "disc", radius = { 0, 7 },
-    speed = { 220, 520 }, spread = TAU, drag = 5.5, grav = 320,
+    count = { 9, 13 }, life = { 0.4, 0.8 }, emit = "disc", radius = { 0, 7 },
+    speed = { 220, 520 }, spread = TAU, drag = 5.5, grav = 320, settle = 0.3,
     size = { 7, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -20, 20 }, tumble = 13,
-    colors = { c(W, 1), c(R.ember[4]), c(R.ember[2], 0) } },
+    colors = { lt(R.ember[4], 0.3), c(R.ember[4]), c(R.ember[2], 0) } },
   { layer = "air", blend = "add", shape = "spark",
     count = { 6, 9 }, life = { 0.15, 0.3 }, emit = "point",
     speed = { 260, 620 }, spread = TAU, drag = 7, align = true, stretch = 0.00875,
     size = { 7, 20 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
-    colors = { c(W, 1), lt(R.ember[4], 0.3, 0.9), c(R.ember[3], 0) } },
+    colors = { lt(R.ember[4], 0.4, 1), lt(R.ember[4], 0.2, 0.9), c(R.ember[3], 0) } },
   { layer = "world", blend = "alpha", shape = "smoke",
     count = { 4, 6 }, life = { 0.3, 0.6 }, emit = "disc", radius = { 0, 10 },
     speed = { 60, 170 }, spread = TAU, drag = 5,
@@ -619,6 +624,99 @@ DEFS.plant_burst = {
 -- `grow_up` lived here: three contracting rings and a fountain of crosses for a
 -- sapling maturing. Nothing emitted it and `plant_burst` owns growth already.
 
+-- Teeth in wood. A Chomper eating a tree threw two `leaf_litter` leaves twice a
+-- second and nothing else, so the single most consequential thing that happens
+-- on this island -- the forest being taken apart while you are somewhere else --
+-- looked like a breeze. This is a bite: bark chips off the trunk in the
+-- direction the thing is standing, a little wood dust at the cut, and the odd
+-- leaf shaken down out of the canopy above.
+--
+-- Fired two or three times a second by every feeding Blight, so it is small,
+-- and the chips `settle`: the litter builds up round the base of a tree that is
+-- being worked on and tells you, from across a clearing, which one is next.
+DEFS.chew_debris = {
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 3, 4 }, life = { 1.0, 1.9 }, emit = "disc", radius = { 0, 5 },
+    speed = { 110, 270 }, spread = 1.6, drag = 5.5, grav = 480, settle = 0.5,
+    size = { 4, 9 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -16, 16 }, tumble = 10,
+    colors = { c(R.bark[4]), c(R.bark[3]), c(R.bark[2]), c(R.bark[1], 0) } },
+  { layer = "ground", blend = "alpha", shape = "smoke",
+    count = { 1, 2 }, life = { 0.3, 0.55 }, emit = "disc", radius = { 0, 6 },
+    speed = { 30, 90 }, spread = 1.8, drag = 6,
+    size = { 8, 17 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.42,
+    spin = { -2, 2 },
+    colors = { c(R.sand[3], 0.6), c(R.bark[3], 0.35), c(R.soil[1], 0) } },
+  { layer = "world", blend = "alpha", shape = "leaf",
+    count = { 1, 2 }, life = { 0.9, 1.8 }, emit = "disc", radius = { 2, 12 },
+    speed = { 30, 100 }, spread = TAU, drag = 2.6, grav = 95, wind = 0.7,
+    swirl = 26, swirlFreq = 2.4,
+    size = { 8, 14 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -5, 5 }, tumble = 6,
+    colors = { c(R.leaf[3]), c(R.leafHi[3]), c(R.leaf[2], 0) } },
+}
+
+-- The trunk giving way, at the stump. No flash and no light: a tree coming down
+-- is not an explosion, it is a mass problem. Splinters low and outward, a dry
+-- shove of dust off the ground, and one flat off-round wave through the litter.
+DEFS.tree_snap = {
+  { layer = "ground", blend = "alpha", shape = "ring",
+    count = 1, life = 0.42, emit = "point",
+    ring0 = 5, ring1 = 66, ringW = 9, ringSegs = 30, ringCurve = "swell",
+    ringWob = 0.17, ringWobN = 4, alphaCurve = "smoothOut", alpha = 0.5,
+    colors = { c(R.sand[3], 0.75), c(R.soil[3], 0.4), c(R.soil[1], 0) } },
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 8, 12 }, life = { 1.6, 2.8 }, emit = "disc", radius = { 0, 9 },
+    speed = { 90, 290 }, spread = TAU, drag = 5.0, grav = 300, settle = 0.42,
+    size = { 6, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -13, 13 }, tumble = 8,
+    colors = { c(R.bark[4]), c(R.bark[3]), c(R.bark[2]), c(R.bark[1], 0) } },
+  { layer = "ground", blend = "alpha", shape = "smoke",
+    count = { 5, 7 }, life = { 0.5, 1.0 }, emit = "disc", radius = { 2, 14 },
+    speed = { 45, 140 }, spread = TAU, drag = 5.0,
+    size = { 14, 30 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.45,
+    spin = { -2, 2 },
+    colors = { c(R.sand[3], 0.7), c(R.soil[3], 0.45), c(R.soil[1], 0) } },
+}
+
+-- ... and the crown arriving. Emitted a second later, out where the canopy
+-- actually lands, along the line the tree fell. This is the weight: a wide flat
+-- dust front that deforms as it runs, a bank of dust thrown up off the ground,
+-- branch wood that bounces once and stays down, and every leaf on it coming off
+-- at once and taking a while to settle out of the air.
+DEFS.tree_crash = {
+  { layer = "ground", blend = "alpha", shape = "ring",
+    count = 1, life = 0.7, emit = "point",
+    ring0 = 18, ring1 = 200, ringW = 20, ringSegs = 48, ringCurve = "swell",
+    ringWob = 0.22, ringWobN = 5, alphaCurve = "smoothOut", alpha = 0.6,
+    colors = { c(R.sand[4], 0.8), c(R.soil[3], 0.45), c(R.soil[1], 0) } },
+  { layer = "world", blend = "alpha", shape = "smoke",
+    count = { 12, 16 }, life = { 0.9, 1.8 }, emit = "ring", radius = { 10, 60 },
+    speed = { 110, 280 }, spread = 0.7, drag = 3.4, grav = -20, wind = 0.4,
+    size = { 24, 58 }, sizeCurve = "puff", alphaCurve = "smoothOut", alpha = 0.55,
+    spin = { -1.6, 1.6 },
+    colors = { c(R.sand[3], 0.75), c(R.soil[3], 0.45), c(R.soil[1], 0) } },
+  { layer = "ground", blend = "alpha", shape = "smoke",
+    count = { 6, 8 }, life = { 0.6, 1.2 }, emit = "disc", radius = { 0, 40 },
+    speed = { 60, 190 }, spread = TAU, drag = 4.4,
+    size = { 20, 46 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.4,
+    spin = { -2, 2 },
+    colors = { c(R.sand[4], 0.6), c(R.sand[2], 0.4), c(R.soil[1], 0) } },
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 6, 10 }, life = { 1.8, 3.0 }, emit = "disc", radius = { 0, 26 },
+    speed = { 140, 400 }, spread = TAU, drag = 3.6, grav = 420, settle = 0.46,
+    size = { 7, 17 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -15, 15 }, tumble = 9,
+    colors = { c(R.bark[4]), c(R.bark[3]), c(R.bark[2]), c(R.bark[1], 0) } },
+  { layer = "world", blend = "alpha", shape = "leaf",
+    count = { 14, 20 }, life = { 1.2, 2.6 }, emit = "disc", radius = { 0, 44 },
+    speed = { 130, 380 }, spread = TAU, drag = 3.8, grav = 70, wind = 0.85,
+    swirl = 40, swirlFreq = 2.6,
+    size = { 9, 17 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -7, 7 }, tumble = 7,
+    colors = { c(R.leaf[3]), c(R.leafHi[3]), c(R.leaf[2]), c(R.bark[2], 0) } },
+}
+
 DEFS.heal_ground = {
   { layer = "ground", blend = "add", shape = "ring",
     count = 2, life = { 0.7, 1.0 }, emit = "point",
@@ -721,19 +819,32 @@ DEFS.bot_spark = {
   colors = { c(W, 1), c(P.warn, 0.9), c(R.ember[3], 0) },
 }
 
+-- One of yours, gone for good: the downed body that nobody reached in time.
+-- It is deliberately the *quietest* of the three destruction effects in this
+-- file -- the bang already happened when it fell, and this is the wreck
+-- finishing -- but everything in it is the crew's: warm brass panels rather
+-- than the rig's cold steel, and a blue eye guttering out rather than an
+-- ember one. The palette note is explicit that the crew's light is blue; a bot
+-- whose last light is orange dies the colour of the thing that killed it.
 DEFS.bot_death = {
-  -- the hard shard burst: the body coming apart
+  -- the hard shard burst: the body coming apart, and the panels stay down
   { layer = "world", blend = "alpha", shape = "shard",
-    count = { 14, 19 }, life = { 0.7, 1.3 }, emit = "disc", radius = { 0, 8 },
-    speed = { 130, 380 }, spread = TAU, drag = 3.0, grav = 720,
+    count = { 14, 19 }, life = { 1.4, 2.6 }, emit = "disc", radius = { 0, 8 },
+    speed = { 130, 380 }, spread = TAU, drag = 3.4, grav = 620, settle = 0.36,
     size = { 6, 13 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -18, 18 }, tumble = 12,
-    colors = { c(R.metal[4]), c(R.metal[3]), c(R.metal[2]), c(R.metal[1], 0) } },
-  -- a short, colourless flash: no celebration
+    colors = { c(R.metalW[4]), c(R.metalW[3]), c(R.metalW[2]), c(R.metalW[1], 0) } },
+  -- a short, cold flash: no celebration
   { layer = "air", blend = "add", shape = "flare",
     count = 1, life = 0.13, emit = "point",
     size = { 58, 58 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.6,
-    colors = { c(R.metal[4], 0.85), c(P.eyeDown, 0.5), c(R.metal[2], 0) } },
+    colors = { c(P.botEye, 0.8), c(P.lightFriend, 0.45), c(R.metal[2], 0) } },
+  -- the ground scuffed out from under it
+  { layer = "ground", blend = "alpha", shape = "ring",
+    count = 1, life = 0.4, emit = "point",
+    ring0 = 5, ring1 = 58, ringW = 8, ringSegs = 28, ringCurve = "swell",
+    ringWob = 0.16, ringWobN = 4, alphaCurve = "smoothOut", alpha = 0.45,
+    colors = { c(R.sand[3], 0.7), c(R.soil[2], 0.4), c(R.soil[1], 0) } },
   -- Smoke that hangs -- at the wreck's depth, not above the forest. On "air"
   -- it drew over every canopy in the frame, and in cold pale `rock` grey a
   -- dozen 54px puffs became the bright mass floating over the treetops. It is
@@ -756,7 +867,159 @@ DEFS.bot_death = {
   { layer = "world", blend = "add", shape = "glow",
     count = 1, life = 0.9, emit = "point",
     size = { 20, 20 }, sizeCurve = "shrink", alphaCurve = "flick",
-    colors = { c(P.eyeDown, 1), c(P.eyeDown, 0.4), c(P.eyeDown, 0) } },
+    colors = { c(P.botEye, 1), c(P.lightFriend, 0.4), c(P.lightFriend, 0) } },
+}
+
+-- The Blight puts one of yours on the ground. This is not a death -- the body
+-- is still there and you have twenty seconds to go and pick it up -- so it is
+-- a *buckle*, not a burst: the frame folds, the drive shorts out, the plating
+-- comes off it and lies there beside it for the whole rescue window.
+--
+-- It fired `bot_spark` and nothing else: four sparks and a screen shake for
+-- the worst thing that can happen to you on a bad night. Everything here is in
+-- the crew's blue except the panels, which are brass, and both of those are
+-- the point -- at forty metres, in the dark, a red flash means you won
+-- something and a blue one means you lost somebody.
+DEFS.bot_felled = {
+  -- 1. the short: a hard electrical cross, gone in five frames
+  { layer = "air", blend = "add", shape = "spark",
+    count = 1, life = 0.09, emit = "point",
+    size = { 62, 62 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.85,
+    colors = { lt(P.botEye, 0.18, 0.9), c(P.lightFriend, 0.6), c(P.lightFriend, 0) } },
+  -- 2. the drive arcing: thrown up, falling back, stuttering out
+  { layer = "air", blend = "add", shape = "streak",
+    count = { 5, 8 }, life = { 0.18, 0.42 }, emit = "disc", radius = { 0, 6 },
+    speed = { 120, 330 }, angle = -pi * 0.5, spread = 2.7, drag = 5.5, grav = 640,
+    align = true, stretch = 0.011,
+    size = { 4, 12 }, sizeCurve = "shrink", alphaCurve = "flick", alpha = 0.9,
+    colors = { c(P.botEye, 0.95), c(P.lightFriend, 0.7), c(P.o2, 0) } },
+  -- 3. plating off the chassis, lying where it falls
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 6, 9 }, life = { 1.6, 2.8 }, emit = "disc", radius = { 0, 7 },
+    speed = { 110, 300 }, spread = TAU, drag = 5.0, grav = 380, settle = 0.28,
+    size = { 6, 12 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -14, 14 }, tumble = 9,
+    colors = { c(R.metalW[4]), c(R.metalW[3]), c(R.metalW[2]), c(R.metalW[1], 0) } },
+  -- 4. the weight of it hitting the dirt
+  { layer = "ground", blend = "alpha", shape = "smoke",
+    count = { 4, 6 }, life = { 0.4, 0.8 }, emit = "disc", radius = { 2, 10 },
+    speed = { 50, 150 }, spread = TAU, drag = 5.4,
+    size = { 12, 26 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.5,
+    spin = { -2.2, 2.2 },
+    colors = { c(R.sand[3], 0.7), c(R.soil[3], 0.4), c(R.soil[1], 0) } },
+  -- 5. a low blue wash on the ground, so you can find the body
+  { layer = "ground", blend = "add", shape = "ring",
+    count = 1, life = 0.5, emit = "point",
+    ring0 = 4, ring1 = 52, ringW = 6, ringSegs = 28, ringCurve = "swell",
+    ringWob = 0.14, ringWobN = 4, alphaCurve = "smoothOut", alpha = 0.34,
+    colors = { c(P.lightFriend, 0.55), c(P.o2, 0.3), c(P.lightFriend, 0) } },
+}
+
+-- THE DETONATION. One of your machines reaches Harvester Prime and gives
+-- itself to take a piece out of it, and twenty-odd of them do it one after
+-- another. This is the moment the whole game is built to arrive at and it was
+-- `bot_death` at 1.2 power -- a generic puff, the same one a wreck makes when
+-- it burns out alone in a field at three in the morning.
+--
+-- It has to be readable as *ours* at a glance, in the middle of a fight, from
+-- the far side of the screen. So:
+--   * it is BLUE. The rig is cold steel, the Blight is a bruise, and every
+--     other explosion in this file is in the hostile family. The one thing in
+--     the game that is the crew's own colour is the crew blowing itself up.
+--   * it is DIRECTIONAL. Emitted with the vector from the hull outward, so the
+--     blast sprays back off the plate instead of ballooning symmetrically --
+--     it reads as something arriving and hitting, not as something popping.
+--   * it has an ARC. The one shape in the library nothing else uses at this
+--     scale: a fan of pressure riding along the hull face.
+--   * it LEAVES SOMETHING. Brass lands at the rig's feet and stays. By the
+--     end of the extraction the ground around it is covered in them.
+--   * and it BREATHES OUT. After the bang, a slow column of blue drifting up
+--     for two seconds. That part is the eulogy, and it is why the effect is
+--     allowed to be the longest one in the file.
+-- Nothing reaches white; the hottest stop is `o2` lifted a fifth of the way,
+-- which is a pale cyan and still unmistakably a colour.
+DEFS.bot_detonate = {
+  -- 1. the flash, wide and very short
+  { layer = "air", blend = "add", shape = "flare",
+    count = 1, life = 0.12, emit = "point",
+    size = { 96, 96 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.9,
+    colors = { lt(P.o2, 0.2, 0.95), c(P.botEye, 0.75), c(P.lightFriend, 0) } },
+  -- 2. and the after-bloom behind it, with the pink in it: these things loved you
+  { layer = "air", blend = "add", shape = "glow",
+    count = 1, life = 0.46, emit = "point",
+    size = { 44, 170 }, sizeCurve = "bloom", alphaCurve = "smoothOut", alpha = 0.3,
+    colors = { c(P.lightFriend, 0.7), c(P.love, 0.4), c(P.lightFriend, 0) } },
+  -- 3. two fronts, both out of round, the second thinner and quicker
+  { layer = "air", blend = "add", shape = "ring",
+    count = 1, life = 0.44, emit = "point",
+    ring0 = 10, ring1 = 156, ringW = 15, ringSegs = 40, ringCurve = "swell",
+    ringWob = 0.20, ringWobN = 5, alphaCurve = "smoothOut", alpha = 0.5,
+    colors = { c(P.botEye, 0.75), c(P.o2, 0.45), c(P.lightFriend, 0) } },
+  { layer = "air", blend = "add", shape = "ring",
+    count = 1, life = 0.3, emit = "point",
+    ring0 = 8, ring1 = 112, ringW = 4, ringSegs = 40, ringCurve = "swell",
+    ringWob = 0.11, ringWobN = 7, alphaCurve = "sharpOut", alpha = 0.75,
+    colors = { lt(P.o2, 0.18, 0.9), c(P.lightFriend, 0.6), c(P.lightFriend, 0) } },
+  -- 4. the fan up the plate
+  { layer = "air", blend = "add", shape = "arc",
+    count = 1, life = 0.3, emit = "point",
+    arcR0 = 16, arcR1 = 128, arcW = 44, arcSpan = 2.5, arcHead = 0.4, arcTail = 0.28,
+    alphaCurve = "smoothOut", alpha = 0.6,
+    colors = { c(P.botEye, 0.85), c(P.o2, 0.5), c(P.lightFriend, 0) } },
+  -- 5. brass. It flies back off the hull, it tumbles, and it stays there.
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 12, 16 }, life = { 1.8, 3.2 }, emit = "disc", radius = { 0, 10 },
+    speed = { 230, 620 }, spread = 2.3, drag = 3.2, grav = 480, settle = 0.45,
+    size = { 7, 16 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -22, 22 }, tumble = 13,
+    colors = { lt(R.metalW[4], 0.2), c(R.metalW[3]), c(R.metalW[2]),
+               c(R.metalW[1], 0) } },
+  -- 6. hot fragments, all directions, gone fast
+  { layer = "air", blend = "add", shape = "spark",
+    count = { 8, 12 }, life = { 0.16, 0.36 }, emit = "disc", radius = { 0, 8 },
+    speed = { 300, 700 }, spread = TAU, drag = 6.5, grav = 180,
+    align = true, stretch = 0.008,
+    size = { 6, 18 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
+    colors = { lt(P.botEye, 0.15, 1), c(P.o2, 0.8), c(P.lightFriend, 0) } },
+  -- 7. the column, drifting off the hull
+  { layer = "world", blend = "alpha", shape = "smoke",
+    count = { 6, 9 }, life = { 1.8, 3.2 }, emit = "disc", radius = { 2, 14 },
+    speed = { 30, 110 }, spread = TAU, drag = 2.6, grav = -40, wind = 0.45,
+    swirl = 13, swirlFreq = 1.0,
+    size = { 20, 54 }, sizeCurve = "puff", alphaCurve = "lateOut", alpha = 0.4,
+    spin = { -1.3, 1.3 },
+    colors = { dk(P.lightFriend, 0.55, 0.7), c(R.ash[3], 0.45), c(R.ash[1], 0) } },
+  -- 8. and what is left of it goes up
+  { layer = "air", blend = "add", shape = "mote",
+    count = { 8, 12 }, life = { 1.3, 2.4 }, emit = "disc", radius = { 3, 18 },
+    speed = { 18, 55 }, angle = -pi * 0.5, spread = 1.5, drag = 1.3, grav = -80,
+    swirl = 20, swirlFreq = 1.8,
+    size = { 4, 10 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.55,
+    colors = { c(P.botEye, 0.8), c(P.lightFriend, 0.5), c(P.lightFriend, 0) } },
+}
+
+-- What the rig loses when one of them lands: cold steel off a hot plate. Its
+-- own def rather than `impact`, which is ember-coloured and belongs to the
+-- player's hits -- this is the hull itself coming apart, and it accumulates
+-- around the rig's feet over the course of the procession.
+DEFS.hull_spall = {
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 5, 8 }, life = { 1.2, 2.2 }, emit = "disc", radius = { 0, 10 },
+    speed = { 160, 430 }, spread = 1.7, drag = 4.0, grav = 620, settle = 0.34,
+    size = { 7, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -18, 18 }, tumble = 11,
+    colors = { c(R.metal[4]), c(R.metal[3]), c(R.metal[2]), c(R.metal[1], 0) } },
+  { layer = "air", blend = "add", shape = "spark",
+    count = { 3, 5 }, life = { 0.12, 0.28 }, emit = "point",
+    speed = { 220, 520 }, spread = 2.0, drag = 7, align = true, stretch = 0.008,
+    size = { 5, 13 }, sizeCurve = "shrink", alphaCurve = "flick", alpha = 0.8,
+    colors = { lt(P.warn, 0.25, 0.9), c(R.ember[3], 0.7), c(R.ember[2], 0) } },
+  { layer = "world", blend = "alpha", shape = "smoke",
+    count = { 2, 4 }, life = { 0.8, 1.5 }, emit = "disc", radius = { 0, 9 },
+    speed = { 25, 80 }, spread = TAU, drag = 3.2, grav = -24, wind = 0.4,
+    size = { 14, 32 }, sizeCurve = "puff", alphaCurve = "lateOut", alpha = 0.4,
+    spin = { -1.6, 1.6 },
+    colors = { c(R.ash[3], 0.55), c(R.ash[2], 0.35), c(R.ash[1], 0) } },
 }
 
 -- This is the effect that broke the ending. Eleven to eighteen particles per
@@ -814,28 +1077,61 @@ DEFS.blight_spore = {
 }
 
 -- Thirty-four additive magenta sparkles and a contracting ring: the Blight died
--- like a treasure chest opening. It should die like something rotten bursting --
--- a wet, low, spreading puff of spores that goes olive as it disperses, one
--- brief hot flash from the vein that let go, and nothing that expands in a
--- perfect circle.
+-- like a treasure chest opening. Then it died like something rotten bursting,
+-- which was right and still had no *bang* in it -- the player killing a thing
+-- got a soft puff for it, sixty times a night, and never once felt the kill
+-- land. It ruptures now, in this order and all inside a fifth of a second:
+--
+--   the carapace lets go -- an off-round pressure ring low on the ground
+--   the vein flashes    -- a ragged blob, hostile red going plum, never white
+--   the shell comes off -- hard chunks that fly, tumble, and *settle* where
+--                          they land, so a cleared push leaves a mess behind it
+--   the inside comes out -- spores, still the wet part, but fewer and faster
+--   and it smokes       -- low, warm-dark, drifting off on the wind
+--
+-- The hostile family throughout: nothing here is in the crew's blue, so a
+-- night full of these never once reads as one of yours going down.
 DEFS.blight_death = {
+  -- 1. the pressure wave, on the floor, out of round
+  { layer = "ground", blend = "alpha", shape = "ring",
+    count = 1, life = 0.34, emit = "point",
+    ring0 = 6, ring1 = 78, ringW = 10, ringSegs = 30, ringCurve = "swell",
+    ringWob = 0.19, ringWobN = 5, alphaCurve = "smoothOut", alpha = 0.55,
+    colors = { c(R.blight[3], 0.8), c(P.necrosis, 0.5), c(R.ash[1], 0) } },
+  -- 2. the flash, and it is a *shape*: an irregular blob, not the library's
+  --    four-point star, so a rupture never reads as a muzzle or a pickup
+  { layer = "air", blend = "add", shape = "blob",
+    count = 1, life = 0.11, emit = "point",
+    size = { 52, 52 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.8,
+    colors = { lt(P.danger, 0.2, 0.9), c(R.blight[4], 0.6), c(R.blight[3], 0) } },
+  { layer = "air", blend = "add", shape = "glow",
+    count = 1, life = 0.22, emit = "point",
+    size = { 34, 34 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.55,
+    colors = { c(R.blight[4], 0.8), c(R.blight[3], 0) } },
+  -- 3. shell. Fast, heavy, and it stops -- see `settle`.
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 8, 12 }, life = { 1.1, 2.0 }, emit = "disc", radius = { 0, 8 },
+    speed = { 190, 520 }, spread = TAU, drag = 4.8, grav = 300, settle = 0.32,
+    size = { 6, 14 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -22, 22 }, tumble = 12,
+    colors = { lt(R.blight[3], 0.2), c(R.blight[2]), c(P.necrosis, 0.55),
+               c(R.ash[1], 0) } },
+  -- 4. the wet part
   { layer = "world", blend = "alpha", shape = "spore",
-    count = { 13, 18 }, life = { 0.6, 1.3 }, emit = "disc", radius = { 0, 11 },
-    speed = { 40, 165 }, spread = TAU, drag = 4.4, grav = -35,
+    count = { 9, 13 }, life = { 0.5, 1.1 }, emit = "disc", radius = { 0, 11 },
+    speed = { 70, 230 }, spread = TAU, drag = 5.2, grav = -30,
     swirl = 34, swirlFreq = 4.2,
     size = { 8, 19 }, sizeCurve = "shrink", alphaCurve = "lateOut", alpha = 0.9,
     spin = { -5, 5 }, tumble = 3.5,
     colors = { c(R.blight[3], 0.95), c(P.necrosis, 0.7), c(R.blight[2], 0) } },
-  { layer = "air", blend = "add", shape = "glow",
-    count = 1, life = 0.2, emit = "point",
-    size = { 46, 46 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.6,
-    colors = { c(R.blight[4], 0.85), c(R.blight[3], 0) } },
+  -- 5. smoke that hangs about and goes where the wind is going
   { layer = "world", blend = "alpha", shape = "smoke",
-    count = { 5, 8 }, life = { 0.7, 1.4 }, emit = "disc", radius = { 0, 10 },
-    speed = { 20, 70 }, spread = TAU, drag = 3.4, grav = -30,
-    size = { 16, 38 }, sizeCurve = "puff", alphaCurve = "smoothOut", alpha = 0.5,
+    count = { 5, 7 }, life = { 1.2, 2.3 }, emit = "disc", radius = { 0, 10 },
+    speed = { 20, 80 }, spread = TAU, drag = 3.4, grav = -26, wind = 0.5,
+    swirl = 9, swirlFreq = 0.9,
+    size = { 16, 40 }, sizeCurve = "puff", alphaCurve = "lateOut", alpha = 0.42,
     spin = { -2, 2 },
-    colors = { c(R.blight[2], 0.7), c(R.blight[1], 0.4), c(R.blight[1], 0) } },
+    colors = { c(R.blight[2], 0.7), c(R.ash[2], 0.4), c(R.ash[1], 0) } },
 }
 
 DEFS.acid_splash = {
@@ -996,6 +1292,7 @@ local function normEmitter(e)
   e.alpha            = e.alpha or 1
   e.stretch          = e.stretch or 0
   e.tumble           = e.tumble or 0
+  e.settle           = e.settle or 0
   e.pulse            = e.pulse or 0
   e.pulseFreq        = e.pulseFreq or 1
   e.rate             = e.rate or 0
@@ -1016,6 +1313,8 @@ local function normEmitter(e)
     e.ring1 = e.ring1 or 40
     e.ringW = e.ringW or 4
     e.ringSegs = e.ringSegs or 32
+    e.ringWob = e.ringWob or 0
+    e.ringWobN = e.ringWobN or 5
   elseif e.shape == "arc" then
     e.kind = KIND_ARC
     e.arcR0 = e.arcR0 or 20; e.arcR1 = e.arcR1 or 70
@@ -1074,7 +1373,7 @@ end
 local function newPart()
   return {
     x = 0, y = 0, vx = 0, vy = 0, age = 0, life = 1, seed = 0,
-    sz = 1, rot = 0, spin = 0, sx = 0, sy = 0,
+    sz = 1, rot = 0, spin = 0, sx = 0, sy = 0, st = 1e9,
     tr = 1, tg = 1, tb = 1, ta = 1,
     cr = 1, cg = 1, cb = 1, ca = 1,
     e = nil, r0 = 0, r1 = 0, w0 = 0, a0 = 0, span = 0, kind = 0,
@@ -1208,6 +1507,9 @@ local function fire(e, x, y, o)
     p.rot      = e.align and atan2(p.vy, p.vx) or (random() * TAU)
     p.e        = e
     p.kind     = e.kind
+    -- when this chunk stops moving for good. Spread per particle, or a burst
+    -- of debris arrives at rest all together like a dropped handful.
+    p.st       = e.settle > 0 and rnd(e.settle * 0.6, e.settle * 1.45) or 1e9
     p.tr, p.tg, p.tb, p.ta = tr, tg, tb, alphaM
     p.sx, p.sy = 0, 0
 
@@ -1345,7 +1647,11 @@ local function buildBatches()
               sx = sx * (1 + sp * e.stretch)
             end
             if e.tumble > 0 then
-              sy = sy * (0.25 + 0.75 * abs(cos(now * e.tumble + p.seed * TAU)))
+              -- Off the particle's own age, not the wall clock, so a chunk that
+              -- has settled can stop mid-tumble and stay stopped instead of
+              -- flapping on the ground forever.
+              local ta = p.age < p.st and p.age or p.st
+              sy = sy * (0.25 + 0.75 * abs(cos(ta * e.tumble + p.seed * TAU)))
             end
             local b = batches[e.li][e.bi]
             b:setColor(p.cr, p.cg, p.cb, a)
@@ -1390,7 +1696,13 @@ function VFX.update(dt)
       n = n - 1
     else
       local e = p.e
-      if p.kind == KIND_SPR then
+      if p.kind == KIND_SPR and p.age >= p.st then
+        -- Settled. A chunk that has come to rest is done being simulated: it
+        -- lies where it landed, at the angle it landed at, and only its alpha
+        -- keeps moving. Without this, "debris" is a thing that either falls off
+        -- the bottom of the world forever or hangs in the air decelerating.
+        p.vx, p.vy = 0, 0
+      elseif p.kind == KIND_SPR then
         local vx, vy = p.vx, p.vy
         if e.drag ~= 0 then
           local d = exp(-e.drag * dt)
@@ -1439,6 +1751,10 @@ end
 ---------------------------------------------------------------------- draw
 -- Three concentric strokes: a wide dim halo, a body, and a thin hot core.
 -- A single stroke reads as a wireframe circle; this reads as a shockwave.
+-- Scratch for the deformed ring's polyline. One table, reused; the tail is
+-- trimmed rather than left stale, because love.graphics.line reads #t.
+local WOB_PTS = {}
+
 local function drawRing(p, t)
   local e = p.e
   local g = love.graphics
@@ -1453,16 +1769,43 @@ local function drawRing(p, t)
   local need = r * 1.05
   if need > segs then segs = need > 96 and 96 or (need - need % 1) end
   local cr, cg, cb, ca = p.cr, p.cg, p.cb, p.ca
+
+  -- A blast front is not a circle. `ringWob` runs two harmonics of radial
+  -- displacement around the ring, seeded per particle and *growing* with the
+  -- expansion, so a shockwave arrives lopsided and tears itself out of round on
+  -- the way -- and no two of them are the same shape. The library's whole
+  -- explosion vocabulary was concentric circles; this is the difference between
+  -- a pressure wave and a smoke ring.
+  local pts
+  if e.ringWob > 0 then
+    if segs < 24 then segs = 24 end
+    local amp = e.ringWob * (0.34 + 0.66 * t)
+    local ph = p.seed * TAU
+    local k1 = e.ringWobN
+    local k2 = e.ringWobN * 2 + 1
+    local n = 0
+    for i = 0, segs do
+      local th = i / segs * TAU
+      local d = 1 + amp * (sin(k1 * th + ph) * 0.62 + sin(k2 * th + ph * 1.7) * 0.38)
+      local rr = r * d
+      WOB_PTS[n + 1] = p.x + cos(th) * rr
+      WOB_PTS[n + 2] = p.y + sin(th) * rr
+      n = n + 2
+    end
+    for i = #WOB_PTS, n + 1, -1 do WOB_PTS[i] = nil end
+    pts = WOB_PTS
+  end
+
   g.setColor(cr, cg, cb, ca * 0.13)
   g.setLineWidth(w * 2.5)
-  g.circle("line", p.x, p.y, r, segs)
+  if pts then g.line(pts) else g.circle("line", p.x, p.y, r, segs) end
   g.setColor(cr, cg, cb, ca * 0.38)
   g.setLineWidth(w * 1.35)
-  g.circle("line", p.x, p.y, r, segs)
+  if pts then g.line(pts) else g.circle("line", p.x, p.y, r, segs) end
   local k = 0.2
   g.setColor(cr + (W[1] - cr) * k, cg + (W[2] - cg) * k, cb + (W[3] - cb) * k, ca)
   g.setLineWidth(w * 0.5 < 0.9 and 0.9 or w * 0.5)
-  g.circle("line", p.x, p.y, r, segs)
+  if pts then g.line(pts) else g.circle("line", p.x, p.y, r, segs) end
 end
 
 local ARC_SEGS = 20
@@ -1492,10 +1835,15 @@ local function drawArc(p, t)
       p.x + c1 * (rad + w1), p.y + s1 * (rad + w1),
       p.x + c0 * (rad + w0), p.y + s0 * (rad + w0))
   end
-  -- the bright leading edge
+  -- The bright leading edge. Lifted *towards* white from the arc's own colour
+  -- rather than set to it: this is drawn additively on top of the arc body, so
+  -- a pure-white edge on a full-alpha arc is a white bar through the middle of
+  -- whatever the arc was swung at.
   local eA0 = aHead - sweep * 0.16
   local ew = w * 0.62
-  g.setColor(W[1], W[2], W[3], p.ca * 0.9)
+  local k = 0.34
+  g.setColor(p.cr + (W[1] - p.cr) * k, p.cg + (W[2] - p.cg) * k,
+             p.cb + (W[3] - p.cb) * k, p.ca * 0.9)
   local steps = 5
   for s = 0, steps - 1 do
     local u0, u1 = s / steps, (s + 1) / steps
