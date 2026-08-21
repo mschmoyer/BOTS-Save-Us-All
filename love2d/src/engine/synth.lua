@@ -331,10 +331,15 @@ function Buf:osc(opts)
   local nseed = opts.seed or 0
   local last = 0
 
+  -- Fast paths: a constant frequency or a flat envelope skips a closure call
+  -- per sample, which matters when a pad stacks six partials.
+  local constF = (type(opts.freq) == "number") and (opts.freq * detune) or nil
+  local constA = (envSpec == nil or envSpec == 1) and amp or nil
+
   for i = 1, self.n do
     local t = (i - 1) * inv
-    local f = fFn(t) * detune
-    local a = aFn(t) * amp
+    local f = constF or (fFn(t) * detune)
+    local a = constA or (aFn(t) * amp)
     local dt = f * inv
     local v
     if wave == "sine" then
@@ -471,11 +476,16 @@ function Buf:onepole(opts)
   local cFn = Synth.freqFn(opts.cutoff or 1000, dur)
   local hp = (opts.type == "hp")
   local inv = 1 / self.rate
+  -- Coefficients are refreshed every STRIDE samples: transcendentals dominate
+  -- the cost and a 2.7 kHz modulation rate is far more than any sweep needs.
+  local STRIDE = 8
   local function run(ch)
-    local z = 0
+    local z, a = 0, 0
     for i = 1, self.n do
-      local fc = U.clamp(cFn((i - 1) * inv), 10, self.rate * 0.45)
-      local a = 1 - exp(-TAU * fc * inv)
+      if (i - 1) % STRIDE == 0 then
+        local fc = U.clamp(cFn((i - 1) * inv), 10, self.rate * 0.45)
+        a = 1 - exp(-TAU * fc * inv)
+      end
       z = z + (ch[i] - z) * a
       ch[i] = hp and (ch[i] - z) or z
     end
@@ -491,27 +501,32 @@ function Buf:svf(opts)
   local cFn = Synth.freqFn(opts.cutoff or 1200, dur)
   local q = max(0.5, opts.q or 0.9)
   local mode = opts.type or "lp"
+  local m = (mode == "lp" and 1) or (mode == "hp" and 2) or (mode == "bp" and 3) or 4
   local inv = 1 / self.rate
   local drive = opts.drive or 1
+  local damp = 1 / q
+  local STRIDE = 8
   local function run(ch)
-    local lo, band = 0, 0
+    local lo, band, f = 0, 0, 0
     for i = 1, self.n do
-      local fc = U.clamp(cFn((i - 1) * inv), 20, self.rate * 0.24)
-      local f = 2 * sin(pi * fc * inv)
-      local damp = 1 / q
-      local input = ch[i] * drive
-      -- two passes at half f for stability
-      local out
-      for _ = 1, 2 do
-        local hi = input - lo - damp * band
-        band = band + f * hi
-        lo = lo + f * band
-        if mode == "lp" then out = lo
-        elseif mode == "hp" then out = hi
-        elseif mode == "bp" then out = band
-        else out = hi + lo end
+      if (i - 1) % STRIDE == 0 then
+        local fc = U.clamp(cFn((i - 1) * inv), 20, self.rate * 0.24)
+        f = 2 * sin(pi * fc * inv)
       end
-      if out ~= out then out = 0 end
+      local input = ch[i] * drive
+      -- two half-rate passes (Chamberlin's stability trick)
+      local hi = input - lo - damp * band
+      band = band + f * hi
+      lo = lo + f * band
+      hi = input - lo - damp * band
+      band = band + f * hi
+      lo = lo + f * band
+      local out
+      if m == 1 then out = lo
+      elseif m == 2 then out = hi
+      elseif m == 3 then out = band
+      else out = hi + lo end
+      if out ~= out or out > 64 or out < -64 then out = 0 lo = 0 band = 0 end
       ch[i] = out
     end
   end
@@ -597,9 +612,6 @@ function Buf:reverb(opts)
     local n = self.n
     local wet = {}
     for i = 1, n do wet[i] = 0 end
-    -- pre-delay
-    local dry = {}
-    for i = 1, n do dry[i] = (i > pre) and ch[i - pre] or 0 end
     for c = 1, #COMB do
       local dl = max(4, floor(COMB[c] * scale) + off)
       local line = {}
@@ -608,7 +620,8 @@ function Buf:reverb(opts)
       for i = 1, n do
         local out = line[p]
         store = out * (1 - damp) + store * damp
-        line[p] = dry[i] + store * room
+        local j = i - pre
+        line[p] = ((j >= 1) and ch[j] or 0) + store * room
         p = p % dl + 1
         wet[i] = wet[i] + out * 0.25
       end

@@ -1,0 +1,207 @@
+-- The sea. One shader-quad covering the view, sampling the signed shore-distance
+-- field that terrain.lua bakes, so every wave knows how far it is from land.
+--
+--   Water.draw(camera, time, terrain.shoreCanvas)   -- camera transform applied
+--   Water.setTint(colour, strength)                 -- day/night grade hook
+--
+-- The shader is deliberately WebGL1 / GLSL-ES-1.0 safe: constant loop bounds, no
+-- derivatives, no textureLod, mod() instead of %, every literal a float.
+
+local U = require("src.core.util")
+local P = require("src.engine.palette")
+local TW = require("src.game.tuning").world
+
+local Water = {
+  tint = { P.white[1], P.white[2], P.white[3] },
+  tintK = 0,
+  quality = 1,
+}
+
+local SHADER = [==[
+extern Image shore;       // r: encoded signed shore distance  g: land mask  b: elevation
+extern vec4  uView;       // world rect being drawn
+extern vec2  uWorld;      // world size the shore field covers
+extern float uTime;
+extern float uSdMax;
+extern vec3  uTint;
+extern float uTintK;
+extern vec3  cDeep;
+extern vec3  cMid;
+extern vec3  cShallow;
+extern vec3  cFoam;
+extern vec3  cSky;
+
+float hsh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+float vn(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  float a = hsh(i);
+  float b = hsh(i + vec2(1.0, 0.0));
+  float c = hsh(i + vec2(0.0, 1.0));
+  float d = hsh(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm4(vec2 p) {
+  float s = 0.0;
+  float a = 0.5;
+  float n = 0.0;
+  for (int i = 0; i < 4; i++) { s += vn(p) * a; n += a; a *= 0.5; p *= 2.03; }
+  return s / n;
+}
+
+float fbm3(vec2 p) {
+  float s = 0.0;
+  float a = 0.5;
+  float n = 0.0;
+  for (int i = 0; i < 3; i++) { s += vn(p) * a; n += a; a *= 0.5; p *= 2.05; }
+  return s / n;
+}
+
+// Byte-identical to crinkle() in terrain.lua's ground shader: the sea, the foam
+// and the sand must all agree on where the shoreline is.
+float crinkle(vec2 w) {
+  return (fbm4(w * 0.0125 + 5.0) - 0.5) * 26.0
+       + (fbm3(w * 0.0480 + 17.3) - 0.5) * 13.0
+       + (vn(w * 0.1400 + 91.0) - 0.5) * 6.0;
+}
+
+float shoreDist(vec2 w) {
+  vec2 uv = clamp(w / uWorld, vec2(0.0), vec2(1.0));
+  float d = (Texel(shore, uv).r * 2.0 - 1.0) * uSdMax;
+  if (d > -160.0 && d < 160.0) { d = d + crinkle(w); }
+  return d;
+}
+
+vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
+  vec2 w = uView.xy + tc * uView.zw;
+
+  // two scrolling swell layers, different scale and drift direction
+  float n1 = fbm4(w * 0.0082 + vec2(uTime * 0.052, uTime * 0.030));
+  float n2 = fbm3(w * 0.0231 - vec2(uTime * 0.088, -uTime * 0.041));
+  float n3 = fbm3(w * 0.00105 + 13.0);     // ocean-scale colour variation
+
+  float sd = shoreDist(w);
+
+  // refraction wobble: strongest in the shallows where you can see the bottom
+  float shoreMask = smoothstep(-300.0, 0.0, sd);
+  float wob = (n1 - 0.5) * 26.0 + (n2 - 0.5) * 12.0;
+  float sdw = sd + wob * (0.30 + 1.05 * shoreMask);
+
+  float dep = clamp(-sdw / 330.0, 0.0, 1.0);
+
+  // deep -> shallow ramp
+  vec3 col = mix(cShallow, cMid, smoothstep(0.02, 0.42, dep));
+  col = mix(col, cDeep, smoothstep(0.38, 1.0, dep));
+  col *= 0.90 + 0.20 * n3;
+
+  // the shelf: a darker ring where the seabed falls away
+  col *= 1.0 - smoothstep(0.30, 0.55, dep) * (1.0 - smoothstep(0.60, 0.95, dep)) * 0.12;
+
+  // swell shading and crest highlights
+  float swell = (n1 - 0.5) + (n2 - 0.5) * 0.45;
+  col += vec3(swell * 0.055);
+  float crest = smoothstep(0.60, 0.82, n1 + (n2 - 0.5) * 0.40);
+  col = mix(col, cSky, crest * 0.085 * (0.35 + 0.65 * (1.0 - dep)));
+
+  // foam bands parallel to the coast, riding on the swell
+  float nearShore = 1.0 - smoothstep(0.0, 190.0, -sdw);
+  float band = sin(sdw * 0.072 + uTime * 1.25 + n2 * 5.0 + n1 * 2.2);
+  float bands = smoothstep(0.34, 0.94, band) * nearShore * nearShore;
+
+  // the breaking lip right at the waterline
+  float lipW = 13.0 + 12.0 * n2;
+  float edge = 1.0 - smoothstep(0.0, lipW, -sdw);
+  float surge = 0.55 + 0.45 * sin(uTime * 1.05 + fbm3(w * 0.0045) * 6.2);
+  float lip = edge * edge * surge;
+
+  float foam = clamp(bands * 0.55 + lip * 0.95, 0.0, 1.0);
+  foam *= step(0.0, -sdw + 2.0);
+  col = mix(col, cFoam, foam * 0.85);
+
+  // sparkle: two slowly drifting noise fields multiplied and hard-thresholded,
+  // so only a scattering of crests catches the sun
+  vec2 sp = w * 0.075;
+  float s1 = vn(sp + vec2(uTime * 0.09, -uTime * 0.05));
+  float s2 = vn(sp * 1.73 - vec2(uTime * 0.07, uTime * 0.11));
+  float spark = smoothstep(0.90, 1.0, s1 * s2 * 2.30);
+  spark *= smoothstep(0.55, 0.86, n1) * (1.0 - foam * 0.85) * (1.0 - dep * 0.55);
+  col += cFoam * spark * 0.40;
+
+  // hide the land under a fully transparent-to-the-ground colour: the terrain
+  // canvases are drawn on top, this only shows through their antialiased edge
+  col = mix(col, cShallow * 0.85, smoothstep(-4.0, 6.0, sdw) * 0.6);
+
+  col = mix(col, col * uTint * 1.12, uTintK);
+  col = clamp(col, 0.0, 1.0);
+  return vec4(col, 1.0) * vcol;
+}
+]==]
+
+local function put(sh, name, ...)
+  if sh:hasUniform(name) then sh:send(name, ...) end
+end
+
+function Water.load()
+  if Water.shader then return Water.shader end
+  Water.shader = love.graphics.newShader(SHADER)
+  local white = love.image.newImageData(1, 1, "rgba8", string.char(255, 255, 255, 255))
+  Water.white = love.graphics.newImage(white)
+  local R = P.ramp.water
+  local s = Water.shader
+  put(s, "uWorld", { TW.w, TW.h })
+  put(s, "uSdMax", 420)
+  put(s, "cDeep", { R[1][1], R[1][2], R[1][3] })
+  put(s, "cMid", { R[2][1], R[2][2], R[2][3] })
+  put(s, "cShallow", { R[3][1], R[3][2], R[3][3] })
+  put(s, "cFoam", { R[4][1], R[4][2], R[4][3] })
+  put(s, "cSky", { P.tod.day.fog[1], P.tod.day.fog[2], P.tod.day.fog[3] })
+  put(s, "uTint", Water.tint)
+  put(s, "uTintK", Water.tintK)
+  return s
+end
+
+--- Grade the sea. `colour` is a palette entry, `strength` 0..1.
+function Water.setTint(colour, strength)
+  Water.tint[1] = colour[1]
+  Water.tint[2] = colour[2]
+  Water.tint[3] = colour[3]
+  Water.tintK = U.saturate(strength or 0)
+  if Water.shader then
+    put(Water.shader, "uTint", Water.tint)
+    put(Water.shader, "uTintK", Water.tintK)
+  end
+end
+
+--- Change the horizon/crest reflection colour (the sky the sea is reflecting).
+function Water.setSky(colour)
+  put(Water.load(), "cSky", { colour[1], colour[2], colour[3] })
+end
+
+--- Draw the sea over the visible world rect. Call with the camera transform
+--- applied, before the terrain. `field` is `terrain.shoreCanvas`.
+function Water.draw(camera, time, field)
+  if not field then return end
+  local s = Water.load()
+  local vx, vy, vw, vh
+  if camera then
+    vx, vy, vw, vh = camera:viewRect(64)
+  else
+    vx, vy, vw, vh = -400, -400, TW.w + 800, TW.h + 800
+  end
+  put(s, "shore", field)
+  put(s, "uView", { vx, vy, vw, vh })
+  put(s, "uTime", time or 0)
+
+  local prevB, prevA = love.graphics.getBlendMode()
+  love.graphics.setBlendMode("alpha")
+  love.graphics.setShader(s)
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(Water.white, vx, vy, 0, vw, vh)
+  love.graphics.setShader()
+  love.graphics.setBlendMode(prevB, prevA)
+end
+
+return Water

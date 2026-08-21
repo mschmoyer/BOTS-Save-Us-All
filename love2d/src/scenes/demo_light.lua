@@ -94,10 +94,10 @@ function S:enter()
   for i = 1, NLIGHTS do
     local hue = rng:next()
     local col
-    if hue < 0.34 then col = P.ramp.cobalt[3]
-    elseif hue < 0.62 then col = P.ramp.ember[3]
-    elseif hue < 0.8 then col = P.accent
-    elseif hue < 0.92 then col = P.love
+    if hue < 0.42 then col = P.ramp.ember[3]
+    elseif hue < 0.66 then col = P.ramp.cobalt[3]
+    elseif hue < 0.82 then col = P.accent
+    elseif hue < 0.93 then col = P.love
     else col = P.ramp.rift[3] end
     lights[i] = {
       cx = rng:range(120, WORLD_W - 120),
@@ -105,9 +105,9 @@ function S:enter()
       rad = rng:range(40, 190),
       spd = rng:range(0.4, 1.5) * rng:sign(),
       ph  = rng:angle(),
-      r   = rng:range(110, 230),
+      r   = rng:range(80, 165),
       col = col,
-      inten = rng:range(0.55, 1.05),
+      inten = rng:range(0.30, 0.62),
       flick = rng:chance(0.3) and rng:range(0.15, 0.4) or 0,
       x = 0, y = 0,
     }
@@ -126,6 +126,10 @@ function S:enter()
   prop(980, 460, 34, P.ramp.rift[3], "rift")
 
   -- "trees": opaque blobs that cast the sun shadow, so shadow sweep is visible
+  self.barkC   = P.shade(P.ramp.bark, 1.7)
+  self.leafC   = P.shade(P.ramp.leaf, 1.9)
+  self.leafHiC = P.shade(P.ramp.leaf, 2.5)
+  self.shadowC = P.ramp.soil[1]
   self.trees = {}
   for i = 1, 34 do
     self.trees[i] = {
@@ -197,14 +201,15 @@ local function drawShadows()
   local g = love.graphics
   local sx, sy = math.cos(DN.sunAngle), math.sin(DN.sunAngle)
   local len = DN.sunLength
-  local dark = P.ramp.soil[1]
+  local dark = S.shadowC
   g.setBlendMode("multiply", "premultiplied")
+  local a = 0.42 + 0.24 * (1 - len)
+  local r0, g0, b0 = U.lerp(1, dark[1], a), U.lerp(1, dark[2], a), U.lerp(1, dark[3], a)
   for i = 1, #S.trees do
     local t = S.trees[i]
-    local ox, oy = sx * t.r * 1.7 * len, sy * t.r * 1.1 * len
-    local a = 0.55 * (0.4 + 0.6 * (1 - len * 0.5))
-    g.setColor(U.lerp(1, dark[1], a), U.lerp(1, dark[2], a), U.lerp(1, dark[3], a), 1)
-    g.ellipse("fill", t.x + ox, t.y + oy, t.r * (1 + len * 0.5), t.r * 0.72)
+    local ox, oy = sx * t.r * 1.6 * len, sy * t.r * 1.0 * len
+    g.setColor(r0, g0, b0, 1)
+    g.ellipse("fill", t.x + ox, t.y + oy, t.r * (0.95 + len * 0.45), t.r * 0.66)
   end
   g.setBlendMode("alpha", "alphamultiply")
 end
@@ -213,17 +218,19 @@ local function drawTrees()
   local g = love.graphics
   local rimx = -math.cos(DN.sunAngle)
   local rimy = -math.sin(DN.sunAngle)
+  local bark, leaf, hi = S.barkC, S.leafC, S.leafHiC
+  local sc = DN.sunColor
   for i = 1, #S.trees do
     local t = S.trees[i]
-    g.setColor(P.shade(P.ramp.bark, 1.8))
+    g.setColor(bark[1], bark[2], bark[3], 1)
     g.rectangle("fill", t.x - 5, t.y - 6, 10, t.r * 0.7, 3)
-    g.setColor(P.shade(P.ramp.leaf, 2.0))
+    g.setColor(leaf[1], leaf[2], leaf[3], 1)
     g.circle("fill", t.x, t.y - t.r * 0.35, t.r)
-    g.setColor(P.shade(P.ramp.leaf, 2.9))
-    g.circle("fill", t.x - t.r * 0.2, t.y - t.r * 0.55, t.r * 0.66)
+    g.setColor(hi[1], hi[2], hi[3], 0.85)
+    g.circle("fill", t.x - t.r * 0.16, t.y - t.r * 0.5, t.r * 0.6)
     -- rim light on the sun-facing side
-    g.setColor(P.alpha(DN.sunColor, 0.35))
-    g.circle("fill", t.x + rimx * t.r * 0.45, t.y - t.r * 0.35 + rimy * t.r * 0.45, t.r * 0.34)
+    g.setColor(sc[1], sc[2], sc[3], 0.22)
+    g.circle("fill", t.x + rimx * t.r * 0.5, t.y - t.r * 0.35 + rimy * t.r * 0.5, t.r * 0.3)
   end
 end
 
@@ -241,60 +248,62 @@ local function addLights()
     local p = props[i]
     local pulse = 0.82 + math.sin(S.t * 3 + p.ph) * 0.18
     if p.kind == "fire" then
-      Lighting.addLight(p.x, p.y, 260, P.ramp.ember[3], 1.5 * pulse, OPT_FIRE)
+      Lighting.addLight(p.x, p.y, 250, P.ramp.ember[3], 1.15 * pulse, OPT_FIRE)
     elseif p.kind == "rift" then
-      Lighting.addLight(p.x, p.y, 300, P.ramp.rift[3], 1.15 * pulse, OPT_SOFT)
+      Lighting.addLight(p.x, p.y, 270, P.ramp.rift[3], 0.85 * pulse, OPT_SOFT)
     elseif p.kind == "beacon" then
-      Lighting.addLight(p.x, p.y, 300, P.accent, 1.25 * pulse, OPT_MID)
+      Lighting.addLight(p.x, p.y, 280, P.accent, 0.9 * pulse, OPT_MID)
     else
-      Lighting.addLight(p.x, p.y, 210, P.ramp.cobalt[3], 1.2 * pulse, OPT_TIGHT)
+      Lighting.addLight(p.x, p.y, 190, P.ramp.cobalt[3], 0.95 * pulse, OPT_TIGHT)
     end
   end
   -- the player lamp and a sweeping sentry scan
-  Lighting.addCone(WORLD_W * 0.5, WORLD_H * 0.52, 520, P.eye, 1.6, coneA, math.rad(26), 0.08)
-  Lighting.addCone(1360, 200, 620, P.accentCool, 1.35, coneB, math.rad(15), 0)
-  -- a soft key light so unlit ground still reads
-  Lighting.addLight(WORLD_W * 0.5, WORLD_H * 0.45, 900, DN.sunColor,
-                    0.35 * DN.ambientStrength, OPT_SOFT)
+  Lighting.addCone(WORLD_W * 0.5, WORLD_H * 0.52, 480, P.eye, 0.95, coneA, math.rad(24), 0.06)
+  Lighting.addCone(1330, 210, 560, P.accentCool, 0.8, coneB, math.rad(13), 0)
 end
 
 local function drawEmissive()
   local g = love.graphics
   g.setBlendMode("add", "alphamultiply")
+  local em = 0.35 + 0.65 * (1 - DN.ambientStrength)   -- emitters read hotter at night
   for i = 1, #props do
     local p = props[i]
     local pulse = 0.82 + math.sin(S.t * 3 + p.ph) * 0.18
-    g.setColor(P.alpha(p.col, 0.95 * pulse))
-    g.circle("fill", p.x, p.y, p.r * 0.55)
-    g.setColor(P.alpha(p.col, 0.35 * pulse))
-    g.circle("fill", p.x, p.y, p.r)
+    local c = p.col
+    g.setColor(c[1], c[2], c[3], 0.9 * pulse)
+    g.circle("fill", p.x, p.y, p.r * 0.5)
+    g.setColor(c[1], c[2], c[3], 0.22 * pulse * em)
+    g.circle("fill", p.x, p.y, p.r * 1.15)
     if p.kind == "crystal" then
-      g.setColor(P.alpha(P.white, 0.8 * pulse))
-      g.circle("fill", p.x, p.y, p.r * 0.24)
+      g.setColor(1, 1, 1, 0.7 * pulse)
+      g.circle("fill", p.x, p.y, p.r * 0.2)
     end
   end
   -- bot eyes: tiny, very hot, the classic bloom test
   for i = 1, NLIGHTS, 4 do
     local l = lights[i]
-    g.setColor(P.alpha(P.white, 0.85))
-    g.circle("fill", l.x, l.y, 3)
-    g.setColor(P.alpha(l.col, 0.55))
-    g.circle("fill", l.x, l.y, 8)
+    local c = l.col
+    g.setColor(1, 1, 1, 0.8)
+    g.circle("fill", l.x, l.y, 2.6)
+    g.setColor(c[1], c[2], c[3], 0.4 * em)
+    g.circle("fill", l.x, l.y, 7)
   end
   -- stars and moon
   if DN.starAlpha > 0.01 then
+    local ic = P.ink
     for i = 1, #stars do
       local s = stars[i]
       local tw = 0.55 + 0.45 * math.sin(S.t * 2.2 + s.ph)
-      g.setColor(P.alpha(P.ink, DN.starAlpha * 0.75 * tw))
+      g.setColor(ic[1], ic[2], ic[3], DN.starAlpha * 0.7 * tw)
       g.circle("fill", s.x, s.y, s.s)
     end
   end
   if DN.moonAlpha > 0.01 then
-    g.setColor(P.alpha(P.ramp.metal[4], DN.moonAlpha * 0.9))
-    g.circle("fill", 1420, 140, 34)
-    g.setColor(P.alpha(P.ramp.metal[4], DN.moonAlpha * 0.18))
-    g.circle("fill", 1420, 140, 78)
+    local mc = P.ramp.metal[4]
+    g.setColor(mc[1], mc[2], mc[3], DN.moonAlpha * 0.85)
+    g.circle("fill", 1420, 140, 30)
+    g.setColor(mc[1], mc[2], mc[3], DN.moonAlpha * 0.12)
+    g.circle("fill", 1420, 140, 72)
   end
   g.setBlendMode("alpha", "alphamultiply")
 end

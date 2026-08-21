@@ -40,7 +40,7 @@ function love.load()
 
   local ok, err = pcall(function()
     local sceneName = os.getenv("BOTS_SCENE")
-    if sceneName == nil or sceneName == "" then sceneName = "src.scenes.boot" end
+    if sceneName == nil or sceneName == "" then sceneName = "src.scenes.title" end
     Screen.push(require(sceneName))
   end)
   if not ok then

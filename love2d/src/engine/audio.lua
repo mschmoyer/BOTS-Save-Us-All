@@ -272,6 +272,7 @@ def("bot_hurt", {
 -- a few cents on the last note, the filter closes, and the reverb tail is the
 -- longest of any sound in the game. Under it, a capacitor whine winding down.
 def("bot_down", {
+  rate = 11025,
   gain = 0.8, variants = 3, pitchVar = 0.015,
   build = function(v, n, r)
     local root = 74 + (v - 2)                     -- D5-ish
@@ -397,6 +398,7 @@ def("pulse_charge", {
 })
 
 def("pulse_release", {
+  rate = 11025,
   gain = 0.95, variants = 3, pitchVar = 0.03,
   build = function(v, n, r)
     return { dur = 1.3, layers = {
@@ -433,6 +435,7 @@ def("player_hurt", {
 -- PLAYER_DOWN -- the suit failing: everything drops an octave, a heartbeat-ish
 -- sub thud, and the world muffles (a long lowpass sweep down to almost nothing).
 def("player_down", {
+  rate = 11025,
   gain = 0.9, variants = 2,
   build = function(v)
     return { dur = 2.6, layers = {
@@ -456,6 +459,7 @@ def("player_down", {
 
 -- BLIGHT ------------------------------------------------------------------
 def("enemy_step", {
+  rate = 11025,
   gain = 0.26, variants = 6, pitchVar = 0.14, gainVar = 0.3,
   build = function(v, n, r)
     return { dur = 0.2, layers = {
@@ -483,6 +487,7 @@ def("enemy_hurt", {
 })
 
 def("enemy_die", {
+  rate = 11025,
   gain = 0.7, variants = 4, pitchVar = 0.08,
   build = function(v, n, r)
     return { dur = 0.9, layers = {
@@ -503,6 +508,7 @@ def("enemy_die", {
 -- CHOMP -- wet, organic, upsetting: two bandpassed noise bites with a pitch
 -- drop between them, plus a low gulp. It should read as "your tree is dying".
 def("chomp", {
+  rate = 11025,
   gain = 0.6, variants = 5, pitchVar = 0.09,
   build = function(v, n, r)
     local g = r:range(0.9, 1.15)
@@ -522,6 +528,7 @@ def("chomp", {
 -- TREE_FALL -- the loss sound. Fibre tearing (filtered noise with a downward
 -- sweep), then a heavy body impact and a settling rustle. Long, so it lands.
 def("tree_fall", {
+  rate = 11025,
   gain = 0.85, variants = 3, pitchVar = 0.04,
   build = function(v, n, r)
     return { dur = 2.2, layers = {
@@ -564,6 +571,7 @@ def("spit", {
 -- (beating), amplitude-wobbled at 5.5 Hz, bandpassed to a nasal formant, with a
 -- sub underneath. Deliberately unpleasant and deliberately quiet-until-close.
 def("siphon_drain", {
+  rate = 11025,
   gain = 0.4, variants = 2, loop = true, pitchVar = 0.02,
   build = function(v, n, r)
     local base = 92 + v * 3
@@ -606,6 +614,7 @@ def("rift_open", {
 })
 
 def("rift_close", {
+  rate = 11025,
   gain = 0.85, variants = 2,
   build = function(v)
     return { dur = 1.6, layers = {
@@ -634,6 +643,7 @@ def("rift_close", {
 --    from somewhere outside the island;
 --  * gentle bitcrush + big dark reverb: a broken PA in an empty sky.
 def("wave_start", {
+  rate = 11025,
   bus = "sfx", gain = 1.0, variants = 2, pitchVar = 0.01,
   build = function(v)
     local base = 138 * (v == 2 and 0.97 or 1)
@@ -665,6 +675,7 @@ def("wave_start", {
 -- DAWN -- the exhale. A warm major-add9 chord that arrives softly and resolves,
 -- with a bell on the ninth. The only sound in the game with no transient.
 def("dawn", {
+  rate = 11025,
   bus = "sfx", gain = 0.75, variants = 2, pitchVar = 0.005,
   build = function(v)
     local root = 55 + (v - 1) * 2
@@ -692,6 +703,7 @@ def("dawn", {
 
 -- BOSS --------------------------------------------------------------------
 def("boss_step", {
+  rate = 11025,
   gain = 1.0, variants = 3, pitchVar = 0.04,
   build = function(v, n, r)
     return { dur = 1.4, layers = {
@@ -855,10 +867,18 @@ def("o2_milestone", {
 local MUSIC_BASE = 48   -- C3
 
 local MUSIC = {}
-local function mdef(name, t) t.name = name MUSIC[name] = t MUSIC[#MUSIC + 1] = name return t end
+local function mdef(name, t)
+  t.name = name
+  t.pitchVar = t.pitchVar or 0.0016   -- ~3 cents: alive, but still in tune
+  t.gainVar = t.gainVar or 0.07
+  t.variants = 12
+  MUSIC[name] = t
+  MUSIC[#MUSIC + 1] = name
+  return t
+end
 
-mdef("pad", { gain = 0.5, dur = 3.0, build = function(hz)
-  return { dur = 3.0, layers = {
+mdef("pad", { gain = 0.5, dur = 2.5, rate = 11025, sparse = 3, build = function(hz)
+  return { dur = 2.5, layers = {
     { osc = "saw", freq = hz, detune = -7, env = { a = 0.55, d = 0.6, s = 0.75, r = 1.1 }, amp = 0.16 },
     { osc = "saw", freq = hz, detune = 8, env = { a = 0.6, d = 0.6, s = 0.75, r = 1.1 }, amp = 0.16 },
     { osc = "tri", freq = hz * 2, env = { a = 0.7, d = 0.5, s = 0.6, r = 1.0 }, amp = 0.1 },
@@ -870,7 +890,7 @@ mdef("pad", { gain = 0.5, dur = 3.0, build = function(hz)
   }, normalize = 0.78, trim = false, fadeIn = 0.02, fadeOut = 0.25 }
 end })
 
-mdef("bass", { gain = 0.72, dur = 1.0, build = function(hz)
+mdef("bass", { gain = 0.72, dur = 1.0, rate = 11025, sparse = 2, build = function(hz)
   return { dur = 1.0, layers = {
     { osc = "sine", freq = hz * 0.5, env = { type = "perc", a = 0.006, d = 0.75, curve = 1.7 },
       amp = 0.75 },
@@ -883,7 +903,7 @@ mdef("bass", { gain = 0.72, dur = 1.0, build = function(hz)
   }, normalize = 0.82, trim = false }
 end })
 
-mdef("bell", { gain = 0.44, dur = 1.8, build = function(hz)
+mdef("bell", { gain = 0.44, dur = 1.8, sparse = 2, build = function(hz)
   return { dur = 1.8, layers = {
     { osc = "fm", freq = hz, ratio = 3.01, index = { type = "exp", tau = 0.06, peak = 2.2 },
       env = { type = "perc", a = 0.004, d = 1.5, curve = 2 }, amp = 0.45 },
@@ -892,17 +912,17 @@ mdef("bell", { gain = 0.44, dur = 1.8, build = function(hz)
   }, fx = { { "reverb", mix = 0.34, room = 0.88, damp = 0.3 } }, normalize = 0.8, trim = false }
 end })
 
-mdef("pluck", { gain = 0.4, dur = 0.9, build = function(hz)
+mdef("pluck", { gain = 0.4, dur = 0.9, sparse = 2, build = function(hz)
   return { dur = 0.9, layers = { { osc = "pluck", freq = hz, damp = 0.42, decay = 0.9955,
                                    soft = 0.4, amp = 0.7 } },
     fx = { { "svf", type = "lp", cutoff = 4200, q = 0.9 },
            { "reverb", mix = 0.24, room = 0.8 } }, normalize = 0.8, trim = false }
 end })
 
-mdef("choir", { gain = 0.5, dur = 2.6, build = function(hz)
-  return { dur = 2.6, layers = {
+mdef("choir", { gain = 0.5, dur = 2.2, rate = 11025, sparse = 3, build = function(hz)
+  return { dur = 2.2, layers = {
     { osc = "additive", freq = hz, env = { a = 0.5, d = 0.5, s = 0.7, r = 1.0 }, amp = 0.4,
-      partials = { { 1, 0.5 }, { 2, 0.26, 5 }, { 3, 0.16, -6 }, { 4, 0.09 }, { 5, 0.06, 8 },
+      partials = { { 1, 0.5 }, { 2, 0.26, 5 }, { 3, 0.16, -6 }, { 5, 0.07, 8 },
                    { 1.005, 0.3 } } },
     { osc = "pink", env = { a = 0.6, d = 0.5, s = 0.25, r = 1.0 }, amp = 0.05 },
   }, fx = {
@@ -914,11 +934,15 @@ mdef("choir", { gain = 0.5, dur = 2.6, build = function(hz)
 end })
 
 --------------------------------------------------------------------- loading
-local function mkSource(sd, loopFlag)
-  if not hasAudio() then return nil end
+-- Sources are userdata, so each one lives in a small slot table that carries the
+-- "is this voice using it" flag.
+local function mkSlot(sd, loopFlag)
+  local slot = { s = nil, busy = false }
+  if not hasAudio() then return slot end
   local src = safe(love.audio.newSource, sd, "static")
   if src and loopFlag then safe(src.setLooping, src, true) end
-  return src
+  slot.s = src
+  return slot
 end
 
 local function registerBuffer(entry, buf, loopFlag)
@@ -926,7 +950,7 @@ local function registerBuffer(entry, buf, loopFlag)
   entry.data[#entry.data + 1] = sd
   entry.env[#entry.env + 1] = buf:envelope(50)
   entry.len[#entry.len + 1] = buf.n / buf.rate
-  entry.src[#entry.src + 1] = { mkSource(sd, loopFlag) }
+  entry.src[#entry.src + 1] = { mkSlot(sd, loopFlag) }
   Audio.stats.variants = Audio.stats.variants + 1
   Audio.stats.samples = Audio.stats.samples + buf.n * buf.ch
   Audio.stats.bytes = Audio.stats.bytes + buf.n * buf.ch * 2
@@ -946,7 +970,7 @@ function Audio.load()
     local entry = { def = d, data = {}, env = {}, len = {}, src = {}, next = 1 }
     for v = 1, d.variants do
       local spec = d.build(v, d.variants, rng)
-      spec.rate = Audio.rate
+      spec.rate = d.rate or Audio.rate
       registerBuffer(entry, Synth.render(spec), d.loop)
     end
     if d.keyed then
@@ -963,10 +987,23 @@ function Audio.load()
     local name = MUSIC[i]
     local m = MUSIC[name]
     local entry = { def = m, data = {}, env = {}, len = {}, src = {}, music = true }
+    -- `sparse` renders every Nth semitone and fills the gaps by resampling the
+    -- nearest anchor. A pad moved a semitone by resampling is indistinguishable
+    -- from one synthesised there, and it is three times cheaper to build.
+    local step = m.sparse or 1
+    local anchors = {}
     for st = 0, 11 do
-      local spec = m.build(Synth.noteToHz(MUSIC_BASE + st))
-      spec.rate = Audio.rate
-      registerBuffer(entry, Synth.render(spec), false)
+      local a = floor(st / step) * step
+      local buf
+      if st == a then
+        local spec = m.build(Synth.noteToHz(MUSIC_BASE + st))
+        spec.rate = m.rate or Audio.rate
+        buf = Synth.render(spec)
+        anchors[a] = buf
+      else
+        buf = anchors[a]:copy():pitchShift(st - a)
+      end
+      registerBuffer(entry, buf, false)
     end
     Audio.music[name] = entry
     Audio.sounds["mus_" .. name] = entry
@@ -975,7 +1012,7 @@ function Audio.load()
 
   -- percussion (pitchless, so it lives in the music bank with 3 variants each)
   local perc = {
-    kick = { gain = 0.85, spec = function(r) return { dur = 0.7, layers = {
+    kick = { gain = 0.85, rate = 11025, spec = function(r) return { dur = 0.7, layers = {
       { osc = "sine", freq = { from = 150 * r:range(0.95, 1.05), to = 42, tau = 0.035 },
         env = { type = "perc", a = 0.001, d = 0.42, curve = 1.8 }, amp = 0.9 },
       { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.012, curve = 5 }, amp = 0.2 },
@@ -991,7 +1028,7 @@ function Audio.load()
         amp = 0.5 } },
       fx = { { "svf", type = "bp", cutoff = r:range(3600, 5200), q = 1.4 } },
       normalize = 0.55, trim = false } end },
-    tom = { gain = 0.55, spec = function(r) return { dur = 0.6, layers = {
+    tom = { gain = 0.55, rate = 11025, spec = function(r) return { dur = 0.6, layers = {
       { osc = "sine", freq = { from = 200 * r:range(0.9, 1.15), to = 78, tau = 0.09 },
         env = { type = "perc", a = 0.001, d = 0.35, curve = 2 }, amp = 0.8 },
       { osc = "noise", env = { type = "perc", a = 0.001, d = 0.05, curve = 4 }, amp = 0.12 },
@@ -1004,7 +1041,7 @@ function Audio.load()
                     data = {}, env = {}, len = {}, src = {}, music = true, bus = "music" }
     for v = 1, 3 do
       local spec = p.spec(rng)
-      spec.rate = Audio.rate
+      spec.rate = p.rate or Audio.rate
       registerBuffer(entry, Synth.render(spec), false)
     end
     Audio.music[name] = entry
@@ -1054,12 +1091,15 @@ local function acquire(entry, vi)
   local list = entry.src[vi]
   if not list then return nil end
   for i = 1, #list do
-    local s = list[i]
-    if s and not s._busy then return s end
+    if not list[i].busy then return list[i] end
   end
-  if #list < MAX_PER_SOUND and list[1] then
-    local c = safe(list[1].clone, list[1])
-    if c then list[#list + 1] = c return c end
+  if #list < MAX_PER_SOUND and list[1].s then
+    local c = safe(list[1].s.clone, list[1].s)
+    if c then
+      local slot = { s = c, busy = false }
+      list[#list + 1] = slot
+      return slot
+    end
   end
   -- steal the oldest voice using this variant
   local oldest, oi = nil, nil
@@ -1068,8 +1108,9 @@ local function acquire(entry, vi)
     if v.entry == entry and v.vi == vi and (not oldest or v.t > oldest.t) then oldest, oi = v, i end
   end
   if oldest then
+    local slot = oldest.slot
     Audio.killVoice(oi)
-    return oldest.src
+    return slot
   end
   return list[1]
 end
@@ -1077,9 +1118,9 @@ end
 function Audio.killVoice(i)
   local v = Audio.voices[i]
   if not v then return end
-  if v.src then
-    safe(v.src.stop, v.src)
-    v.src._busy = false
+  if v.slot then
+    if v.slot.s then safe(v.slot.s.stop, v.slot.s) end
+    v.slot.busy = false
   end
   v.dead = true
   U.removeSwap(Audio.voices, i)
@@ -1150,26 +1191,25 @@ function Audio.play(name, opts)
     if wi then Audio.killVoice(wi) else return nil end
   end
 
-  local src = acquire(entry, vi)
+  local slot = acquire(entry, vi)
+  local src = slot and slot.s or nil
   local loopFlag = (opts and opts.loop) or d.loop or false
   local voice = {
     entry = entry, vi = vi, name = name, bus = bus, gain = vol, pan = pan,
     pitch = pitch, t = 0, dur = entry.len[vi] / max(0.05, pitch), src = src,
-    loop = loopFlag and true or false,
+    slot = slot, loop = loopFlag and true or false,
   }
+  if slot then slot.busy = true end
   if src then
-    src._busy = true
     safe(src.setLooping, src, voice.loop)
     safe(src.setPitch, src, U.clamp(pitch, 0.06, 8))
     safe(src.setVolume, src, U.saturate(vol * busGain(bus)))
-    if abs(pan) > 0.001 then
-      safe(src.setRelative, src, true)
-      safe(src.setPosition, src, pan * 3, 0, -1.2)
-      safe(src.setAttenuationDistances, src, 1, 12)
-    else
-      safe(src.setRelative, src, true)
-      safe(src.setPosition, src, 0, 0, 0)
-    end
+    -- Pan a mono source by placing it on the unit circle around the listener:
+    -- the distance never changes, so we get pan without distance attenuation.
+    safe(src.setRelative, src, true)
+    safe(src.setAttenuationDistances, src, 1, 100)
+    local z = -math.sqrt(max(0.02, 1 - pan * pan))
+    safe(src.setPosition, src, pan, 0, z)
     safe(src.seek, src, 0)
     safe(src.play, src)
   end
@@ -1298,5 +1338,9 @@ function Audio.playMusic(inst, semitoneFromC3, opts)
   opts.bus = "music"
   return Audio.play("mus_" .. inst, opts)
 end
+
+-- exposed for the demo scene and for tooling
+Audio.defs = D
+Audio.musicDefs = MUSIC
 
 return Audio

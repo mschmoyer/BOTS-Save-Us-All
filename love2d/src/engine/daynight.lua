@@ -25,11 +25,11 @@ local START = { day = 0.00,   dusk = 0.40,    night = 0.52,   dawn = 0.88 }
 
 -- Scalar lighting response per phase. The *colours* all come from P.tod; these
 -- are the numbers the palette does not carry.
-local AMB    = { day = 1.00, dusk = 0.60, night = 0.26, dawn = 0.72 } -- ambient strength
-local CONTR  = { day = 1.00, dusk = 1.05, night = 1.13, dawn = 1.02 } -- grade contrast
-local SATU   = { day = 1.00, dusk = 0.95, night = 0.78, dawn = 0.90 } -- grade saturation
-local GAIN   = { day = 0.30, dusk = 0.72, night = 1.20, dawn = 0.55 } -- additive light gain
-local BLOOM  = { day = 0.55, dusk = 0.85, night = 1.15, dawn = 0.80 } -- bloom response
+local AMB    = { day = 1.00, dusk = 0.66, night = 0.42, dawn = 0.76 } -- ambient strength
+local CONTR  = { day = 1.05, dusk = 1.08, night = 1.14, dawn = 1.05 } -- grade contrast
+local SATU   = { day = 1.00, dusk = 0.96, night = 0.82, dawn = 0.92 } -- grade saturation
+local GAIN   = { day = 0.04, dusk = 0.11, night = 0.17, dawn = 0.08 } -- additive light gain
+local BLOOM  = { day = 0.50, dusk = 0.80, night = 1.00, dawn = 0.70 } -- bloom response
 
 -- The transition occupies the tail of each phase, so "day" reads as day for a
 -- while and then turns. smootherstep keeps the first and second derivative calm

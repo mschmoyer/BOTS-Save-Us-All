@@ -79,7 +79,7 @@ local TILE_H     = 800
 local SD_MAX     = 420       -- signed shore distance encoded into 8 bits over +-SD_MAX
 local BEACH_W    = 52        -- sand band width, world units
 local WET_W      = 20        -- darker wet-sand band nearest the water
-local RELIEF     = 190       -- world units of vertical relief for elevation 0..1
+local RELIEF     = 62        -- world units of vertical relief for elevation 0..1
 local SUN        = { -0.632, -0.775 }   -- 2D direction toward the sun (up and left)
 local SUN_Z      = 0.52
 local NORMAL_DIV = 4         -- normal canvas is 1/4 world resolution
@@ -102,7 +102,6 @@ extern float uBeach;
 extern float uWet;
 extern vec2  uSun;
 extern float uSunZ;
-extern float uRelief;
 extern vec3  cSand[4];
 extern vec3  cGrass[4];
 extern vec3  cMoss[4];
@@ -162,8 +161,11 @@ vec3 ramp(vec3 a, vec3 b, vec3 c, vec3 d, float t) {
 vec2 fuv(vec2 w) { return clamp(w / uWorld, vec2(0.0), vec2(1.0)) * uFScale + uFBias; }
 
 float rockMask(float slope, float elev) {
-  return clamp(smoothstep(0.30, 0.50, slope) + smoothstep(0.58, 0.80, elev), 0.0, 1.0);
+  return clamp(smoothstep(0.38, 0.60, slope) + smoothstep(0.56, 0.78, elev), 0.0, 1.0);
 }
+
+// The pixel-scale coastline crinkle. water.lua carries a byte-identical copy so
+// the sea, the foam and the sand all agree on where the shoreline is.
 
 vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   vec2 w = uTile.xy + tc * uTile.zw;
@@ -180,13 +182,14 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float slope = B.a;
 
   // ---- per-pixel detail ------------------------------------------------
-  float d1 = fbm4(w * 0.0115);              // ~90 px blotches
-  float d2 = fbm4(w * 0.052 + 17.3);        // ~19 px texture
-  float d3 = vn(w * 0.26 + 61.0);           // ~4 px grain
+  float d1 = fbm4(w * 0.0125 + 5.0);        // ~80 px blotches
+  float d2 = fbm3(w * 0.0480 + 17.3);       // ~21 px texture
+  float d3 = vn(w * 0.1400 + 91.0);         // ~7 px grain
   float drift = fbm3(w * 0.00135 + 3.7);    // very large scale colour drift
 
   // crinkle the coastline so it is never a smooth interpolated curve
-  float sdw = sd + (d2 - 0.5) * 15.0 + (d1 - 0.5) * 20.0;
+  // (must match CRINKLE in water.lua)
+  float sdw = sd + (d1 - 0.5) * 26.0 + (d2 - 0.5) * 13.0 + (d3 - 0.5) * 6.0;
   float alpha = smoothstep(-1.2, 1.2, sdw);
   if (alpha <= 0.002) { return vec4(0.0); }
 
@@ -194,10 +197,10 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float e = 3.0;
   float mx = vn((w + vec2(e, 0.0)) * 0.075) - vn((w - vec2(e, 0.0)) * 0.075);
   float my = vn((w + vec2(0.0, e)) * 0.075) - vn((w - vec2(0.0, e)) * 0.075);
-  vec3 nrm = normalize(vec3(-grad.x - mx * 1.4, -grad.y - my * 1.4, 1.0));
+  vec3 nrm = normalize(vec3(-grad.x - mx * 0.55, -grad.y - my * 0.55, 1.0));
   vec3 L   = normalize(vec3(uSun, uSunZ));
   float lam = dot(nrm, L);
-  float lit = clamp(0.80 + (lam - uSunZ) * 1.85, 0.34, 1.62);
+  float lit = clamp(0.86 + (lam - uSunZ) * 1.40, 0.48, 1.40);
 
   // ---- meadow ----------------------------------------------------------
   float lush = clamp(fert * 0.75 + moist * 0.45 + (d1 - 0.5) * 0.85, 0.0, 1.0);
@@ -237,7 +240,8 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 
   // ---- rock ------------------------------------------------------------
   float rk = rockMask(slope, elev);
-  float rockT = smoothstep(0.40, 0.60, rk + (d2 - 0.5) * 0.40 + (d1 - 0.5) * 0.22);
+  float rockT = smoothstep(0.42, 0.66, rk + (d2 - 0.5) * 0.34 + (d1 - 0.5) * 0.30);
+  rockT *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);   // sand wins at the tideline
   float strata = rdg3(w * 0.0165 + vec2(0.0, elev * 9.0));
   vec3 rockC = ramp(cRock[0], cRock[1], cRock[2], cRock[3],
                     0.35 + strata * 2.1 + elev * 0.85 + (d3 - 0.5) * 0.35);
@@ -289,7 +293,6 @@ extern Image fieldA;
 extern vec2  uFScale;
 extern vec2  uFBias;
 extern vec2  uWorld;
-extern float uSdMax;
 
 float hsh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vn(vec2 p) {
@@ -308,7 +311,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float e = 3.0;
   float mx = vn((w + vec2(e, 0.0)) * 0.075) - vn((w - vec2(e, 0.0)) * 0.075);
   float my = vn((w + vec2(0.0, e)) * 0.075) - vn((w - vec2(0.0, e)) * 0.075);
-  vec3 nrm = normalize(vec3(-grad.x - mx * 1.4, -grad.y - my * 1.4, 1.0));
+  vec3 nrm = normalize(vec3(-grad.x - mx * 0.55, -grad.y - my * 0.55, 1.0));
   float land = step(0.5, A.a);
   return vec4(nrm * 0.5 + 0.5, land);
 }
@@ -348,11 +351,23 @@ float fbm3(vec2 p) {
   for (int i = 0; i < 3; i++) { s += vn(p) * a; n += a; a *= 0.5; p *= 2.05; }
   return s / n;
 }
+float fbm4(vec2 p) {
+  float s = 0.0; float a = 0.5; float n = 0.0;
+  for (int i = 0; i < 4; i++) { s += vn(p) * a; n += a; a *= 0.5; p *= 2.03; }
+  return s / n;
+}
+float crinkle(vec2 w) {
+  return (fbm4(w * 0.0125 + 5.0) - 0.5) * 26.0
+       + (fbm3(w * 0.0480 + 17.3) - 0.5) * 13.0
+       + (vn(w * 0.1400 + 91.0) - 0.5) * 6.0;
+}
 
 vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   vec2 w = uView.xy + tc * uView.zw;
   vec2 uv = clamp(w / uWorld, vec2(0.0), vec2(1.0));
   float sd = (Texel(shore, uv).r * 2.0 - 1.0) * uSdMax;
+  if (sd < -70.0 || sd > 110.0) { return vec4(0.0); }
+  sd = sd + crinkle(w);
   if (sd < -2.0 || sd > 46.0) { return vec4(0.0); }
 
   float wob = fbm3(w * 0.017 + vec2(uTime * 0.09, -uTime * 0.05));
@@ -419,27 +434,32 @@ function Terrain:_generate()
       local r = sqrt(dx * dx + dy * dy)
       local ang = atan2(dy, dx)
       -- periodic in angle, so the falloff radius itself is lumpy
-      local lobe = 0.60 + 0.30 * N.fbm(cos(ang) * 1.9 + 11.0, sin(ang) * 1.9 + 6.0, 3, s2)
-      local mask = U.smoothstep(lobe + 0.34, lobe - 0.14, r)
+      local lobe = 0.50 + 0.30 * N.fbm(cos(ang) * 1.9 + 11.0, sin(ang) * 1.9 + 6.0, 3, s2)
+      local mask = U.smoothstep(lobe + 0.30, lobe - 0.15, r)
 
       local cont = N.fbm(wx * 0.00118 + 11.0, wy * 0.00118 + 7.0, 5, s3)
       local det  = N.fbm(wx * 0.00390 - 3.0, wy * 0.00390 + 2.0, 4, s4)
-      local lv = mask * 1.28 + (cont - 0.5) * 1.06 + (det - 0.5) * 0.24 - 0.47
+      local lv = mask * 1.22 + (cont - 0.5) * 1.20 + (det - 0.5) * 0.26 - 0.585
 
       -- offshore islets in the shallow ring
       local isl = N.fbm(wx * 0.0026 + 41.0, wy * 0.0026 + 17.0, 3, s5)
-      lv = lv + U.smoothstep(0.66, 0.93, isl) * U.smoothstep(1.35, 0.80, r) * 0.62
+      lv = lv + U.smoothstep(0.70, 0.94, isl) * U.smoothstep(1.30, 0.72, r) * 0.55
 
       land[i] = lv
 
       if lv > 0 then
-        local ln = U.saturate(lv / 0.86)
-        local hills = N.fbm(wx * 0.0032 + 21.0, wy * 0.0032 - 9.0, 5, s6)
-        local spine = N.ridge(wx * 0.0019 - 13.0, wy * 0.0019 + 31.0, 4, s7)
-        local e = ln ^ 0.72 * (0.40 + 0.60 * hills)
-        e = e + spine * spine * U.smoothstep(0.20, 0.78, ln) * 0.92
-        elev[i] = U.saturate(e)
-        moist[i] = N.fbm(wx * 0.0021 + 77.0, wy * 0.0021 + 53.0, 4, s8)
+        local ln = U.saturate(lv / 0.62)
+        local hills = N.fbm(wx * 0.0030 + 21.0, wy * 0.0030 - 9.0, 5, s6)
+        local basin = N.fbm(wx * 0.0013 + 63.0, wy * 0.0013 - 27.0, 3, s6 + 60)
+        local spine = N.ridge(wx * 0.0018 - 13.0, wy * 0.0018 + 31.0, 4, s7)
+        -- broad plains, a few genuine highlands, a couple of low basins
+        local e = ln ^ 1.25 * (0.26 + 0.42 * hills) + (basin - 0.5) * 0.20
+        e = e + spine * spine * U.smoothstep(0.42, 0.95, ln) * 0.68
+        e = U.saturate(e)
+        elev[i] = e
+        local mo = N.fbm(wx * 0.0021 + 77.0, wy * 0.0021 + 53.0, 4, s8)
+        -- water collects low and drains off the highlands
+        moist[i] = U.saturate(mo * 0.80 + (1 - e) * 0.40 - 0.11)
       else
         elev[i] = 0
         moist[i] = 1
@@ -599,15 +619,15 @@ function Terrain:_classify()
         elseif sc > 0.42 then
           b = B_SCAR
           fert[i] = 0.02
-        elseif sl > 0.40 or e > 0.62 then
+        elseif sl > 0.52 or e > 0.66 then
           b = B_ROCK
           fert[i] = 0.06 + 0.12 * m * (1 - sl)
-        elseif m > 0.58 and e < 0.28 then
+        elseif m > 0.60 and e < 0.26 then
           b = B_MARSH
-          fert[i] = 0.42 + 0.28 * m
+          fert[i] = 0.44 + 0.28 * m
         else
           b = B_MEADOW
-          fert[i] = U.saturate(0.46 + 0.50 * m - 0.42 * sl - 0.22 * max(0, e - 0.40))
+          fert[i] = U.saturate(0.44 + 0.54 * m - 0.40 * sl - 0.30 * max(0, e - 0.36))
         end
         fert[i] = fert[i] * (1 - sc * 0.95)
         biome[i] = b
@@ -765,6 +785,11 @@ function Terrain:nearestLand(x, y)
 end
 
 --------------------------------------------------------------------------- bake
+--- Uniforms the GLSL compiler optimised away are not errors.
+local function put(sh, name, ...)
+  if sh:hasUniform(name) then sh:send(name, ...) end
+end
+
 local function rampVecs(r)
   local o = {}
   for i = 1, 4 do o[i] = { r[i][1], r[i][2], r[i][3] } end
@@ -782,21 +807,20 @@ function Terrain:_makeShaders()
   self._white = love.graphics.newImage(white)
 
   local g = self._ground
-  g:send("fieldA", self.fieldA)
-  g:send("fieldB", self.fieldB)
-  g:send("uFScale", self._fScale)
-  g:send("uFBias", self._fBias)
-  g:send("uWorld", { self.w, self.h })
-  g:send("uSdMax", SD_MAX)
-  g:send("uBeach", BEACH_W)
-  g:send("uWet", WET_W)
-  g:send("uSun", { SUN[1], SUN[2] })
-  g:send("uSunZ", SUN_Z)
-  g:send("uRelief", RELIEF)
-  local R = P.ramp
+  put(g, "fieldA", self.fieldA)
+  put(g, "fieldB", self.fieldB)
+  put(g, "uFScale", self._fScale)
+  put(g, "uFBias", self._fBias)
+  put(g, "uWorld", { self.w, self.h })
+  put(g, "uSdMax", SD_MAX)
+  put(g, "uBeach", BEACH_W)
+  put(g, "uWet", WET_W)
+  put(g, "uSun", { SUN[1], SUN[2] })
+  put(g, "uSunZ", SUN_Z)
+    local R = P.ramp
   local function sendRamp(name, ramp)
     local v = rampVecs(ramp)
-    g:send(name, v[1], v[2], v[3], v[4])
+    put(g, name, v[1], v[2], v[3], v[4])
   end
   sendRamp("cSand", R.sand)
   sendRamp("cGrass", R.grass)
@@ -805,24 +829,24 @@ function Terrain:_makeShaders()
   sendRamp("cSoil", R.soil)
   sendRamp("cBlight", R.blight)
   sendRamp("cWater", R.water)
-  g:send("cFlora", { R.leaf[2][1], R.leaf[2][2], R.leaf[2][3] })
+  put(g, "cFlora", { R.leaf[2][1], R.leaf[2][2], R.leaf[2][3] })
 
   local nsh = self._normalSh
-  nsh:send("fieldA", self.fieldA)
-  nsh:send("uFScale", self._fScale)
-  nsh:send("uFBias", self._fBias)
-  nsh:send("uWorld", { self.w, self.h })
-  nsh:send("uSdMax", SD_MAX)
+  put(nsh, "fieldA", self.fieldA)
+  put(nsh, "uFScale", self._fScale)
+  put(nsh, "uFBias", self._fBias)
+  put(nsh, "uWorld", { self.w, self.h })
+  put(nsh, "uSdMax", SD_MAX)
 
-  self._shoreSh:send("fieldA", self.fieldA)
-  self._shoreSh:send("uFScale", self._fScale)
-  self._shoreSh:send("uFBias", self._fBias)
+  put(self._shoreSh, "fieldA", self.fieldA)
+  put(self._shoreSh, "uFScale", self._fScale)
+  put(self._shoreSh, "uFBias", self._fBias)
 
   local f = self._foamSh
-  f:send("uWorld", { self.w, self.h })
-  f:send("uSdMax", SD_MAX)
-  f:send("cFoam", { R.water[4][1], R.water[4][2], R.water[4][3] })
-  f:send("cWet", { R.water[3][1], R.water[3][2], R.water[3][3] })
+  put(f, "uWorld", { self.w, self.h })
+  put(f, "uSdMax", SD_MAX)
+  put(f, "cFoam", { R.water[4][1], R.water[4][2], R.water[4][3] })
+  put(f, "cWet", { R.water[3][1], R.water[3][2], R.water[3][3] })
 end
 
 function Terrain:_bakeCoroutine()
@@ -850,7 +874,7 @@ function Terrain:_bakeCoroutine()
         love.graphics.clear(0, 0, 0, 0)
         love.graphics.setBlendMode("replace")
         love.graphics.setShader(self._ground)
-        self._ground:send("uTile", { wx, wy, TILE_W, TILE_H })
+        put(self._ground, "uTile", { wx, wy, TILE_W, TILE_H })
         love.graphics.setColor(1, 1, 1, 1)
         love.graphics.draw(self._white, 0, 0, 0, TILE_W, TILE_H)
         love.graphics.setShader()
@@ -896,7 +920,7 @@ function Terrain:_bakeCoroutine()
     love.graphics.draw(self._white, 0, 0, 0, SHORE_W, SHORE_H)
     love.graphics.setShader()
     love.graphics.setCanvas()
-    self._foamSh:send("shore", self.shoreCanvas)
+    put(self._foamSh, "shore", self.shoreCanvas)
     coroutine.yield(1.0)
   end)
 end
@@ -1210,8 +1234,8 @@ function Terrain:drawOverlay(camera)
   local prevB, prevA = love.graphics.getBlendMode()
   love.graphics.setBlendMode("alpha", "premultiplied")
   love.graphics.setShader(self._foamSh)
-  self._foamSh:send("uView", { vx, vy, vw, vh })
-  self._foamSh:send("uTime", self.time)
+  put(self._foamSh, "uView", { vx, vy, vw, vh })
+  put(self._foamSh, "uTime", self.time)
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(self._white, vx, vy, 0, vw, vh)
   love.graphics.setShader()

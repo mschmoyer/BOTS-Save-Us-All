@@ -34,13 +34,13 @@ Post.settings = {
 }
 
 Post.tuning = {
-  threshold   = 0.62,   -- bright-pass knee centre
-  knee        = 0.32,
+  threshold   = 0.80,   -- bright-pass knee centre
+  knee        = 0.22,
   brightGain  = 1.0,
-  bloomAmount = 0.85,   -- multiplied by the day/night bloom response
-  wide        = 0.75,   -- how much of the 1/4 level survives into the mix
+  bloomAmount = 0.55,   -- multiplied by the day/night bloom response
+  wide        = 0.60,   -- how much of the 1/4 level survives into the mix
   caAmount    = 0.0022,
-  vigStrength = 0.46,
+  vigStrength = 0.52,
   vigSoft     = 0.28,
   grainAmount = 0.024,
   shockPx     = 16,     -- peak displacement of a shockwave ring, in pixels

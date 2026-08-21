@@ -19,7 +19,6 @@
 -- batches all of them into one draw call: hundreds are free. Cone lights use
 -- cached fan meshes, quantised by half-angle. Nothing here allocates per frame.
 local U = require("src.core.util")
-local P = require("src.engine.palette")
 
 local L = {}
 
@@ -44,7 +43,13 @@ local shader
 
 local ambR, ambG, ambB, ambS = 1, 1, 1, 1
 local ambSend = { 0, 0, 0 }
-local lightGain = 0.35
+local zeroSend = { 0, 0, 0 }
+local lightGain = 0.12
+local lightScale = 0.3
+local scaleOverride = nil
+
+-- How hard the light sum is rolled off before it multiplies the scene.
+L.compress = 0.42
 
 local camX, camY, camZoom = 0, 0, 1
 
@@ -54,20 +59,29 @@ L.enabled   = true
 
 -- quality presets: canvas scale, cone rings, cone segments
 local Q = {
-  [0] = { scale = 0.34, rings = 4,  segs = 12 },
-  [1] = { scale = 0.50, rings = 6,  segs = 20 },
-  [2] = { scale = 1.00, rings = 10, segs = 32 },
+  [0] = { scale = 0.34, rings = 6,  segs = 16 },
+  [1] = { scale = 0.50, rings = 10, segs = 28 },
+  [2] = { scale = 1.00, rings = 14, segs = 40 },
 }
 
 --------------------------------------------------------------------- shaders
 local COMPOSITE_SRC = [[
-// Multiply pass: turns the accumulated light buffer into the factor the scene
-// is multiplied by. Ambient sets the floor (the colour of unlit ground), the
-// light buffer lifts it back toward and past white inside a light pool.
-extern vec3 ambient;
+// Turns the accumulated light buffer into the factor the scene is multiplied
+// by (ambient sets the colour of unlit ground; light lifts it back toward and
+// past white inside a pool), and, with `ambient` zeroed, into the additive
+// glow pass.
+//
+// The reciprocal compression is what keeps a pile of overlapping lights
+// *coloured* instead of a white hole: it rolls the sum off toward 1/compress
+// while leaving hue untouched.
+extern vec3  ambient;
+extern float lightScale;
+extern float compress;
+extern float outAlpha;
 vec4 effect(vec4 vc, Image tex, vec2 tc, vec2 sc) {
   vec3 l = Texel(tex, tc).rgb;
-  return vec4(ambient + l, 1.0);
+  l = l / (1.0 + l * compress);
+  return vec4(ambient + l * lightScale, outAlpha);
 }
 ]]
 
@@ -107,9 +121,11 @@ local function makeCone(half, rings, segs)
     return U.saturate((1 / (1 + k * d * d) - edge) * norm * U.smoothstep(1.0, 0.9, d))
   end
   local function push(r, a)
-    -- soft angular shoulder so the cone edge is a gradient, not a blade
+    -- soft angular shoulder so the cone edge is a gradient, not a blade, and a
+    -- round isotropic bulb at the source: a real lamp spills before it beams
     local t = math.abs(a) / half
-    local ang = 1 - U.smoothstep(0.55, 1.0, t)
+    local ang = 1 - U.smoothstep(0.18, 1.0, t) ^ 0.8
+    ang = U.lerp(1, ang, U.smoothstep(0.0, 0.30, r))
     local v = falloffAt(r) * ang
     n = n + 1
     verts[n] = { math.cos(a) * r, math.sin(a) * r, 0, 0, 1, 1, 1, v }
@@ -199,7 +215,14 @@ end
 function L.setAmbient(color, strength)
   ambR, ambG, ambB = color[1], color[2], color[3]
   ambS = strength or 1
+  -- A torch does nothing at noon. Lights only fill in what the ambient has not
+  -- already lit, which is what stops a day frame from blowing out.
+  local k = (1 - U.saturate(ambS)) ^ 0.9
+  lightScale = scaleOverride or U.clamp(k * 1.05 + 0.10, 0.10, 1.2)
 end
+
+--- Force the multiply-pass light weight (nil returns to the ambient-derived value).
+function L.setLightScale(s) scaleOverride = s L.setAmbient({ ambR, ambG, ambB }, ambS) end
 
 --- How hot light pools read *over* the scene (the additive pass). The day/night
 --- clock drives this: at noon light barely registers, at midnight it blooms.
@@ -286,12 +309,11 @@ function L.finish()
   g.setBlendMode("add", "alphamultiply")
   g.scale(scale)
 
-  local tex = falloff[2]
   local inv = 1 / TEXSIZE
-  -- points first, bucketed by falloff texture so LÖVE batches each bucket
+  -- points first, bucketed by falloff texture so LÖVE batches each bucket into
+  -- a single draw call
   for bucket = 1, 3 do
-    tex = falloff[bucket]
-    local drew = false
+    local tex = falloff[bucket]
     for i = 1, count do
       if lsoft[i] == bucket and not lcone[i] then
         local k = li[i] * flickerOf(i)
@@ -299,11 +321,9 @@ function L.finish()
           g.setColor(cr[i] * k, cg[i] * k, cb[i] * k, 1)
           local s = lr[i] * 2 * inv
           g.draw(tex, lx[i], ly[i], 0, s, s, TEXSIZE * 0.5, TEXSIZE * 0.5)
-          drew = true
         end
       end
     end
-    if drew then tex = falloff[bucket] end
   end
   -- cones
   for i = 1, count do
@@ -324,16 +344,21 @@ function L.finish()
   ambSend[1], ambSend[2], ambSend[3] = ambR * ambS, ambG * ambS, ambB * ambS
   g.setShader(shader)
   shader:send("ambient", ambSend)
+  shader:send("compress", L.compress)
+  shader:send("lightScale", lightScale)
+  shader:send("outAlpha", 1)
   g.setBlendMode("multiply", "premultiplied")
   g.setColor(1, 1, 1, 1)
   g.draw(canvas, 0, 0, 0, up, up)
 
-  g.setShader()
   if lightGain > 0.001 then
+    shader:send("ambient", zeroSend)
+    shader:send("lightScale", lightGain)
+    shader:send("outAlpha", 0)
     g.setBlendMode("add", "premultiplied")
-    g.setColor(lightGain, lightGain, lightGain, 1)
     g.draw(canvas, 0, 0, 0, up, up)
   end
+  g.setShader()
 
   g.pop()
   g.setShader(prevShader)
