@@ -65,7 +65,13 @@ local T = {
   -- the same picture, and 1.72 on a full-grown island is a close-up of a leaf.
   ringFrame = 405,       -- world half-height the ring should occupy on screen
   openTime  = 3.4,       -- seconds for the canopy over the circle to thin out
-  openFade  = 0.16,      -- what a tree standing inside the circle fades to
+  -- What a tree standing inside the circle fades to. This was 0.16 and the
+  -- last shot of the game was milky: three hundred canopies at sixteen percent
+  -- stacked into an opaque veil over the one image the whole run is for. They
+  -- get out of the way properly now, on a soft edge so the opening reads as a
+  -- clearing rather than as a hole cut in a texture.
+  openFade  = 0.02,
+  openSoft  = 0.42,      -- squared radius inside which the canopy is fully gone
   openW     = 1.45,      -- the opening, as a multiple of the ring radius
   openH     = 1.25,
   zoomIn    = 1.20,
@@ -73,6 +79,13 @@ local T = {
   zoomMin   = 0.88,
   zoomOut   = 0.70,
   scroll    = 46,        -- credits, pixels per second
+  -- Dawn's fog is 0.50, which is right for a sky and wrong for the one shot
+  -- the whole run is for: at full strength a pale peach veil sat over the ring
+  -- of survivors for the first forty seconds of the ending and everything in
+  -- the frame, bots included, read as translucent. The ending keeps dawn's
+  -- colour and takes half its density, and the sun comes up faster.
+  fogMul    = 0.42,
+  sunrise   = 34,        -- seconds from first light to the sun being up
   barFrac   = 0.105,
 }
 
@@ -98,6 +111,8 @@ local function hush(world)
   if world.speeches then
     for i = #world.speeches, 1, -1 do world.speeches[i] = nil end
   end
+  -- the standing order outlived the thing it was standing against
+  if world.clearRally then world:clearRally() end
 end
 
 --- Who is left. Anyone still on the ground gets helped up first.
@@ -224,6 +239,7 @@ function S:enter(world)
   -- the sun comes up across the whole ending, and is fully up by the credits
   self.dawnT = 0
   if DayNight.set then DayNight.set("dawn", 0) end
+  DayNight.fogStrength = (DayNight.fogStrength or 0) * T.fogMul
 
   self:layoutCredits()
 end
@@ -395,8 +411,10 @@ function S:tickCanopy(dt)
       t:updateXray(dt)
       local dx = (t.x - ox) / rx
       local dy = (t.y - (t.height or 0) * 0.35 - oy) / ry
-      if t.alive and dx * dx + dy * dy < 1 then
-        t.fade = U.damp(t.fade or 1, U.lerp(1, T.openFade, self.open), 2.2, dt)
+      local d2 = dx * dx + dy * dy
+      if t.alive and d2 < 1.2 then
+        local edge = 1 - U.smoothstep(T.openSoft, 1.0, d2)
+        t.fade = U.damp(t.fade or 1, U.lerp(1, T.openFade, self.open * edge), 2.2, dt)
       end
     end
   end
@@ -414,8 +432,9 @@ function S:update(dt, realDt)
   if Music.update then Music.update(realDt) end
   self:tickSpeech(realDt)
   self:tickCanopy(realDt)
-  self.dawnT = min(1, (self.dawnT or 0) + realDt / 64)
+  self.dawnT = min(1, (self.dawnT or 0) + realDt / T.sunrise)
   if DayNight.set then DayNight.set("dawn", self.dawnT) end
+  DayNight.fogStrength = (DayNight.fogStrength or 0) * T.fogMul
   if Audio.update and world and world.player then
     Audio.update(realDt, world.player.x, world.player.y)
   end
