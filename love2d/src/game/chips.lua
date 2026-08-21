@@ -368,17 +368,21 @@ local C = {
     mod = { elderWeight = 2.0, saplingWeight = 0 } },
 
   { id = "oneFront", f = F.COMBAT, r = 3, name = "ONE FRONT",
-    desc = "The Blight comes from one quarter of the island. Twice as much of it comes.",
-    -- Every other night you find out where the pressure is and react. This one
-    -- tells you at dawn and never changes its mind, so Sentries and Beacons
-    -- stop being reactive purchases and start being a wall you are building.
+    desc = "The rift never moves again. Twice as much comes out of it.",
+    -- Every other night the rift drifts, and from cycle five it opens a second
+    -- side and asks which one you are willing to lose. This answers that
+    -- question permanently, so Sentries and Beacons stop being reactive
+    -- purchases and start being a wall you are building over six nights -- and
+    -- it doubles what walks into it. What the Blight already holds is not
+    -- covered: a Scar left standing still lets the night start in your wood.
     mod = { budget = 2.0 },
     onAdd = function(chips, w)
       w.frontSide = (w.director and w.director.side) or w.rng:int(0, 3)
     end,
     every = 0.2,
     tick = function(chips, w, dt)
-      if w.director and w.frontSide then w.director.side = w.frontSide end
+      local d = w.director
+      if d and w.frontSide then d.side = w.frontSide d.sideB = nil end
     end },
 
   { id = "deepWinter", f = F.COMBAT, r = 3, name = "DEEP WINTER",

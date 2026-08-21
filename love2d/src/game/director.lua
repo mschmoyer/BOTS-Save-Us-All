@@ -1,5 +1,24 @@
--- Wave author. Spends a per-night budget on enemy cards along a pacing curve
--- so nights have shape: a probe, a lull, a real push, and a final surge.
+-- Wave author. Spends a per-night budget on enemy cards along a pacing curve so
+-- nights have shape: a probe, a lull, a real push, and a final surge.
+--
+-- It used to author exactly one night and play it seven times. The composition
+-- was a hard-coded weight per type with no cycle term in it, the pacing curve
+-- was the same ten numbers every night, and every wave walked in from the same
+-- edge -- so night six was night three with a bigger number in front of it, and
+-- the middle of the run was a treadmill. Four things changed, and none of them
+-- is "more budget":
+--
+--   * The mix is a function of the cycle. The Chomper's share falls from all of
+--     night one to about a tenth of night seven while the armoured, the ranged
+--     and the support rise, so the same budget buys a different problem.
+--   * The pacing curve is blended from an early shape and a late one. Early
+--     nights breathe. Late nights barely do.
+--   * Waves stop coming from one place. From cycle five the rift has two fronts;
+--     from cycle four the Blight reinforces wherever it is currently eating; and
+--     any Scar left standing through the day is a way in, so a night can begin
+--     inside the wood instead of at the shore.
+--   * Wardens and Maws arrive escorted, because a card whose whole point is to
+--     change your target priority is not a card if it walks in alone.
 local Class = require("src.core.class")
 local U     = require("src.core.util")
 local Signal = require("src.core.signal")
@@ -7,8 +26,55 @@ local TU    = require("src.game.tuning")
 
 local Director = Class("Director")
 
--- pressure curve sampled across the night: peaks at ~40% and ~85%
-local CURVE = { 0.25, 0.5, 0.85, 1.0, 0.55, 0.4, 0.7, 0.95, 1.0, 0.6 }
+--------------------------------------------------------- pending tuning values
+-- PROMOTE AND DELETE. Same arrangement as the block at the top of
+-- `entities/enemy.lua`: `tuning.lua` is owned by another workstream while this
+-- pass lands, so the cycle-shaped constants the Director needs are declared here
+-- and merged into `T.cycle` only where the real table has nothing to say yet.
+-- Every one is written up verbatim for promotion; once they land this block does
+-- nothing and should go.
+local PENDING = {
+  -- Weight at the cycle a type unlocks, and how that weight drifts per cycle
+  -- afterwards. Under 1 fades, over 1 grows. A type absent from this table can
+  -- never be drafted -- which is how the Scar exists as an enemy without ever
+  -- being something the Director can buy.
+  mix = {
+    chomper = { 4.0, 0.84 },
+    skitter = { 2.6, 0.86 },
+    spitter = { 1.2, 1.20 },
+    siphon  = { 1.6, 1.16 },
+    bulwark = { 1.0, 1.34 },
+    warden  = { 1.4, 1.25 },
+    maw     = { 0.5, 1.20 },
+  },
+  -- Two pacing shapes, blended across the run. The early night has a real lull
+  -- in the middle of it; the late one has a floor under it and never drops back
+  -- through that floor once it is up.
+  curveEarly = { 0.25, 0.50, 0.85, 1.00, 0.55, 0.40, 0.70, 0.95, 1.00, 0.60 },
+  curveLate  = { 0.55, 0.80, 0.72, 0.95, 0.82, 1.00, 0.90, 1.00, 1.00, 0.95 },
+
+  clutchBudget = 18,      -- cost-worth of a clutch; cheap types arrive in packs
+  frontsFrom   = 5,       -- the cycle the rift opens a second side
+  focusFrom    = 4,       -- ...and the cycle it starts reinforcing success
+  focusChance  = 0.34,
+  focusDecay   = 12,      -- seconds a place stays hot after teeth went into it
+  anchorWindow = 0.45,    -- fraction of the night a surviving Scar pulls waves in
+  anchorChance = 0.80,
+  escortFrom   = 6,       -- Wardens and Maws arrive with a bodyguard from here
+  escortSpend  = 0.22,    -- ...paid for out of this share of what is left
+  scarQuota    = { 0, 1, 1, 2, 2, 3, 3 },  -- Scars the Blight may leave per dawn
+  mawAlive     = 1,       -- live Maws at once, dormant ones included
+  -- The world advances its phase clock before it ticks the Director, so a night
+  -- whose two clocks are exactly equal ends without the Director ever seeing its
+  -- own last frame. `endNight` never ran, `director:dawn` never fired (the HUD
+  -- has a NIGHT SURVIVED toast that has never once been shown) and `active`
+  -- stayed true all through the following day. The Director's night ends a hair
+  -- before the phase's, which is invisible and gives it its ending back.
+  directorLead = 0.35,
+}
+for k, v in pairs(PENDING) do
+  if TU.cycle[k] == nil then TU.cycle[k] = v end
+end
 
 function Director:init(world)
   self.world = world
@@ -21,10 +87,32 @@ function Director:init(world)
   self.nextT = 0
   self.cycle = 1
   self.side = 0
-  self.mawSpawned = false
+  self.sideB = nil
+  self.scarsLeft = 0
+  self.hotT = 0
+
+  -- `enemy:targeted` was emitted by the Chomper and listened to by nothing at
+  -- all. It fires where the Blight actually has its teeth in something now, and
+  -- this is what it is for: from cycle four a share of every wave lands on the
+  -- last place the Blight was winning instead of at the shore. A grove that is
+  -- being eaten gets reinforced, which turns a late night from an even spread of
+  -- attrition into a siege you have to break -- a different problem, for the
+  -- same money.
+  Signal.on("enemy:targeted", function(e, target) self:onTargeted(e, target) end, self)
 end
 
+--- Ignore anything that did not happen in the world this Director belongs to: a
+--- Director from an abandoned run is still on the bus and has no way off it.
+function Director:onTargeted(e, target)
+  if not self.active or self.world ~= Signal._world then return end
+  if not target or e and e.type == "scar" then return end
+  self.hotX, self.hotY = target.x, target.y
+  self.hotT = TU.cycle.focusDecay
+end
+
+--------------------------------------------------------------------- the night
 function Director:beginNight(cycle, duration, extraBudget)
+  if self.active then self:endNight() end
   self.cycle = cycle
   -- The night's pressure scales with the forest, so a big wood is a big target.
   -- A fixed budget against an exponential forest is a threat that shrinks.
@@ -37,42 +125,131 @@ function Director:beginNight(cycle, duration, extraBudget)
                              + trees * TU.cycle.maxAlivePerTree)
   self.spent = 0
   self.t = 0
-  self.dur = duration
+  self.dur = math.max(0.1, duration - TU.cycle.directorLead)
   self.active = true
   self.nextT = 0.6
   self.side = self.rng:int(0, 3)
-  self.mawSpawned = false
-  Signal.emit("director:night", cycle, self.budget, self.side)
+  -- From cycle five the rift opens on a second side, roughly opposite. One line
+  -- can be held with Sentries and a Beacon; two cannot, and choosing which one
+  -- to leave is the decision the second front exists to create.
+  if cycle >= TU.cycle.frontsFrom then
+    self.sideB = (self.side + 2 + (self.rng:chance(0.35) and self.rng:sign() or 0)) % 4
+  else
+    self.sideB = nil
+  end
+  self.hotT = 0
+  -- What the player left standing this morning is where tonight starts.
+  self.anchors = self:liveAnchors()
+  Signal.emit("director:night", cycle, self.budget, self.side, #self.anchors)
 end
 
 function Director:endNight()
+  if not self.active then return end
   self.active = false
+  self.anchors = nil
+  -- The Blight may leave this many behind at the coming dawn; `Enemy:flee` asks.
+  local q = TU.cycle.scarQuota
+  self.scarsLeft = q[math.min(self.cycle, #q)] or 0
   Signal.emit("director:dawn", self.cycle)
+end
+
+--- Anything already dug into the island that the night can use as a way in: the
+--- Scars the player did not clear today, and any Maw still standing.
+function Director:liveAnchors()
+  local out = {}
+  local w = self.world
+  local list = w and w.enemies
+  if not list then return out end
+  for i = 1, #list do
+    local e = list[i]
+    if e.alive and not e.fleeing and (e.type == "scar" or e.type == "maw") then
+      out[#out + 1] = e
+    end
+  end
+  return out
+end
+
+--- Asked by `Enemy:flee` at dawn. The quota is authored per cycle rather than
+--- emergent, so a bad night leaves a morning's work and not a wasteland.
+function Director:claimScar()
+  if not (self.world and self.world.enemies) then return false end
+  if (self.scarsLeft or 0) <= 0 then return false end
+  local cap = (TU.enemy.scar and TU.enemy.scar.maxAlive) or 6
+  if self:countLive("scar") >= cap then return false end
+  self.scarsLeft = self.scarsLeft - 1
+  return true
+end
+
+------------------------------------------------------------------ composition
+--- What a type is worth to the Director tonight. Base weight at the cycle it
+--- unlocks, drifting every cycle after that -- which is the whole of the fix for
+--- "night six is night three with a bigger number in front of it".
+function Director:weightOf(name, def)
+  local m = TU.cycle.mix[name]
+  if not m then return 0 end
+  local n = self.cycle - (def.from or 1)
+  if n < 0 then return 0 end
+  return m[1] * m[2] ^ n
 end
 
 --- Which enemy types are unlocked and affordable right now.
 function Director:pickCard(left)
-  local opts = {}
+  local opts, total = {}, 0
   for name, def in pairs(TU.enemy) do
     if type(def) == "table" and def.from and def.from <= self.cycle and def.cost <= left then
-      if name ~= "maw" or (not self.mawSpawned and self.t / self.dur > 0.3) then
-        -- siphons attack the win condition directly; they deserve to show up
-        local weight = 1
-        if name == "chomper" then weight = 4 end
-        if name == "skitter" then weight = 2.5 end
-        if name == "maw" then weight = 0.5 end
-        if name == "siphon" then weight = 2 end
-        for _ = 1, math.max(1, math.floor(weight * 2)) do opts[#opts + 1] = name end
+      local ok = true
+      -- One Maw at a time, and never in the opening of a night: it is a
+      -- mid-night complication, not an opening move. Dormant ones from previous
+      -- days count, which is what stops an ignored Maw from becoming two.
+      if name == "maw" then
+        ok = self.t / self.dur > 0.3 and self:countLive("maw") < TU.cycle.mawAlive
+      end
+      if ok then
+        local wt = self:weightOf(name, def)
+        if wt > 0 then
+          total = total + wt
+          opts[#opts + 1] = { name = name, w = wt }
+        end
       end
     end
   end
-  if #opts == 0 then return nil end
-  return self.rng:pick(opts)
+  if total <= 0 then return nil end
+  -- Weighted draw off the running total: the old version stamped each name into
+  -- a list `floor(weight * 2)` times, which quantised every weight to a half and
+  -- made a smooth per-cycle drift impossible to express.
+  local r = self.rng:range(0, total)
+  for i = 1, #opts do
+    r = r - opts[i].w
+    if r <= 0 then return opts[i].name end
+  end
+  return opts[#opts].name
+end
+
+function Director:countLive(kind)
+  local n = 0
+  local list = self.world and self.world.enemies
+  if not list then return 0 end
+  for i = 1, #list do
+    local e = list[i]
+    if e.alive and not e.fleeing and e.type == kind then n = n + 1 end
+  end
+  return n
+end
+
+--- The night's shape at `p`, blended from the early and the late curve. An early
+--- night has a lull you can plant in; a late one has a floor under it that it
+--- never comes back through.
+function Director:curveAt(p)
+  local A, B = TU.cycle.curveEarly, TU.cycle.curveLate
+  local idx = math.min(#A, math.floor(U.saturate(p) * #A) + 1)
+  local k = U.saturate((self.cycle - 1) / math.max(1, TU.cycle.count - 1))
+  return U.lerp(A[idx], B[idx], k)
 end
 
 function Director:update(dt)
   if not self.active then return end
   self.t = self.t + dt
+  if self.hotT > 0 then self.hotT = self.hotT - dt end
   local p = U.saturate(self.t / self.dur)
 
   if p >= 1 then self:endNight() return end
@@ -83,8 +260,7 @@ function Director:update(dt)
   self.nextT = self.nextT - dt
   if self.nextT > 0 then return end
 
-  local idx = math.min(#CURVE, math.floor(p * #CURVE) + 1)
-  local pressure = CURVE[idx]
+  local pressure = self:curveAt(p)
   local left = self.budget - self.spent
   if left <= 0 then return end
 
@@ -92,31 +268,96 @@ function Director:update(dt)
   if not card then return end
   local def = TU.enemy[card]
 
-  -- spawn a small clutch rather than a trickle; groups read better and are
-  -- more interesting to fight than a conveyor belt.
-  local count = card == "maw" and 1 or math.max(1, math.floor(pressure * 3 + self.rng:range(0, 1.5)))
+  -- Spawn a small clutch rather than a trickle; groups read better and are more
+  -- interesting to fight than a conveyor belt. The size of the clutch is a
+  -- budget, not a count, so a wave of Chompers is a pack and a wave of Bulwarks
+  -- is one Bulwark -- which is what makes a late night feel heavier at the same
+  -- spend rather than merely more numerous.
+  local clutch = U.clamp(TU.cycle.clutchBudget / math.max(1, def.cost), 1, 5)
+  local count = card == "maw" and 1
+                or math.max(1, math.floor(pressure * clutch + self.rng:range(0, 1.2)))
   count = math.min(count, math.floor(left / def.cost))
   if count < 1 then return end
 
-  local ex, ey = self:edgePoint()
+  local ex, ey = self:spawnPoint(p)
   for i = 1, count do
     local a = self.rng:angle()
     local d = self.rng:range(0, 70)
     w:spawnEnemyAt(ex + math.cos(a) * d, ey + math.sin(a) * d, card)
     self.spent = self.spent + def.cost
   end
-  if card == "maw" then self.mawSpawned = true end
+
+  -- A Warden with nothing to protect is nine hit points floating slowly
+  -- backwards, and a Maw the player can walk straight up to is a free six
+  -- shoves. Both arrive with somebody in front of them from cycle six.
+  if (card == "warden" or card == "maw") and self.cycle >= TU.cycle.escortFrom then
+    self:spawnEscort(ex, ey, (self.budget - self.spent) * TU.cycle.escortSpend)
+  end
 
   self.nextT = U.lerp(4.2, 1.1, pressure) * self.rng:range(0.8, 1.25)
   Signal.emit("director:wave", card, count, ex, ey)
 end
 
---- A point just outside the play area on the current rift side, so the player
---- can learn where pressure comes from and position for it.
+--- The cheapest thing that is unlocked, as many as the purse allows. An escort
+--- is a screen, not a wave: it is bought out of the night's existing budget, so
+--- an escorted card costs the Blight bodies elsewhere rather than being free.
+function Director:spawnEscort(x, y, purse)
+  local best, bestCost
+  for name, def in pairs(TU.enemy) do
+    if type(def) == "table" and def.from and def.from <= self.cycle
+       and self:weightOf(name, def) > 0 and name ~= "maw" and name ~= "warden" then
+      if not bestCost or def.cost < bestCost then best, bestCost = name, def.cost end
+    end
+  end
+  if not best then return end
+  local n = math.min(4, math.floor(purse / bestCost))
+  for _ = 1, n do
+    local a = self.rng:angle()
+    local d = self.rng:range(40, 110)
+    self.world:spawnEnemyAt(x + math.cos(a) * d, y + math.sin(a) * d, best)
+    self.spent = self.spent + bestCost
+  end
+end
+
+--- Where the next wave arrives. Three sources, in order of how much they change
+--- the night: ground the Blight already holds, ground it is currently winning,
+--- and the rift's own edge.
+function Director:spawnPoint(p)
+  -- 1. A Scar or a dormant Maw the player left standing. This is the real cost
+  --    of ignoring the day: the night does not start at the shore, it starts in
+  --    the middle of your wood with you at the other end of the island.
+  local an = self.anchors
+  if an and #an > 0 and p < TU.cycle.anchorWindow and self.rng:chance(TU.cycle.anchorChance) then
+    for i = #an, 1, -1 do
+      if not an[i].alive or an[i].fleeing then table.remove(an, i) end
+    end
+    if #an > 0 then
+      local a = self.rng:pick(an)
+      return a.x, a.y
+    end
+  end
+  -- 2. Reinforce success: from cycle four, where teeth are already in something.
+  if self.cycle >= TU.cycle.focusFrom and self.hotT > 0 and self.hotX
+     and self.rng:chance(TU.cycle.focusChance) then
+    local a, d = self.rng:angle(), self.rng:range(180, 340)
+    local x, y = self.hotX + math.cos(a) * d, self.hotY + math.sin(a) * d
+    local w = self.world
+    if w and w.terrain and w.terrain.nearestLand then
+      local lx, ly = w.terrain:nearestLand(x, y)
+      if lx then return lx, ly end
+    end
+    return x, y
+  end
+  return self:edgePoint()
+end
+
+--- A point just outside the play area on one of the current rift sides, so the
+--- player can learn where pressure comes from and position for it.
 function Director:edgePoint()
   local W = TU.world
   local pad = TU.enemy.spawnEdgePad
   local s = self.side
+  if self.sideB and self.rng:chance(0.45) then s = self.sideB end
   -- drift the side over the night so it isn't a single lane
   if self.rng:chance(0.18) then self.side = (self.side + (self.rng:chance(0.5) and 1 or 3)) % 4 end
   local x, y
@@ -135,6 +376,14 @@ end
 --- Where the next wave is coming from, for the dusk telegraph.
 function Director:sideVector()
   local s = self.side
+  if s == 0 then return 0, -1 elseif s == 1 then return 1, 0
+  elseif s == 2 then return 0, 1 else return -1, 0 end
+end
+
+--- ...and the second front, when there is one, for the same telegraph.
+function Director:sideVectorB()
+  local s = self.sideB
+  if not s then return nil end
   if s == 0 then return 0, -1 elseif s == 1 then return 1, 0
   elseif s == 2 then return 0, 1 else return -1, 0 end
 end

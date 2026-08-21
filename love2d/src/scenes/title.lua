@@ -87,9 +87,25 @@ local function buildTrees(rng, ridge, count, scale, w)
   return out
 end
 
+--- How green the cover is: the best sky this player has ever put back, 0..1.
+--- The title screen is the island they saved, and on a fresh install it is the
+--- island as they will find it. This is the whole of the game's meta-progression
+--- and it is deliberately not a score: nothing is unlocked, nothing is counted,
+--- the ridge is simply fuller than it was.
+local function greenness()
+  -- BOTS_GREEN=0..1 forces the cover's state, so both ends of it can be
+  -- captured without playing two runs to get there.
+  local forced = _G.BOTS_CFG and _G.BOTS_CFG("BOTS_GREEN")
+  if forced then return U.saturate(tonumber(forced) or 0) end
+  local _, _, o2, runs = Settings.best()
+  if runs <= 0 then return 0 end
+  return U.saturate((o2 or 0) / 100)
+end
+
 local function build(w, h)
-  if BG.built and BG.w == w and BG.h == h then return end
-  BG.built, BG.w, BG.h = true, w, h
+  local g = greenness()
+  if BG.built and BG.w == w and BG.h == h and BG.green == g then return end
+  BG.built, BG.w, BG.h, BG.green = true, w, h, g
   local rng = U.rng(20190101)
 
   BG.horizon = floor(h * 0.575)
@@ -144,9 +160,13 @@ local function build(w, h)
     BG.ridges[i] = r
   end
 
+  -- A bare ridge with a handful of survivors on it, filling in as the player's
+  -- best run climbs. Never empty -- an empty cover reads as an unfinished
+  -- screen rather than as a dead island -- and never more than the ridge holds.
+  local dens = 0.30 + 0.70 * g
   BG.trees = {
-    buildTrees(rng, BG.ridges[2], 30, 0.60, w),
-    buildTrees(rng, BG.ridges[3], 22, 1.00, w),
+    buildTrees(rng, BG.ridges[2], math.floor(30 * dens + 0.5), 0.60, w),
+    buildTrees(rng, BG.ridges[3], math.floor(22 * dens + 0.5), 1.00, w),
   }
 
   -- foreground grass, on the very bottom edge

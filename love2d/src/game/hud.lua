@@ -388,7 +388,9 @@ local function layout(sw, sh, tm)
     zone(3, L.mapX - 24, 0, sw - L.mapX + 24, L.mapY + L.mapH + 90)  -- clock, map, rail
     zone(4, 0, L.feedY - 6, il + TT.colW, L.feedLimit - L.feedY + 12) -- the feed
     zone(5, L.holdX - 20, L.bossY - 40, L.holdW + 40, sh - L.bossY + 40) -- offers
-    zone(6, 0, sh - 150, sw, 150)                            -- the thumbs' band
+    -- The thumbs' ground: the action cluster's quadrant and the floor. Chatter
+    -- placed here is chatter under a hand -- or, worse, under a button.
+    zone(6, sw * 0.56, sh * 0.48, sw * 0.44, sh * 0.52)
   else
     zone(1, 0, 0, il + 232, it + L.resH + 12)                -- resources
     zone(2, L.o2x - 44, 0, w + 88, L.o2y + 106)              -- oxygen

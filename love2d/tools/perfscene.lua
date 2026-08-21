@@ -16,7 +16,8 @@ function S:enter(...)
                  nullGpu = cfg("BOTS_PERF_NULLGPU") ~= nil,
                  keepSend = cfg("BOTS_PERF_KEEPSEND") ~= nil,
                  ablate = cfg("BOTS_PERF_ABLATE"),
-                 noJit = cfg("BOTS_PERF_NOJIT") ~= nil })
+                 noJit = cfg("BOTS_PERF_NOJIT") ~= nil,
+                 fill = cfg("BOTS_PERF_FILL") ~= nil })
   local r = Game.enter(self, ...)
   self.tag = cfg("BOTS_PERF_TAG") or "run"
   self.stopAt = tonumber(cfg("BOTS_PERF_FRAMES") or "") or 240

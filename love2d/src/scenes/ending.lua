@@ -23,6 +23,7 @@
 -- Every stage can be skipped with `back`; skipping always lands you further
 -- down this same list, never on a black screen.
 local U        = require("src.core.util")
+local Settings = require("src.game.settings")
 local P        = require("src.engine.palette")
 local Signal   = require("src.core.signal")
 local Input    = require("src.engine.input")
@@ -227,6 +228,14 @@ function S:enter(world)
       theirs  = world.boss and math.floor(100 * U.saturate(
                   1 - (world.boss.playerDamage or 0) / math.max(1, world.boss.maxHp))) or 0,
     }
+    -- The run's record. Nothing called this before, so the title screen has
+    -- been reading NO RUN RECORDED since the feature was written -- and the
+    -- cover's treeline, which fills in as the best sky climbs, had nothing to
+    -- fill in from.
+    if Settings and Settings.recordRun then
+      Settings.recordRun(math.min(world.cycle or 1, TU.cycle.count),
+                         world.treeCount or 0, world.o2Peak or world.o2 or 0)
+    end
     Story.prepare("ending", world)
   else
     self.bots, self.fallen = {}, {}

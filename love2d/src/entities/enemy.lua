@@ -508,6 +508,10 @@ function Enemy:update_warden(dt)
   local w = self.world
   local D = self.def
   self.hoverT = self.hoverT + dt * 1.3
+  -- the flare that fires when its field eats a hit, decayed here rather than in
+  -- `draw`: the headless harness renders only the frames it photographs, and a
+  -- visual that decays in draw would still be lit twenty seconds later
+  self.shielded = math.max(0, (self.shielded or 0) - dt * 2.6)
 
   -- push the field onto the pack, rather than every enemy pulling on it
   self.wardT = (self.wardT or 0) - dt
@@ -963,7 +967,6 @@ function Enemy:body_warden(r, a)
   love.graphics.setLineWidth(1)
   Draw.setColor(P.ramp.blight[4], a * (0.75 + 0.25 * math.sin(self.age * 2.3)))
   love.graphics.circle("fill", 0, 0, r * 0.34 * br)
-  self.shielded = math.max(0, (self.shielded or 0) - 0.02)
 end
 
 function Enemy:body_scar(r, a)

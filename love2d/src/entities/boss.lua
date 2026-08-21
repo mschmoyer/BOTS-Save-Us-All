@@ -297,7 +297,6 @@ local A = {
   footprint  = 2.30,
 }
 
-local function ri(t)   return P.shade(P.ramp.rift, t) end
 
 -- Constants, mixed once at load. A hundred of these a frame is fine; a hundred
 -- a frame that were *allocated* every frame is how a climax drops to 40fps.
@@ -328,6 +327,14 @@ local C = {
   ashHi   = P.shade(P.ramp.ash, 3),
   molten  = P.shade(P.ramp.ember, 3),
   moltenHi= P.shade(P.ramp.ember, 4),
+  -- The rig's own power is *cold*. It was violet, which put the antagonist in
+  -- the Blight's colour and undid the whole point of making it a third
+  -- material: the machine came for the air, so what runs inside it is the
+  -- colour of air, and the only warm light on it is failure.
+  coreCold = P.mix(P.o2, P.ramp.cobalt[3], 0.45),
+  coreDeep = P.ramp.cobalt[1],
+  coreMidC = P.ramp.cobalt[2],
+  coreHiC  = P.ramp.cobalt[4],
 }
 
 ------------------------------------------------------------------ draw helpers
@@ -857,9 +864,9 @@ function Boss:drawSkirt(lift)
       -- heat leaking out of the frame the plate used to cover
       local glow = self.coreOpen > 0 and 0.60 or 0.26
       Draw.additive(function()
+        local leak = self.coreOpen > 0 and C.molten or C.coreCold
         plate(0, cy, a0, a1, r * rIn, r * (A.skirtOut - 0.10), A.skirtSq,
-              self.coreOpen > 0 and C.molten or ri(3),
-              P.alpha(self.coreOpen > 0 and C.molten or ri(3), 0),
+              leak, P.alpha(leak, 0),
               glow * (0.6 + 0.4 * sin(self.age * 3 + k)), 4)
       end)
       -- a torn edge sparks now and then, deterministically
@@ -1015,9 +1022,9 @@ function Boss:drawDeck(lift)
   LG.ellipse("fill", 0, deckY, rOut * 1.06, rOut * 1.06 * isq)
   -- the pool: dark red at the rim, white-hot at the middle, and it only gets
   -- properly hot once the machine is actually open
-  local coreEdge = P.mix(P.shade(P.ramp.ember, 1.6), ri(2), 1 - open)
-  local coreMid  = P.mix(P.shade(P.ramp.ember, 2.3), ri(3), (1 - open) * 0.8)
-  local coreHot  = P.mix(P.shade(P.ramp.ember, 3.4), ri(4), (1 - open) * 0.7)
+  local coreEdge = P.mix(P.shade(P.ramp.ember, 1.6), C.coreDeep, 1 - open)
+  local coreMid  = P.mix(P.shade(P.ramp.ember, 2.3), C.coreMidC, (1 - open) * 0.9)
+  local coreHot  = P.mix(P.shade(P.ramp.ember, 3.4), C.coreHiC, (1 - open) * 0.8)
   ngonLit(0, deckY, rOut, rOut * isq, 20, 0, coreEdge, coreEdge, 1)
   plate(0, deckY, 0, TAU, 0, rOut, isq, coreMid, coreEdge, 1, 22)
   plate(0, deckY, 0, TAU, 0, rOut * 0.30, isq, coreHot, P.alpha(coreHot, 0), 0.45 * pulse, 20)
@@ -1389,7 +1396,7 @@ function Boss:drawColumn()
     for i = 1, AR.columnRings do
       local t = (self.age * AR.columnRise + i / AR.columnRings) % 1
       local w = W(t)
-      local a = U.saturate((t - 0.03) * 9) * (1 - t) * (1 - t) * 0.42 * k
+      local a = U.saturate((t - 0.03) * 9) * (1 - t) * (1 - t) * 0.60 * k
       Draw.setColor(P.mix(C.airHot, C.sky, t), a)
       LG.setLineWidth(2 + (1 - t) * 5)
       LG.ellipse("line", x, y - h * t, w, w * 0.20, 30)
@@ -1408,7 +1415,7 @@ function Boss:drawColumn()
     end
 
     -- the bloom where it leaves the machine
-    Draw.glow(x, y - r * 0.55, r * 1.15 * puls, C.airHot, 0.50 * k)
+    Draw.glow(x, y - r * 1.00, r * 1.00 * puls, C.airHot, 0.42 * k)
     Draw.glow(x, y - h * 0.05, r * 2.6 * puls, C.taken, 0.34 * k)
   end)
   LG.setLineWidth(1)

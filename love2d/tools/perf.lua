@@ -117,6 +117,7 @@ function Perf.install(opts)
   end
   countDraws = not (opts and opts.noDrawCounts)
   if opts and opts.nullGpu then nullGpu(opts.keepSend) countDraws = false end
+  if opts and opts.fill and Tree and Tree.countFill then Tree.countFill(true) end
 
   local function need(mod, name, key)
     local ok, m = pcall(require, mod)
@@ -189,7 +190,12 @@ local frameT0 = 0
 local warm = 0
 Perf.warmup = 60
 
+local Tree = nil
+do local ok, m = pcall(require, "src.entities.tree") if ok then Tree = m end end
+local fillS, fillC, fillB = 0, 0, 0
+
 function Perf.beginFrame()
+  if Tree and Tree.resetFill then Tree.resetFill() end
   for i = 1, #ORDER do
     local k = ORDER[i]
     acc[k], calls[k], dcalls[k] = 0, 0, 0
@@ -209,6 +215,11 @@ function Perf.endFrame()
   warm = warm + 1
   if warm <= Perf.warmup then return end
   frames = frames + 1
+  if Tree and Tree.fill and Tree.fill.on then
+    fillS = fillS + Tree.fill.shadow
+    fillC = fillC + Tree.fill.canopy
+    fillB = fillB + Tree.fill.backlight
+  end
   for i = 1, #ORDER do
     local k = ORDER[i]
     sum[k] = sum[k] + acc[k]
@@ -253,6 +264,13 @@ function Perf.report(tag, extra)
       total > 0 and ((sum.worldDraw - wSum) / total * 100) or 0, 0, 0)
   row("OTHER", (total - topSum) / frames * 1000,
       total > 0 and ((total - topSum) / total * 100) or 0, 0, 0)
+  if Tree and Tree.fill and Tree.fill.on then
+    local sw, sh = love.graphics.getDimensions()
+    local scr = sw * sh
+    print(string.format("PERFFILL,%s,screens_per_frame,shadow=%.2f,canopy=%.2f,backlight_removed=%.2f,total_now=%.2f,total_before=%.2f",
+      tag, fillS / frames / scr, fillC / frames / scr, fillB / frames / scr,
+      (fillS + fillC) / frames / scr, (fillS + fillC + fillB) / frames / scr))
+  end
   print(string.format("PERFSUM,%s,frames=%d,ms=%.3f,fps=%.1f,drawcalls=%.0f%s", tag, frames,
     total / frames * 1000, frames / total, sumDc.frame / frames,
     extra and ("," .. extra) or ""))

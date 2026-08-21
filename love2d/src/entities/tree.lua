@@ -743,9 +743,20 @@ local function buildMesh(sk, g, kind)
 
   if #V < 3 or n < 3 then return nil, maxY, maxR end
 
+  -- Total triangle area, in the mesh's own unit-tall-adult space. A tree draw
+  -- covers `area * (size * zoom)^2` fragments, so this is what lets the frame
+  -- profiler report GPU *fill* as a number instead of as a wall-clock reading
+  -- from a software rasteriser on a shared machine. Costs nothing at run time:
+  -- it is summed once per library cell, at bake.
+  local area = 0
+  for i = 1, n - 2, 3 do
+    local a, b, c = V[I[i]], V[I[i + 1]], V[I[i + 2]]
+    area = area + abs((b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2])) * 0.5
+  end
+
   local mesh = love.graphics.newMesh(FORMAT, V, "triangles", "static")
   mesh:setVertexMap(I)
-  return mesh, maxY, maxR
+  return mesh, maxY, maxR, area
 end
 
 -------------------------------------------------------------- mesh library
@@ -765,11 +776,12 @@ local function ensure(spi, variant, bucket)
   initShaders()
   local sk = getSkeleton(spi, variant)
   local g = bucketGrowth(bucket)
-  local m1, ey, er = buildMesh(sk, g, "full")
-  local m2       = buildMesh(sk, g, "lod")
-  local m3       = buildMesh(sk, g, "shadow")
+  local m1, ey, er, a1 = buildMesh(sk, g, "full")
+  local m2, _, _, a2    = buildMesh(sk, g, "lod")
+  local m3, _, _, a3    = buildMesh(sk, g, "shadow")
   LIB.full[key], LIB.lod[key], LIB.shadow[key] = m1, m2, m3
-  meta = { extentY = ey, extentR = er }
+  meta = { extentY = ey, extentR = er,
+           areaFull = a1 or 0, areaLod = a2 or 0, areaShadow = a3 or 0 }
   LIB.meta[key] = meta
   libCount = libCount + 1
   return key, meta
@@ -885,6 +897,23 @@ end
 
 Tree.zoom = 1
 Tree.ambient = true
+
+-- Fragment accounting. Off unless something asks for it (tools/perf.lua does);
+-- when it is on, each draw adds the mesh's baked triangle area scaled by the
+-- square of the tree's on-screen size, which is exactly the number of fragments
+-- the rasteriser is asked for. Two counters, one per pass.
+--- `backlight` is the fill the removed additive pass *would* have asked for at
+--- this exact frame, so the saving can be quoted as a number rather than as a
+--- wall-clock reading taken while three other workstreams had the cores.
+Tree.fill = { shadow = 0, canopy = 0, backlight = 0, on = false }
+local fillOn = false
+function Tree.countFill(on)
+  fillOn = on and true or false
+  Tree.fill.on = fillOn
+end
+function Tree.resetFill()
+  Tree.fill.shadow, Tree.fill.canopy, Tree.fill.backlight = 0, 0, 0
+end
 
 --- Call after a batch of tree draws to restore the default pipeline.
 function Tree.endPass()
@@ -1403,6 +1432,10 @@ function Tree:drawShadow(sunAngle, sunLength, ambient)
       bind(shShadow)
     end
     sendTreeUniform(shShadow, self)
+    if fillOn then
+      local k = self.size * (Tree.zoom or 1)
+      Tree.fill.shadow = Tree.fill.shadow + (self.meta.areaShadow or 0) * k * k
+    end
     love.graphics.setColor(1, 1, 1, self.fade)
     love.graphics.draw(mesh, self.x, self.y, self.drot, self.dsx, self.dsy)
   else
@@ -1519,6 +1552,14 @@ function Tree:draw(sunDirX, sunDirY)
   end
 
   local a = self.fade * (1 - (self.xray or 0) * TUNE.xrayAlpha)
+  if fillOn then
+    local k = self.size * (Tree.zoom or 1)
+    local m = self.meta
+    local kk = k * k
+    Tree.fill.canopy = Tree.fill.canopy
+      + ((px < TUNE.lodPixels) and (m.areaLod or 0) or (m.areaFull or 0)) * kk
+    if big then Tree.fill.backlight = Tree.fill.backlight + (m.areaFull or 0) * kk end
+  end
   love.graphics.setColor(self.tintR, self.tintG, self.tintB, a)
   love.graphics.draw(mesh, self.x, self.y, self.drot, self.dsx, self.dsy)
 

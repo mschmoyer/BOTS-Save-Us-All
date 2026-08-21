@@ -972,6 +972,10 @@ function World:applyOxygen(dt)
   local rate = ideal > self.o2 and TU.o2.rise or TU.o2.fall
   self.o2 = U.damp(self.o2, ideal, rate, dt)
   self.o2Ideal = ideal
+  -- The highest the sky ever got. What the rig takes back at the end is not a
+  -- comment on how well the run was played, and the title screen's record is
+  -- about the forest, not the fight.
+  self.o2Peak = math.max(self.o2Peak or 0, self.o2)
 
   local step = math.floor(self.o2 / 25)
   if step > (self.o2Step or 0) and step > 0 then

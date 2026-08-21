@@ -9,6 +9,8 @@
 -- Type comes from UI.ts and prompts from UI.promptRow, so the last screen of a
 -- lost run is set in the same voice as the first screen of the game.
 local U      = require("src.core.util")
+local Settings = require("src.game.settings")
+local TU     = require("src.game.tuning")
 local P      = require("src.engine.palette")
 local UI     = require("src.engine.ui")
 local Draw   = require("src.engine.draw")
@@ -157,6 +159,12 @@ function S:enter(world)
       local rec = Story.sacrificed[i]
       push(rec.name, Story.epitaphs and Story.epitaphs[rec.name])
     end
+  end
+  -- A lost run still counts: it is still an island somebody put a forest on,
+  -- and the cover's treeline is about the forest rather than about the fight.
+  if world and Settings.recordRun then
+    Settings.recordRun(math.min(world.cycle or 1, TU.cycle.count),
+                       world.treeCount or 0, world.o2Peak or world.o2 or 0)
   end
   -- the victory cue over THE AIR IS GONE is a category error
   if Music.setState then Music.setState("night", { intensity = 0.15 }) end
