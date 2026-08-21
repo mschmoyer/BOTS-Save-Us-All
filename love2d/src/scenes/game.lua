@@ -27,13 +27,20 @@ local Dialogue = Opt.require("src.game.dialogue")
 local Touch    = require("src.engine.touch")
 local Settings = require("src.game.settings")
 
+--- Config comes from the environment natively and from --flag=value arguments
+--- in the browser build, where there is no environment.
+local cfg = _G.BOTS_CFG or function(n)
+  local v = os.getenv(n)
+  return (v ~= nil and v ~= "") and v or nil
+end
+
 local Game = {}
 
 function Game:enter(opts)
   opts = opts or {}
   local w, h = love.graphics.getDimensions()
   self.camera = Camera.new(w, h)
-  local envSeed = tonumber(os.getenv("BOTS_SEED") or "")
+  local envSeed = tonumber(cfg("BOTS_SEED") or "")
   self.world = World.new(opts.seed or envSeed or math.random(1, 999999), opts)
   self.world.camera = self.camera
   self.world.post = Post
@@ -49,13 +56,13 @@ function Game:enter(opts)
   self.buildSel = 1
   self.showPerf = false
 
-  if (os.getenv("BOTS_AUTOPLAY") or "") ~= "" then
+    if cfg("BOTS_AUTOPLAY") then
     self.world.player.agent = require("src.game.autoplay").new(self.world)
     self.showPerf = true
     J.enabled = false
-    self.storyCapture = (os.getenv("BOTS_STORY") or "") ~= ""
+    self.storyCapture = cfg("BOTS_STORY") ~= nil
   end
-  self.speed = tonumber(os.getenv("BOTS_SPEED") or "") or 1
+  self.speed = tonumber(cfg("BOTS_SPEED") or "") or 1
   self.telemetryT = 0
 
   Touch.setAimContext(function()
@@ -66,7 +73,7 @@ function Game:enter(opts)
 
   -- Dev jump: start a session near a late beat so the finale can be iterated on
   -- without playing thirteen minutes of it first.
-  local jump = os.getenv("BOTS_JUMP")
+  local jump = cfg("BOTS_JUMP")
   if jump and jump ~= "" then self:devJump(jump) end
 
   DayNight.set("day", 0)
@@ -83,8 +90,8 @@ function Game:devJump(what)
   local rng = w.rng
   -- the extraction only makes sense with a full sky behind it
   local defaultTrees = (what == "extraction") and 900 or 260
-  local trees = tonumber(os.getenv("BOTS_JUMP_TREES") or "") or defaultTrees
-  local bots = tonumber(os.getenv("BOTS_JUMP_BOTS") or "") or 34
+  local trees = tonumber(cfg("BOTS_JUMP_TREES") or "") or defaultTrees
+  local bots = tonumber(cfg("BOTS_JUMP_BOTS") or "") or 34
   for _ = 1, trees * 6 do
     if w.treeCount >= trees then break end
     if w.terrain then

@@ -532,7 +532,9 @@ function World:speak(who, line)
   -- A forest of forty bots all talking is noise. Keep a few, prefer the ones
   -- nearest the player, and never let the same bot double up.
   for i = #self.speeches, 1, -1 do
-    if self.speeches[i].who == who then table.remove(self.speeches, i) end
+    local sp = self.speeches[i]
+    if sp.who == who then table.remove(self.speeches, i)
+    elseif sp.line == line then return end   -- never two bots on the same sentence
   end
   if #self.speeches >= SPEECH_MAX then
     local p = self.player
@@ -957,7 +959,9 @@ function World:draw(camera)
 
   if Tree.setViewFromCamera then Tree.setViewFromCamera(camera) end
   -- exact x-ray target: canopies clear around the player, not the camera
-  if Tree.setFocus and self.player then Tree.setFocus(self.player.x, self.player.y) end
+  if Tree.setFocus and self.player then
+    Tree.setFocus(self.player.x, self.player.y, 78)
+  end
   if VFX.setViewport then
     local vx, vy, vw, vh = camera:viewRect(0)
     VFX.setViewport(vx, vy, vw, vh, 120)

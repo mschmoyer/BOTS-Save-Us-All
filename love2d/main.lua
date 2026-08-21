@@ -17,18 +17,41 @@ local Post    = require("src.engine.postfx")
 
 local Boot = {}
 
+--- Configuration comes from the environment natively, and from command-line
+--- arguments in the browser build (where there is no environment). The web
+--- shell forwards a `?dev=...` query string into `Module.arguments`.
+local ARGV = {}
+do
+  local a = _G.arg
+  if type(a) == "table" then
+    for i = 1, #a do
+      local k, v = tostring(a[i]):match("^%-%-([%w_]+)=(.*)$")
+      if k then ARGV[k:upper()] = v end
+    end
+  end
+end
+
+local function cfg(name)
+  local v = os.getenv(name)
+  if v ~= nil and v ~= "" then return v end
+  v = ARGV[name]
+  if v ~= nil and v ~= "" then return v end
+  return nil
+end
+_G.BOTS_CFG = cfg
+
 ------------------------------------------------------------------ headless mode
 -- Driven entirely by environment variables so tools/shot.sh can script it.
 local H = {
-  on      = (os.getenv("BOTS_HEADLESS") or "") ~= "",
-  frames  = tonumber(os.getenv("BOTS_FRAMES") or "") or 420,
+  on      = cfg("BOTS_HEADLESS") ~= nil,
+  frames  = tonumber(cfg("BOTS_FRAMES") or "") or 420,
   shots   = {},
-  script  = os.getenv("BOTS_SCRIPT"),
+  script  = cfg("BOTS_SCRIPT"),
   frame   = 0,
   pending = 0,
 }
 do
-  local s = os.getenv("BOTS_SHOTS")
+  local s = cfg("BOTS_SHOTS")
   if s then for n in s:gmatch("%d+") do H.shots[tonumber(n)] = true end end
   if not next(H.shots) then H.shots[H.frames] = true end
   -- Software rendering costs over a second a frame, so a long capture only draws
@@ -38,7 +61,7 @@ do
   for f in pairs(H.shots) do
     for k = math.max(1, f - 4), f do H.drawOn[k] = true end
   end
-  H.drawAll = (os.getenv("BOTS_DRAW_ALL") or "") ~= ""
+  H.drawAll = cfg("BOTS_DRAW_ALL") ~= nil
 end
 Boot.headless = H
 
@@ -90,7 +113,7 @@ function love.load()
   if not okAudio then print("AUDIO FAILED: " .. tostring(audioErr)) end
 
   local ok, err = pcall(function()
-    local sceneName = os.getenv("BOTS_SCENE")
+    local sceneName = cfg("BOTS_SCENE")
     if sceneName == nil or sceneName == "" then sceneName = "src.scenes.title" end
     Screen.push(require(sceneName))
   end)

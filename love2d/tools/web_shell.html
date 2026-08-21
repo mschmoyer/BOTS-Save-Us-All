@@ -224,8 +224,21 @@
   document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
 
   /* --- emscripten module -------------------------------------------------- */
+  // ?dev=jump:night,trees:600 forwards flags into the game, for testing a late
+  // state without playing thirteen minutes of it first.
+  var argv = ['./game.love'];
+  try {
+    var dev = new URLSearchParams(location.search).get('dev');
+    if (dev) {
+      dev.split(',').forEach(function (pair) {
+        var kv = pair.split(':');
+        if (kv[0]) argv.push('--BOTS_' + kv[0].toUpperCase() + '=' + (kv[1] || '1'));
+      });
+    }
+  } catch (e) {}
+
   var Module = {
-    arguments: ['./game.love'],
+    arguments: argv,
     INITIAL_MEMORY: 402653184,
     wasmBinary: window.__LOVE_WASM__.buffer,
     printErr: console.error.bind(console),
