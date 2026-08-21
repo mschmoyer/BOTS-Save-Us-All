@@ -295,11 +295,14 @@ end
 --- filters was the second-largest allocator in the game after `Spatial:nearest`
 --- built one of its own.
 ---
---- What a filter needs to know goes in the slots below. Every caller saves the
---- slot it uses and puts it back afterwards, because a *caller-supplied* filter
---- may itself query the world -- a bot's "is this one mine?" test asking for the
---- nearest tree -- and the inner query would otherwise walk off with the outer
---- one's state. Two stores against a hundred closures a frame.
+--- What a filter needs to know goes in the slots below. A query that hands a
+--- *caller-supplied* filter through -- `nearestBot`, `nearestEnemy` -- saves the
+--- slot it borrows and puts it back afterwards, because that filter may query
+--- the world itself (a bot's "is this one mine?" test asking for the nearest
+--- tree) and the inner query would otherwise walk off with the outer one's
+--- state. Two stores against a hundred closures a frame. The counting filters
+--- do not need that: nothing they touch can re-enter a query, and their reader
+--- is the statement after the walk.
 local qUnmarked          -- nearestTree: skip trees another bot has claimed
 local qFilter            -- the caller's own extra test, if it passed one
 local qX, qY             -- the query point, where the test needs it

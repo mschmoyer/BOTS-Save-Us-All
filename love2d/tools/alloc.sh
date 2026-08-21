@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# TEMPORARY: per-frame allocation profile (item F5). Same fixed scene as perf.sh.
+# Per-frame allocation profile, in KB, pass by pass. The allocation sibling of
+# tools/perf.sh, on the same fixed scene so the two can be read side by side.
+#   tools/alloc.sh [tag]
+# env: BOTS_ALLOC_FRAMES BOTS_ALLOC_WARM BOTS_ALLOC_T2 BOTS_ALLOC_JIT
+#      plus the scene knobs perf.sh takes (BOTS_SEED BOTS_JUMP BOTS_W ...)
 set -u
 cd "$(dirname "$0")/.." || exit 1
 TAG="${1:-run}"

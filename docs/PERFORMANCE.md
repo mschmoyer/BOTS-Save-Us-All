@@ -149,10 +149,73 @@ calls and a tree costs two**.
    lookup plus a call, and measured ~0.5 ms at 825 trees — it ate most of the
    win until the loop asked `t.alive` first.
 
-7. **Per-frame allocation.** ~125 KB a frame with the GC stopped: ~50 KB in
-   `World:update`, ~60 KB in `World:draw`, and zero in the entity paths — so it
-   is container code, not entities. `Lighting.addLight(..., {flicker=...})`
-   allocating an options table per light per frame is 5-7 KB of it.
+7. ~~**Per-frame allocation.**~~ **DONE for everything reachable, and the
+   "zero in the entity paths" was exactly backwards.**
+
+   Re-measured before touching anything, with `tools/alloc.sh` (the allocation
+   sibling of `tools/perf.sh`: same fixed scene, `collectgarbage("count")` around
+   each pass, collector stopped for the window, JIT off so the numbers are the
+   browser's). The total was right — **119.1 KB a frame** against the estimated
+   125 — but the split was not. `World:draw`'s own container code allocates
+   **0.2 KB**. Every remaining kilobyte was in code the containers *call*:
+
+   | | before | after |
+   | --- | --- | --- |
+   | whole update | 48.9 | **3.0** |
+   | whole draw (incl. HUD, lights) | 70.2 | **49.7** |
+   | `World:update` | 48.2 | 2.7 |
+   | — `updateSpread` | 24.4 | 0.0 |
+   | — bot updates | 20.5 | 1.7 |
+   | `World:draw` | 47.7 | 28.9 |
+   | — bot draw | 26.0 | 26.0 |
+   | — cobalt draw | 17.8 | 1.0 |
+   | `World:emitLights` | 6.9 | 5.2 |
+   | HUD | 8.1 | 8.1 |
+
+   Two allocators produced most of it, and neither is a container.
+
+   **`Spatial:nearest` built a closure per call: 0.32 KB, ~106 calls a frame,
+   ~34 KB — the single largest allocator in the game.** A closure is not one
+   object: every captured local is boxed separately, and that visitor captured
+   five. It walks the grid longhand now, in `each`'s exact cell order so ties
+   resolve identically. The `nearest` filters in `world.lua` were the same
+   mistake one level up (`beaconAt` alone is 73 calls a frame) and are now one
+   shared function each, with the couple of parameters they need in module
+   slots; the two entry points that pass a caller's own filter through save and
+   restore that slot, because such a filter may query the world itself.
+
+   **`P.shade` returns a fresh table, and the draw code asks it for constants.**
+   A cobalt deposit resolved twenty of them a frame at ramp positions that never
+   change, the player a dozen, the rig six. They are resolved once now — module
+   constants where the position is a literal in one place, a tiny cache on the
+   `suit()`/`bare()`/`metal()` helpers where a dozen call sites each pass their
+   own literal. `Lighting.addLight`'s options tables went the same way: it reads
+   the table and copies out, so a constant `{ flicker = 0.04 }` can be a
+   constant, which is what `demo_light.lua` was already doing.
+
+   *Measured, Lua only (GPU nulled, JIT off), six interleaved A/B rounds because
+   this machine's per-round spread (7.74–9.01 ms on the same code) is wider than
+   the effect: whole frame **min 7.738 → 7.187 ms (−7.1%)**, mean 8.447 → 7.876,
+   and the new side is lower in 6 of 6 paired rounds; `sim` min 3.979 → 3.658
+   (−8.1%). At the 2.7x browser factor that is ~1.5 ms of the browser's 17 ms
+   Lua half.*
+
+   The picture is unchanged and so is the run: a deterministic capture probe
+   (the game with the clock nailed to the frame counter, because the grade reads
+   the wall clock and the ordinary capture cannot be diffed) is **byte-identical
+   before and after** at frames 150/300 of a 900-tree night and at frames
+   500/1000/1500 of a different seed — which also means 1,500 frames of
+   simulation went through the rewritten spatial queries and landed on the same
+   world.
+
+   **52.7 KB a frame is left, and 33 of it is `bot.lua`** — 26 KB of
+   `P.shade` and friends in `Bot:draw`, 5 KB of `{ flicker = 0.03 }` in
+   `Bot:emitLight` (the very tables this item named), 1.7 KB in `Bot:update`.
+   Every one takes the same two-line fix applied to the cobalt, the player and
+   the rig. The other 8 KB is `Text.display`, which concatenates a six-part
+   cache key on every string it draws; that one wants the type cache
+   restructured, which is its own item and its own risk. The last ~11 KB is
+   spread thin: no remaining single site is worth a kilobyte.
 
 ### The one that actually reaches 60 fps
 
@@ -170,6 +233,8 @@ through emscripten's WebGL inside the budget.
 ## Measuring it yourself
 
     tools/perf.sh                                         # draw calls and fill
+    tools/alloc.sh                                        # KB allocated per pass
+    BOTS_ALLOC_T2=1 tools/alloc.sh                        # ...and who it calls
     BOTS_PERF_NULLGPU=1 BOTS_PERF_NOJIT=1 tools/perf.sh   # the Lua half alone
     BOTS_DRAWCALLS=1 BOTS_SCENE=src.scenes.game tools/shot.sh 200 199 /tmp/dc
     BOTS_PERF=1 ...                                       # in-game readout

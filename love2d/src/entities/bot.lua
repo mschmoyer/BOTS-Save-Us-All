@@ -515,7 +515,19 @@ end
 -- antenna with a lit tip, a mouth that answers the voice -- carried down onto
 -- the thirty-pixel version of the same character.
 local metalRamp = P.ramp.metal
-local function metal(t, a) return P.shade(metalRamp, t, a) end
+-- P.shade builds a fresh table per call, and a bot draws ~20 of them: at 48
+-- bots that measured 26 KB a frame, the largest remaining allocator in the game
+-- once the containers were cleaned up. Every call site here passes a literal
+-- ramp position, so memoise on it -- the same shape player.lua's suit()/bare()
+-- already use. Calls that pass an alpha still allocate; they are the rare ones
+-- and the alpha genuinely varies.
+local METAL_C = {}
+local function metal(t, a)
+  if a then return P.shade(metalRamp, t, a) end
+  local c = METAL_C[t]
+  if not c then c = P.shade(metalRamp, t); METAL_C[t] = c end
+  return c
+end
 -- The lit edge. `metal`'s own top stop, so the crew's rim is cool white and the
 -- player's is `accentCool` blue: at a glance, across a busy frame, that one
 -- difference is how you find yourself among your own machines.
@@ -768,7 +780,25 @@ end
 --- The carrying tell. A pip row that fills, and -- the part that actually reads
 --- at play scale -- a cobalt glow on the machine itself, so "that one is
 --- bringing something home" is answerable from across the clearing.
+-- Constant light options. Lighting.addLight only reads these, so one table per
+-- distinct value serves every bot: at 48 bots the two literals below were 5 KB
+-- a frame. This is the pair PERFORMANCE.md item 7 named by name.
+local OPT_FLICK3 = { flicker = 0.03 }
+local OPT_FLICK4 = { flicker = 0.04 }
+
 local HOT = P.shade(P.ramp.cobalt, 3.4)
+
+-- The rest of the constant shades this file draws with, resolved once. Same
+-- reason as METAL_C above; these had literal arguments and were rebuilding the
+-- identical table every frame.
+local LEAF_STALK = P.shade(P.ramp.leaf, 1.2)
+local LEAF_HI    = P.shade(P.ramp.leafHi, 4)
+local COBALT_3   = P.shade(P.ramp.cobalt, 3)
+local LEAF_LOAD  = P.shade(P.ramp.leaf, 3.2)
+local LEAF_GLOW  = P.shade(P.ramp.leaf, 3.6)
+-- the charge pips alternate between two stops, so it is two constants, not a
+-- computed one
+local COBALT_PIP = { P.shade(P.ramp.cobalt, 2.6), P.shade(P.ramp.cobalt, 3.2) }
 
 --- `fy` and `fw` are in radii rather than pixels, because the row is baked at
 --- the type's own radius and drawn scaled: the two sizes have to be derived
@@ -865,12 +895,12 @@ HULL.planter = {
   function(r)
     -- dark stalk, bright leaves: a Planter is very often standing under a canopy,
     -- and a mid-green sprout against mid-green foliage is no sprout at all
-    Draw.setColor(P.shade(P.ramp.leaf, 1.2))
+    Draw.setColor(LEAF_STALK)
     Draw.capsule("fill", 0, 0, 0, -r * 0.68, r * 0.09)
-    Draw.setColor(P.shade(P.ramp.leaf, 1.2))
+    Draw.setColor(LEAF_STALK)
     Draw.blob(-r * 0.28, -r * 0.62, r * 0.30, 7, 3, 0.2, 0.62)
     Draw.blob(r * 0.27, -r * 0.78, r * 0.27, 7, 8, 0.2, 0.62)
-    Draw.setColor(P.shade(P.ramp.leafHi, 4))
+    Draw.setColor(LEAF_HI)
     Draw.blob(-r * 0.28, -r * 0.63, r * 0.24, 7, 3, 0.2, 0.60)
     Draw.blob(r * 0.27, -r * 0.79, r * 0.21, 7, 8, 0.2, 0.60)
   end,
@@ -883,7 +913,7 @@ function Bot:body_builder(r)
   local hang = r * (0.40 + math.sin(self.age * 1.5 + self.bob) * 0.12)
   Draw.setColor(metal(2.0))
   Draw.capsule("fill", r * 0.92, -r * 1.48, r * 0.92, -r * 1.48 + hang, r * 0.035)
-  Draw.setColor(P.shade(P.ramp.cobalt, 3))
+  Draw.setColor(COBALT_3)
   Draw.diamond(r * 0.92, -r * 1.48 + hang + r * 0.17, r * 0.15, r * 0.20, "fill")
   self:drawLoad(r, 0.02, 1.02)
   self:drawAntenna(-r * 0.62, -r * 0.76, r * 0.54, r)
@@ -961,9 +991,9 @@ function Bot:body_sentry(r)
   Draw.setColor(metal(3.0))
   Draw.capsule("fill", -ca * rec, -r * 0.56 - sa * rec,
                ca * r * 1.30 - ca * rec, -r * 0.56 + sa * r * 1.30 - sa * rec, r * 0.15)
-  Draw.setColor(P.shade(P.ramp.leaf, 3.2), 0.95)
+  Draw.setColor(LEAF_LOAD, 0.95)
   love.graphics.circle("fill", ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.14)
-  Draw.glow(ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.75, P.shade(P.ramp.leaf, 3.6), 0.3, 2)
+  Draw.glow(ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.75, LEAF_GLOW, 0.3, 2)
   self:drawAntenna(r * 0.26, -r * 1.14, r * 0.48, r)
   self:drawEye(r)
 end
@@ -1006,7 +1036,7 @@ function Bot:body_harvester(r)
   if not b.cargo then
     local R = self.def.radius
     b.cargo = pipRow(self.def.capacity, function(i)
-      Draw.setColor(P.shade(P.ramp.cobalt, 2.6 + (i % 2) * 0.6))
+      Draw.setColor(COBALT_PIP[(i % 2) + 1])
       love.graphics.circle("fill", -R * 0.42 + ((i - 1) % 3) * R * 0.42,
                            -R * 0.76 - math.floor((i - 1) / 3) * R * 0.30, R * 0.16)
     end)
@@ -1099,7 +1129,7 @@ function Bot:emitLight(Lighting)
     -- standing inside your own light.
     local pulse = 0.85 + math.sin((self.glowPhase or 0)) * 0.15
     Lighting.addLight(self.x, self.y - self.radius * 1.4, self.def.radius_field, P.lightPlayer,
-                      1.15 * pulse, { flicker = 0.03 })
+                      1.15 * pulse, OPT_FLICK3)
   else
     -- A bot's eye is drawn into the scene, and the scene is multiplied by this
     -- very buffer -- so after dusk the *only* thing that keeps a machine's face
@@ -1118,13 +1148,13 @@ function Bot:emitLight(Lighting)
       -- still armed.
       local br = 0.82 + 0.18 * math.sin(self.age * 2.4)
       Lighting.addLight(self.x, self.y - self.radius * 0.4, self.def.lightRadius * k,
-                        P.lightFriend, self.def.lightGain * br * k, { flicker = 0.04 })
+                        P.lightFriend, self.def.lightGain * br * k, OPT_FLICK4)
       return
     end
     local L = T.light
     local g = (self.state == "down" and L.downGain or L.gain) * k
     Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * L.radius * k,
-                      P.lightFriend, g, { flicker = 0.03 })
+                      P.lightFriend, g, OPT_FLICK3)
     -- and a tight core, so what you see is a lit machine rather than a lit
     -- patch of grass with something dark standing on it
     Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * L.core * k,

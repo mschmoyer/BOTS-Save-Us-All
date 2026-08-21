@@ -1,7 +1,24 @@
--- TEMPORARY probe for PERFORMANCE.md item 7 / spec F5: per-frame allocation.
--- Same shape as tools/perfscene.lua, but the accumulator is
--- collectgarbage("count") rather than wall time, and the collector is stopped
--- for the measured window so nothing is handed back mid-frame.
+-- Allocation profiler: the same idea as tools/perfscene.lua, with
+-- collectgarbage("count") in place of the clock.
+--
+-- The ship target is PUC Lua 5.1 in WebAssembly with no JIT, where the
+-- collector runs on the main thread inside the same 62 ms frame as everything
+-- else, so garbage is frame time. This scene wraps the same passes perf.lua
+-- does and reports the KB each of them allocates per frame.
+--
+-- Two things make the numbers trustworthy. The collector is **stopped** for the
+-- measured window (after a warm-up and a full collect), so a bucket cannot be
+-- credited with memory the GC happened to hand back inside it -- that is what
+-- produces negative readings if you forget. And the JIT is off by default,
+-- because LuaJIT's allocation sinking hides allocations the browser's
+-- interpreter really does make; BOTS_ALLOC_JIT=1 leaves it on.
+--
+-- Run it with tools/alloc.sh. BOTS_ALLOC_T2=1 adds a second tier of buckets --
+-- the spatial queries, the palette helpers, the light entry points -- which
+-- double-counts against the first tier on purpose: it says *who inside a pass
+-- is doing the allocating*.
+--
+-- Not shipped: tools/ is excluded from the .love the web build packages.
 --   BOTS_SCENE=tools.allocscene tools/alloc.sh
 local Game = require("src.scenes.game")
 

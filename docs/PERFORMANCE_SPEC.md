@@ -468,8 +468,22 @@ measurement taken that way. Use a deterministic probe scene.
 `t.alive`, and `Tree:kill` clears `alive` immediately, so a felled tree's topple
 animation and `Tree:drawStump` never render in gameplay. Pre-existing, preserved
 deliberately so "no visual change" held for F4.
-- **F5. Per-frame allocation.** ~125 KB/frame, all in container code.
-  `Lighting.addLight(..., {flicker=...})` alone is 5-7 KB.
+- **F5. Per-frame allocation.** — **DONE, and "all in container code" was
+  wrong.** The 125 KB estimate was close (119.1 KB measured), but `World:draw`'s
+  own container code allocates **0.2 KB** of it: the garbage is in what the
+  containers call. Two allocators dominated — `Spatial:nearest` building a
+  five-upvalue closure per call (0.32 KB × ~106 calls = ~34 KB, the largest
+  single allocator in the game), and `P.shade` returning a fresh table to draw
+  code that asks it for constants (37 KB over 366 calls, twenty of them in one
+  cobalt deposit). *Measured: **119.1 → 52.7 KB/frame**, update 48.9 → 3.0.
+  Lua-only frame min 7.738 → 7.187 ms (−7.1%) over six interleaved rounds, lower
+  in 6 of 6 — the per-round spread on this machine is wider than the effect, so
+  the pairing is the evidence. A deterministic capture probe is byte-identical
+  before and after over 1,500 frames of simulation.* Full write-up in
+  `PERFORMANCE.md` item 7. **33 KB a frame is left in `bot.lua`** (including the
+  `{flicker=...}` tables this item named) and 8 KB in `Text.display`'s cache-key
+  concatenation; the bot fixes are the same two lines already applied to the
+  cobalt, the player and the rig.
 - **F6. Trees through a sprite atlas.** The only route to 60 fps at 720p, and the
   one item that changes how the game looks: sway becomes a per-sprite rotation
   instead of vertex-shader displacement. **Requires a visual sign-off before it
