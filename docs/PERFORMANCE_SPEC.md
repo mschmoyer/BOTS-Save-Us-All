@@ -12,30 +12,57 @@ and a runtime chosen for the lowest common denominator.
 
 ## Baseline
 
-Measured today, from this branch, at `cf4db20`. Chromium 1194 under SwiftShader,
-1280x720, `file://`, single-file build from `tools/build_web.sh`:
+Measured from this branch. Chromium 1194 under SwiftShader, 1280x720, median of
+three runs, **with the webfont request failed fast** — see the trap below.
 
-| Phase | Wall clock | How |
+| | single-file (`file://`) | multi-file (HTTP) |
 | --- | --- | --- |
-| Document downloaded | 120 ms | `navigation.responseEnd` |
-| **Document parsed** | **12,947 ms** | `navigation.domInteractive` |
-| base64 → bytes (wasm + data) | 167 ms | `BOOTPHASE wasm-decoded` / `data-decoded` |
-| Runtime linked, Begin appears | ~13,100 ms | `monitorRunDependencies(0)` |
-| First rendered frame | ~28,100 ms | `BOOTPHASE first-frame` |
-| Peak JS heap | 440.6 MB | `performance.memory` |
+| `navigation.responseEnd` | 124 ms | 20 ms |
+| `navigation.domInteractive` | 969 ms | **224 ms** |
+| Begin appears | 1,108 ms | **431 ms** |
+| base64 → bytes | 150 ms | 13 ms |
+| Payload | 7.00 MB (2.69 MB gzip) | 5.33 MB (2.12 MB gzip) |
+| Payload on a *second* visit | 7.00 MB | **26 KB** |
 
-Payload: **7.00 MB on disk, 2.69 MB gzipped.**
+Title screen steady state: 416 draw calls/frame, 13.4 ms in the rAF callback.
+Peak JS heap 440 MB (single) / 412 MB (multi).
 
-Title screen steady state in the same browser: 416 draw calls/frame, 13.4 ms in
-the rAF callback, 100.5 ms between frames.
+### The measurement trap, which cost us a wrong headline
+
+`web_shell.html` used to load its webfonts through a **render-blocking**
+`<link rel="stylesheet">` pointed at `fonts.googleapis.com`. On a machine with no
+route to that host the browser waits out the connection timeout before parsing
+the rest of the document, and every boot number absorbs it:
+
+| | fonts unreachable | fonts failed fast |
+| --- | --- | --- |
+| `domInteractive` (single-file) | 12,947 ms | 969 ms |
+| Begin appears (single-file) | 13,100 ms | 1,108 ms |
+
+**The first draft of this spec quoted the left-hand column and blamed the
+JavaScript parser.** It was measuring a third-party network stall. The parse is
+real but it is ~750 ms, not thirteen seconds.
+
+Two lessons, both now enforced in the tooling: measure with the font request
+resolved or failed, never hanging (`tools/webperf.js` now navigates on `commit`
+rather than `load`, so a hung subresource cannot silently enter the numbers);
+and a boot measurement taken once, on one machine, with no A/B against a
+changed variable is not a measurement.
 
 Reproduce with:
 
 ```bash
-love2d/tools/build_web.sh /tmp/web_base/index.html
+cd love2d
+tools/build_web.sh          /tmp/web_multi          # hosted, default
+tools/build_web.sh --single /tmp/web_single/index.html
+node tools/serve.js /tmp/web_multi 8123 &           # HTTP: streaming needs it
 NODE_PATH=/home/user/.toolchain/node_modules \
-  node love2d/tools/webperf.js /tmp/web_base/index.html 20000 1280 720
+  node tools/webperf.js http://127.0.0.1:8123/index.html 20000 1280 720
 ```
+
+Serve it over HTTP, not `file://`: emscripten checks `isFileURI` before taking
+its `instantiateStreaming` path, so a multi-file build opened as a file quietly
+under-reports itself.
 
 SwiftShader makes GPU-bound numbers pessimistic and CPU-bound numbers
 representative. Every figure above is CPU-bound. Say which you are quoting.
@@ -45,17 +72,16 @@ representative. Every figure above is CPU-bound. Say which you are quoting.
 Both of these are load-bearing, and both contradict comments currently in the
 tree. Fix the comments as part of the work.
 
-**1. The 13 seconds is the JavaScript parser, not base64 decoding.**
-`main.lua:102` says the build "spends thirteen seconds decoding a base64 wasm
-blob". It does not. Decoding both blobs takes **167 ms**. The document is
-downloaded at 120 ms and `domInteractive` does not fire until 12,947 ms: the cost
-is Chromium parsing a 7 MB HTML document whose `<script>` contains a 6.3 MB
-string literal. The decode loop at `web_shell.html:199` is not the problem and
-optimising it would buy nothing.
+**1. The thirteen seconds was never base64 decoding, and it was mostly not the
+build's fault at all.** `main.lua:102` says the build "spends thirteen seconds
+decoding a base64 wasm blob before LÖVE exists at all". Decoding both blobs takes
+**150 ms**. The thirteen seconds reproduces only when `fonts.googleapis.com` is
+unreachable, and it is the render-blocking stylesheet, not the payload. With that
+request failed fast the same single-file build reaches `domInteractive` in 969 ms.
 
-This *strengthens* the case for splitting the build — a separate `.wasm` never
-enters the JS parser at all — but it changes what success looks like. The
-acceptance test is `domInteractive`, not decode time.
+The residual cost of inlining — parsing a 6.3 MB string literal — is real and
+worth removing, but it is ~750 ms. Fix the comment in `main.lua` to say so, and
+do not let anyone quote "thirteen seconds" for the payload again.
 
 **2. The `-c` compatibility build is not an Asyncify build.**
 `build_web.sh:12` passes `-c` and the two love.js runtimes differ by far less
@@ -79,7 +105,20 @@ Each item states the change, how it is proven, and what would make it fail.
 
 ### C — Container: how the game is delivered
 
-**C1. Split the build into separate files.** *(the single biggest win)*
+**C0. Stop blocking first paint on a third-party stylesheet.** — **DONE**
+
+The webfont link in `web_shell.html` was render-blocking against a host we do not
+control. Now `media="print"` with an `onload` promotion, so it is a non-blocking
+fetch; every CSS var already named a real fallback stack, so the panel is legible
+from first paint and merely gets nicer if the webfont arrives.
+
+*Measured, with the font request never answered at all — the pathological case:
+Begin at **490 ms**, `domInteractive` **287 ms**. The old shell in the same
+conditions sat at 12.8 s.* This also unblocks C3: under COOP/COEP a cross-origin
+stylesheet without CORP is refused outright, and the page now survives that
+instead of hanging on it.
+
+**C1. Split the build into separate files.** — **DONE**
 
 `tools/inline_web.js` folds `love.wasm` and `game.data` into the HTML as base64
 string literals. Emit them as real files instead, and load the wasm with
@@ -90,12 +129,24 @@ goes back to a normal fetch, which means the `fetchRemotePackage` patch at
 Keep `build_web.sh`'s single-file mode working — it is genuinely useful for
 sharing a build over any dumb file host — but make multi-file the default.
 
-- **Accept:** `domInteractive` < 500 ms; Begin appears in under 2 s; first frame
-  strictly better than the 28.1 s baseline. No change to what is on screen.
-- **Risk:** low. The IDBFS persistence patch (`inline_web.js:24`) must survive;
-  it is independent of how the binary arrives.
+`tools/pack_web.js` writes an entry document plus content-hashed assets;
+`tools/inline_web.js` keeps the single-file mode for a build you want to hand
+someone on a USB stick. The shared patching lives in `tools/web_patch.js` so the
+two modes cannot drift. `tools/build_web.sh` defaults to multi-file;
+`--single` selects the old shape.
 
-**C2. Cache headers, compression, and a hosting note.**
+Emscripten needed no persuading: leaving `Module.wasmBinary` undefined puts it on
+its own fetch path, which already uses `WebAssembly.instantiateStreaming`, and
+both `love.wasm` and `game.data` resolve through one `Module.locateFile` map.
+
+*Measured: `domInteractive` 969 → **224 ms**, Begin 1,108 → **431 ms**, entry
+document 7.00 MB → **26 KB**. Title screen renders identically — same 416 draw
+calls, screenshots compared.*
+
+- **Risk:** low, and discharged. The IDBFS persistence patch survives (it is in
+  `web_patch.js` now, applied in both modes).
+
+**C2. Cache headers, compression, and a hosting note.** — **DONE**
 
 Separate files can be cached individually and immutably. `love.wasm` is 4.7 MB
 and changes only when the engine does — today it is re-downloaded on every visit
@@ -103,8 +154,13 @@ because it is glued to the HTML. Emit content-hashed filenames, document the
 headers (`Cache-Control: immutable` for hashed assets, `no-cache` for the entry
 HTML), and ship a brotli pass alongside the existing gzip figure.
 
-- **Accept:** a second visit fetches only the entry HTML. Documented in
-  `love2d/README.md`.
+Assets are written as `<stem>.<hash><ext>`, `build_web.sh` emits a `_headers`
+file for Netlify/Cloudflare-style hosts, and `tools/serve.js` applies the same
+rules locally so the claim is testable rather than asserted.
+
+*A second visit fetches 26 KB instead of 7.00 MB: everything else is
+content-hashed and served `immutable`.*
+
 - **Risk:** low.
 
 **C3. Evaluate the `release` (pthreads) runtime behind COOP/COEP.**

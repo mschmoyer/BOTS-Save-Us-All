@@ -1,7 +1,23 @@
 <title>__TITLE__</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet"
+<!-- Loaded NON-BLOCKING, on purpose.
+     A plain stylesheet link here is render-blocking, and it is render-blocking
+     against a third party we do not control. When fonts.googleapis.com is
+     merely slow the boot panel is late; when it is unreachable -- a privacy
+     blocker, a corporate proxy, an offline machine, a country that blocks it --
+     the browser waits out the whole connection timeout before it parses the
+     rest of this document. Measured in a sandbox with no route to it:
+     domInteractive 12,817 ms, against 224 ms with the request failed fast. The
+     game had not started loading; the panel that says it is loading had not
+     even painted.
+     media="print" makes it a non-blocking fetch, and onload promotes it. Every
+     var below names a real fallback stack, so the page is legible from the
+     first paint and merely gets nicer if the webfont arrives. This also matters
+     for the pthreads runtime experiment: under COOP/COEP a cross-origin
+     stylesheet without CORP is refused outright, and this page must survive
+     that rather than hang on it. -->
+<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null"
   href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <style>
   /* A deliberately single-world page: this is an instrument panel in a dead
@@ -203,10 +219,22 @@
 
   say('cold start');
   setProgress(0.02);
-  window.__LOVE_WASM__ = b64('/*__WASM_B64__*/');
-  say('runtime decoded', 'ok'); setProgress(0.07); mark('wasm-decoded');
-  window.__LOVE_DATA__ = b64('/*__DATA_B64__*/');
-  say('island data unpacked', 'ok'); setProgress(0.10); mark('data-decoded');
+  /* How the runtime and the game data arrive. The packer writes one of two
+     things here:
+
+       single-file  two base64 string literals, decoded by b64() above into
+                    __LOVE_WASM__ / __LOVE_DATA__;
+       multi-file   an __LOVE_ASSETS__ map of logical name -> hashed filename,
+                    with no payload in this document at all.
+
+     The second is the default and the reason is measured. In the single-file
+     build the 4.7 MB wasm is a 6.3 MB string literal inside this script, and
+     the browser must PARSE it before a line of this code runs: responseEnd at
+     120 ms, domInteractive at 12,947 ms. The base64 decode that gets the blame
+     in that window is 167 ms of it. Splitting the payload out does not make the
+     decode faster, it deletes the parse -- and lets emscripten fetch the wasm
+     with instantiateStreaming, which compiles it while it downloads. */
+  /*__ASSET_BOOT__*/
 
   /* --- drifting motes behind the panel: the game's own pollen ------------ */
   (function motes() {
@@ -447,7 +475,20 @@
   var Module = {
     arguments: argv,
     INITIAL_MEMORY: 402653184,
-    wasmBinary: window.__LOVE_WASM__.buffer,
+    // Set only by the single-file build. Leaving it undefined is what puts
+    // emscripten on its fetch path, and its fetch path uses
+    // WebAssembly.instantiateStreaming -- compile overlapped with download
+    // instead of after it. (It checks isFileURI too, so a multi-file build
+    // opened from file:// silently falls back to fetch-then-compile. Serve it
+    // over HTTP to measure the real thing.)
+    wasmBinary: window.__LOVE_WASM__ ? window.__LOVE_WASM__.buffer : undefined,
+    // Logical name -> the content-hashed file actually on disk. Emscripten
+    // routes love.wasm through here, and love.js's package loader routes
+    // game.data through here, so one map covers both.
+    locateFile: function (p) {
+      var a = window.__LOVE_ASSETS__;
+      return (a && a[p]) || p;
+    },
     canvas: canvas,
     totalDependencies: 0,
     remainingDependencies: 0,
@@ -565,6 +606,5 @@
   };
 })();
 </script>
-<script>/*__GAME_JS__*/</script>
-<script>/*__LOVE_JS__*/</script>
+/*__SCRIPTS__*/
 <script>window.__loveBoot();</script>

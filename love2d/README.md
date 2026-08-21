@@ -34,14 +34,48 @@ all supported; the UI re-glyphs itself live when you change device.
 
 ## Building the web version
 
-The game ships as **one self-contained HTML file** — LÖVE compiled to WebAssembly, with the
-runtime and the game data inlined, so it runs from a single URL with no server:
+LÖVE compiled to WebAssembly, in one of two shapes. Requires `node` with the `love.js`
+package available.
 
 ```bash
-tools/build_web.sh build/index.html
+tools/build_web.sh build/web              # hosted: entry HTML + hashed assets (default)
+tools/build_web.sh --single build/one.html  # one self-contained file, no server needed
 ```
 
-Requires `node` with the `love.js` package available (see `tools/inline_web.js`).
+The **hosted** build is what ships. The entry document is ~26 KB; the 4.5 MB runtime, the
+game data and the loaders are written as `<name>.<hash>.<ext>` beside it, so they can be
+served `immutable` and a returning player downloads only the entry document. Leaving the
+wasm out of the HTML also lets emscripten fetch it with `WebAssembly.instantiateStreaming`,
+compiling it while it downloads.
+
+`build_web.sh` writes a `_headers` file in the Netlify/Cloudflare Pages format. The rule it
+encodes, for any other server: **anything with a hash in its name is immutable, the entry
+document never is.** In nginx:
+
+```nginx
+location = /index.html            { add_header Cache-Control "no-cache"; }
+location ~ \.[0-9a-f]{8}\.(wasm|data|js)$ {
+  add_header Cache-Control "public, max-age=31536000, immutable";
+}
+types { application/wasm wasm; }
+gzip on; gzip_types application/wasm application/octet-stream text/javascript;
+```
+
+Serve `.wasm` as `application/wasm` or streaming compilation is silently skipped. Compress
+`.wasm` and `.data` — brotli if the host offers it, gzip otherwise.
+
+To run and profile it locally (streaming needs HTTP; `file://` disables it):
+
+```bash
+node tools/serve.js build/web 8123
+NODE_PATH=… node tools/webperf.js http://127.0.0.1:8123/index.html 20000 1280 720
+```
+
+The **single-file** build is kept for handing someone a build with no server at all. It
+costs an extra ~750 ms of JavaScript parsing on every load and re-downloads the whole 7 MB
+on every visit, so it is not what you point players at.
+
+See [`../docs/PERFORMANCE_SPEC.md`](../docs/PERFORMANCE_SPEC.md) for the measurements.
 
 ## Tools
 
