@@ -1,0 +1,549 @@
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  /* A deliberately single-world page: this is an instrument panel in a dead
+     atmosphere, so it commits to dark and paints every colour explicitly. */
+  :root {
+    --vac:    #04070a;   /* vacuum */
+    --rig:    #0b131a;   /* panel */
+    --rule:   #16242e;   /* hairline */
+    --ink:    #dce9e4;   /* type */
+    --dim:    #64798a;   /* labels, neutral biased toward the cobalt accent */
+    --mint:   #4fe3a8;   /* oxygen / life */
+    --cobalt: #3fb6f0;   /* mineral */
+    --amber:  #ffc46b;   /* a bot's eye - used exactly once */
+    --disp:   "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+    --mono:   "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans:   "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--vac); color: var(--ink);
+    font-family: var(--sans); overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The safe area, honoured as padding: with viewport-fit=cover the page runs
+     under the notch and the home indicator, and in landscape on a phone that
+     is exactly where the oxygen readout and the build bar live. Letterboxing
+     inside the padding costs a few pixels and keeps the instrument panel out
+     from under the hardware. */
+  #stage {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    background: var(--vac);
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+             env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
+  canvas#canvas {
+    display: block; background: var(--vac); outline: none; touch-action: none;
+    box-shadow: 0 0 0 1px var(--rule), 0 30px 90px -30px #000;
+  }
+
+  /* ---------------------------------------------------------------- loader */
+  #loader {
+    position: fixed; inset: 0; z-index: 20; display: grid; place-items: center;
+    background:
+      radial-gradient(120% 80% at 50% 108%, #0d2029 0%, rgba(4,7,10,0) 62%),
+      var(--vac);
+    transition: opacity .8s cubic-bezier(.4,0,.2,1), filter .8s cubic-bezier(.4,0,.2,1);
+  }
+  #loader.gone { opacity: 0; filter: blur(6px); pointer-events: none; }
+  #motes { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .5; }
+
+  .panel {
+    position: relative; width: min(620px, 88vw); padding: clamp(28px, 5vw, 52px);
+    border: 1px solid var(--rule); background: rgba(11,19,26,.72);
+    backdrop-filter: blur(2px);
+  }
+  /* corner ticks: the frame reads as an instrument, not a card */
+  .panel::before, .panel::after {
+    content: ""; position: absolute; width: 14px; height: 14px; border: 1px solid var(--mint);
+    opacity: .55;
+  }
+  .panel::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .panel::after  { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .34em; text-transform: uppercase;
+    color: var(--dim); margin-bottom: 1.4rem;
+  }
+  h1 {
+    font-family: var(--disp); font-weight: 700; margin: 0;
+    font-size: clamp(26px, 5.2vw, 42px); line-height: 1.04; letter-spacing: .13em;
+    text-wrap: balance;
+  }
+  h1 .c { color: var(--mint); }
+  .sub {
+    font-family: var(--disp); font-weight: 500; margin-top: .5rem;
+    /* the game's own title screen sets REFOREST in mint under the logo; this
+       panel is the first thing anyone sees and was setting it in cobalt, so
+       the page and the game it loads did not look like the same product */
+    font-size: clamp(13px, 2.2vw, 16px); letter-spacing: .5em; color: var(--mint);
+  }
+
+  .log {
+    margin-top: 2.2rem; font-family: var(--mono); font-size: 12px; line-height: 1.9;
+    color: var(--dim); min-height: 5.7em;
+  }
+  .log b { color: var(--ink); font-weight: 500; }
+  .log .ok { color: var(--mint); }
+  .cursor {
+    display: inline-block; width: .55em; height: 1em; vertical-align: -.14em;
+    background: var(--amber); animation: blink 1.1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .rule { margin-top: 1.5rem; height: 1px; background: var(--rule); position: relative; }
+  .rule i {
+    position: absolute; inset: 0 auto 0 0; width: 0%; background: var(--mint);
+    box-shadow: 0 0 12px 0 var(--mint); transition: width .4s cubic-bezier(.4,0,.2,1);
+  }
+
+  #start {
+    margin-top: 2rem; display: none; padding: 0; border: 0; background: none; cursor: pointer;
+    font-family: var(--mono); font-size: 14px; letter-spacing: .3em; text-transform: uppercase;
+    color: var(--mint); transition: color .2s, text-shadow .2s;
+  }
+  #start::before { content: "[ "; color: var(--dim); }
+  #start::after  { content: " ]"; color: var(--dim); }
+  #start:hover, #start:focus-visible { color: #a9f5d5; text-shadow: 0 0 22px rgba(79,227,168,.6); }
+  #start:focus-visible { outline: 1px solid var(--mint); outline-offset: 6px; }
+
+  .keys {
+    margin-top: 2.4rem; display: flex; flex-wrap: wrap; gap: .35rem 1.4rem;
+    font-family: var(--mono); font-size: 11.5px; color: var(--dim);
+  }
+  .keys b { color: var(--ink); font-weight: 500; }
+  .keys .dev { color: var(--cobalt); }
+
+  #fsbtn {
+    position: fixed; right: 16px; bottom: 14px; z-index: 15; border: 0; background: none;
+    font-family: var(--mono); font-size: 11px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--dim); opacity: .45; cursor: pointer; transition: .2s;
+  }
+  #fsbtn:hover, #fsbtn:focus-visible { opacity: 1; color: var(--mint); }
+  @media (pointer: coarse) { #fsbtn { display: none; } .keys { display: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    #loader, .rule i { transition: none; }
+    .cursor { animation: none; }
+    #motes { display: none; }
+  }
+</style>
+
+<div id="stage"><canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas></div>
+<button id="fsbtn" type="button" onclick="goFullScreen()">Fullscreen</button>
+
+<div id="loader">
+  <canvas id="motes" aria-hidden="true"></canvas>
+  <div class="panel">
+    <div class="eyebrow">Atmospheric Reclamation &middot; Unit 01</div>
+    <h1>BOTS<span class="c">:</span> SAVE US ALL</h1>
+    <div class="sub">REFOREST</div>
+    <div class="log" id="log"></div>
+    <div class="rule"><i id="fill"></i></div>
+    <button id="start" type="button">Begin</button>
+    <div class="keys">
+      <span><b>WASD</b> move</span><span><b>Space</b> dash</span><span><b>E</b> shove</span>
+      <span><b>Q</b> pulse</span><span><b>F</b> plant</span><span><b>1-6</b> build</span>
+      <span class="dev">Gamepad &amp; touch detected automatically</span>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* --- boot log ----------------------------------------------------------
+     This panel is not decoration. It reports three real phases, in order, and
+     it stays up until the game says it has drawn a frame:
+
+       0.00-0.10  base64 -> bytes, in this script
+       0.10-0.55  WebAssembly compile (emscripten calls setStatus as it goes)
+       0.55-1.00  the game's own boot, reported over `print` as BOOT|pct|label
+
+     The third phase is the one that used to be a lie. LOVE ran love.load --
+     which synthesized all 324 sound variants -- inside a single main-loop tick,
+     so the page could not paint and the Begin button the player had just
+     pressed stopped answering for twenty-odd seconds. The game now slices that
+     work and reports where it is; see Boot.stage in main.lua. */
+  var logEl = $('log'), lines = [], cursor = '<span class="cursor"></span>';
+  var lastSaid = null;
+  function say(text, state) {
+    // The audio warm-up reports progress every frame under one label, so the
+    // panel filled with three identical copies of "synthesizing voices" and
+    // read as a hang. Repeat the line only once, and let the bar carry the
+    // motion.
+    if (text === lastSaid && state !== 'ok') return;
+    lastSaid = text;
+    lines.push('<b>&gt;</b> ' + text + (state === 'ok' ? ' <span class="ok">ok</span>' : ''));
+    if (lines.length > 3) lines.shift();
+    logEl.innerHTML = lines.join('<br>') + '<br>' + cursor;
+  }
+  var progress = 0;
+  function setProgress(p) { progress = Math.max(progress, p); $('fill').style.width = (progress * 100).toFixed(1) + '%'; }
+
+  // Phase timings, on the console, so tools/webperf.js can read the real split
+  // between decode, wasm compile and the game's own boot instead of guessing.
+  var T0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  function mark(name) {
+    var t = ((window.performance && performance.now) ? performance.now() : Date.now()) - T0;
+    console.log('BOOTPHASE ' + name + ' ' + Math.round(t));
+  }
+
+  function b64(s) {
+    var bin = atob(s), n = bin.length, u = new Uint8Array(n);
+    for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
+    return u;
+  }
+
+  say('cold start');
+  setProgress(0.02);
+  window.__LOVE_WASM__ = b64('/*__WASM_B64__*/');
+  say('runtime decoded', 'ok'); setProgress(0.07); mark('wasm-decoded');
+  window.__LOVE_DATA__ = b64('/*__DATA_B64__*/');
+  say('island data unpacked', 'ok'); setProgress(0.10); mark('data-decoded');
+
+  /* --- drifting motes behind the panel: the game's own pollen ------------ */
+  (function motes() {
+    var c = $('motes'); if (!c || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var ctx = c.getContext('2d'), ps = [], raf;
+    function fit() { c.width = c.clientWidth; c.height = c.clientHeight; }
+    fit(); window.addEventListener('resize', fit);
+    for (var i = 0; i < 70; i++) {
+      ps.push({ x: Math.random(), y: Math.random(), r: 0.4 + Math.random() * 1.6,
+                s: 0.006 + Math.random() * 0.02, d: Math.random() * 6.28, a: 0.1 + Math.random() * 0.4 });
+    }
+    var t = 0;
+    function frame() {
+      t += 0.006;
+      ctx.clearRect(0, 0, c.width, c.height);
+      for (var i = 0; i < ps.length; i++) {
+        var p = ps[i];
+        p.y -= p.s * 0.004; p.d += 0.01;
+        if (p.y < -0.05) { p.y = 1.05; p.x = Math.random(); }
+        var x = (p.x + Math.sin(p.d + t) * 0.012) * c.width, y = p.y * c.height;
+        ctx.globalAlpha = p.a * (0.55 + 0.45 * Math.sin(p.d * 1.7));
+        ctx.fillStyle = i % 9 === 0 ? '#3fb6f0' : '#4fe3a8';
+        ctx.beginPath(); ctx.arc(x, y, p.r, 0, 6.283); ctx.fill();
+      }
+      raf = requestAnimationFrame(frame);
+    }
+    frame();
+    window.__stopMotes = function () { cancelAnimationFrame(raf); };
+  })();
+
+  /* --- canvas: LOVE owns the backing store, we only letterbox it ---------- */
+  var canvas = $('canvas');
+  canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); }, false);
+
+  // Without this an iPhone renders the page into a 980px virtual viewport and
+  // scales it down: the game boots at a quarter size with mismatched touch
+  // coordinates. It is set from script because this file is served inside a
+  // wrapper that owns the document head.
+  (function () {
+    var mv = document.querySelector('meta[name=viewport]');
+    if (!mv) { mv = document.createElement('meta'); mv.name = 'viewport'; }
+    mv.content = 'width=device-width, initial-scale=1, maximum-scale=1, ' +
+                 'user-scalable=no, viewport-fit=cover';
+    (document.head || document.documentElement).appendChild(mv);
+  })();
+
+  var ASPECT = 16 / 9;
+  var stage = $('stage');
+  function resize() {
+    // the stage's *content* box: clientWidth includes the safe-area padding
+    var vw = window.innerWidth, vh = window.innerHeight;
+    if (stage) {
+      var cs = getComputedStyle(stage);
+      vw = stage.clientWidth  - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+      vh = stage.clientHeight - parseFloat(cs.paddingTop || 0)  - parseFloat(cs.paddingBottom || 0);
+    }
+    var w = vw, h = vw / ASPECT;
+    if (h > vh) { h = vh; w = vh * ASPECT; }
+    canvas.style.width = Math.round(w) + 'px';
+    canvas.style.height = Math.round(h) + 'px';
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 140); });
+  resize();
+
+  window.goFullScreen = function () {
+    var el = $('stage');
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    (el.requestFullscreen || el.webkitRequestFullscreen || function () {}).call(el);
+  };
+
+  window.addEventListener('keydown', function (e) {
+    if ([32, 37, 38, 39, 40, 9].indexOf(e.keyCode) > -1) e.preventDefault();
+  }, false);
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+
+  /* --- emscripten module -------------------------------------------------- */
+  // ?dev=jump:night,trees:600 forwards flags into the game, for testing a late
+  // state without playing thirteen minutes of it first.
+  // The game asks whether it is running in a page: there is no QUIT on the web,
+  // and a menu row that cannot do anything is worse than no row.
+  var argv = ['./game.love', '--BOTS_WEB=1'];
+  try {
+    var dev = new URLSearchParams(location.search).get('dev');
+    if (dev) {
+      dev.split(',').forEach(function (pair) {
+        var kv = pair.split(':');
+        if (kv[0]) argv.push('--BOTS_' + kv[0].toUpperCase() + '=' + (kv[1] || '1'));
+      });
+    }
+  } catch (e) {}
+
+  /* --- cap the drawing buffer ---------------------------------------------
+     LOVE runs with highdpi enabled, and emscripten's SDL sizes the backing
+     store as CSS pixels x window.devicePixelRatio. On a 3x phone that is a
+     2562x1440 drawing buffer for a 6-inch screen -- 3.7 megapixels through a
+     renderer that already asks for twenty-odd screens of canopy overdraw, a
+     full lighting composite and a nine-pass post chain. It is the single
+     largest multiplier on this game's cost on the device it is meant to ship
+     on, and it buys detail nobody can resolve: the frame is graded, bloomed,
+     vignetted and grained, and the art is flat vector shapes.
+
+     So the ratio is capped, in one place, before the module reads it: never
+     above 2, and never so high that the buffer passes ~1.6 megapixels (about
+     1600x900, which is what the game is composed at). A 3x phone lands at
+     about 1.5x, still half again as sharp as a non-retina screen.
+
+     Nothing else in the page reads devicePixelRatio, and LOVE derives its
+     touch and mouse mapping from the same number, so the input geometry stays
+     consistent with what is drawn. */
+  (function () {
+    var MAXPX = 1600 * 900, MAXDPR = 2;
+    var real = window.devicePixelRatio || 1;
+    // Cached, not computed per read: SDL reads this to size the buffer and
+    // again to scale pointer coordinates, and a value that drifted between
+    // those two reads would put the touch geometry out of step with the
+    // picture. It is recomputed only when the layout actually changes.
+    var value = 1;
+    function recompute() {
+      var w = canvas.clientWidth || window.innerWidth || 1;
+      var h = canvas.clientHeight || window.innerHeight || 1;
+      var fit = Math.sqrt(MAXPX / Math.max(1, w * h));
+      value = Math.max(1, Math.min(real, MAXDPR, fit));
+    }
+    recompute();
+    try {
+      Object.defineProperty(window, 'devicePixelRatio', {
+        configurable: true,
+        get: function () { return value; }
+      });
+      window.addEventListener('resize', recompute);
+      window.addEventListener('orientationchange', function () { setTimeout(recompute, 150); });
+      window.__dprCap = function (px, maxDpr) {   // console escape hatch
+        MAXPX = px || MAXPX; MAXDPR = maxDpr || MAXDPR; recompute();
+      };
+    } catch (e) { /* older engine: leave it alone rather than break boot */ }
+  })();
+
+  /* --- the gamepad API can be *disallowed* rather than absent ------------- */
+  // An iframe served without `allow="gamepad"` still exposes
+  // navigator.getGamepads, but calling it throws SecurityError. SDL samples
+  // gamepads once per frame from inside the main loop, so the first throw
+  // takes the whole loop down and the canvas goes black with nothing drawn --
+  // which is exactly what happens when this page is embedded. Test-call it
+  // once, and if it throws, replace it with something that returns nothing.
+  // A pad genuinely plugged into a page that is *allowed* to see it is
+  // untouched, so controller support is unaffected wherever it is permitted.
+  (function () {
+    function padsBlocked() {
+      try { navigator.getGamepads(); return false; }
+      catch (e) { return true; }
+    }
+    if (typeof navigator.getGamepads !== 'function' || !padsBlocked()) return;
+    var EMPTY = [];
+    var stub = function () { return EMPTY; };
+    try {
+      Object.defineProperty(Navigator.prototype, 'getGamepads',
+                            { value: stub, configurable: true, writable: true });
+    } catch (e) { /* fall through to the instance */ }
+    try { navigator.getGamepads = stub; } catch (e) {}
+    try { navigator.webkitGetGamepads = stub; } catch (e) {}
+    if (!padsBlocked()) { try { console.info('gamepad api blocked here; stubbed'); } catch (e) {} }
+  })();
+
+  /* --- the audio context can be born suspended ----------------------------- */
+  // Every sound in this game is synthesized at runtime, and none of it is heard
+  // if the Web Audio context is asleep. The shell used to resume exactly one
+  // context, once, on the Start click:
+  //
+  //     if (Module.SDL2 && Module.SDL2.audioContext) ...resume()
+  //
+  // LOVE does not open the audio device until well after that click, so at the
+  // moment the resume ran there was nothing to resume, and the call did nothing
+  // at all. On a permissive page it did not matter -- the context is born
+  // running and the game is audible -- but in a cross-origin frame without an
+  // autoplay grant it is born suspended, with the click's activation already
+  // spent, and stays that way forever. Everything works; nothing is heard.
+  //
+  // So: catch every context the engine makes, wake it at birth, and wake it
+  // again on any gesture the player makes afterwards.
+  (function () {
+    var ctxs = [];
+    function pump() {
+      for (var i = 0; i < ctxs.length; i++) {
+        try { if (ctxs[i].state === 'suspended') ctxs[i].resume(); } catch (e) {}
+      }
+    }
+    window.__botsAudioPump = pump;
+
+    function wrap(C) {
+      if (typeof C !== 'function') return C;
+      function Wrapped() {
+        var c = new (Function.prototype.bind.apply(C, [null].concat([].slice.call(arguments))))();
+        ctxs.push(c);
+        if (c.state === 'suspended') {
+          try { console.info('audio context born suspended; resuming'); } catch (e) {}
+        }
+        pump();
+        return c;
+      }
+      Wrapped.prototype = C.prototype;
+      return Wrapped;
+    }
+    try { window.AudioContext = wrap(window.AudioContext); } catch (e) {}
+    try { window.webkitAudioContext = wrap(window.webkitAudioContext); } catch (e) {}
+
+    var evs = ['pointerdown', 'mousedown', 'touchstart', 'keydown'];
+    for (var i = 0; i < evs.length; i++) {
+      window.addEventListener(evs[i], pump, true);
+    }
+    // and a slow heartbeat, because a tab restored from the background comes
+    // back suspended with no gesture attached to the restore
+    setInterval(pump, 1000);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) pump();
+    });
+  })();
+
+  /* --- never fail silently ------------------------------------------------ */
+  // A thrown exception inside the emscripten main loop leaves a black canvas
+  // and no explanation. Put the panel back with the reason on it: a page that
+  // says what went wrong is worth more than one that is merely dark.
+  var reported = false;
+  window.addEventListener('error', function (ev) {
+    if (reported) return;
+    reported = true;
+    var msg = (ev && (ev.message || (ev.error && ev.error.message))) || 'unknown error';
+    try {
+      var loader = $('loader');
+      if (loader) { loader.style.display = ''; loader.classList.remove('gone'); }
+      say(String(msg).replace(/[<&]/g, ' '));
+      var b = $('start');
+      if (b) { b.textContent = 'Reload'; b.disabled = false;
+               b.onclick = function () { location.reload(); }; }
+    } catch (e) {}
+  });
+
+  var Module = {
+    arguments: argv,
+    INITIAL_MEMORY: 402653184,
+    wasmBinary: window.__LOVE_WASM__.buffer,
+    canvas: canvas,
+    totalDependencies: 0,
+    remainingDependencies: 0,
+    setStatus: function (t) { if (t) setProgress(Math.min(0.55, progress + 0.02)); },
+    monitorRunDependencies: function (left) {
+      if (left === 0) { setProgress(0.58); mark('deps-ready'); gate(); }
+    },
+    // The game talks to this panel through stdout. Anything that is not a boot
+    // report goes to the console exactly as it did before.
+    printErr: console.error.bind(console),
+    print: function (text) {
+      if (typeof text === 'string') {
+        if (text.charCodeAt(0) === 66 /* B */) {
+          if (text === 'BOOTREADY') { gameReady(); return; }
+          var m = /^BOOT\|(\d+)\|(.*)$/.exec(text);
+          if (m) {
+            setProgress(0.58 + 0.42 * (+m[1] / 100));
+            if (m[2]) say(m[2], +m[1] >= 100 ? 'ok' : null);
+            return;
+          }
+        }
+      }
+      console.log(text);
+    }
+  };
+  window.Module = Module;
+
+  var started = false, gated = false, booted = false, watchdog = null;
+
+  /* The click gate. It opens when the runtime is linked, exactly as it used to,
+     so the moment a player can press Begin has not moved. What has changed is
+     that pressing it does something: the main thread is no longer blocked, so
+     the panel keeps painting and the game keeps reporting until it can draw. */
+  function gate() {
+    if (gated) return;
+    gated = true;
+    resize();
+    var b = $('start');
+    b.style.display = 'inline-block';
+    b.onclick = begin;
+    b.focus({ preventScroll: true });
+    window.addEventListener('keydown', function once(e) {
+      if (e.key === 'Enter' || e.key === ' ') { window.removeEventListener('keydown', once); begin(); }
+    });
+  }
+
+  /* The game has presented a frame. There is something behind this panel now. */
+  function gameReady() {
+    if (booted) return;
+    booted = true;
+    setProgress(1);
+    mark('first-frame');
+    if (!gated) gate();
+    if (started) dismiss();
+  }
+
+  function begin() {
+    if (started) return;
+    started = true;
+    canvas.focus();
+    // wake anything already made, and anything made from here on -- see the
+    // audio-context note above for why the old one-shot resume never fired
+    try { window.__botsAudioPump(); } catch (e) {}
+    try { if (Module.SDL2 && Module.SDL2.audioContext) Module.SDL2.audioContext.resume(); } catch (e) {}
+    if (booted) { dismiss(); return; }
+    // Not drawing yet. Keep the panel, retire the button, let the boot report
+    // finish the bar. Anything is better than handing over a black canvas.
+    $('start').style.display = 'none';
+    say('waking the island');
+    // ...and fail open. A runtime that never reports must not trap the player
+    // behind a panel; after this it is the game's problem to look like itself.
+    watchdog = setTimeout(function () { if (!booted) dismiss(); }, 30000);
+  }
+
+  function dismiss() {
+    if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+    $('loader').classList.add('gone');
+    setTimeout(function () {
+      $('loader').style.display = 'none';
+      if (window.__stopMotes) window.__stopMotes();
+      resize();
+    }, 820);
+  }
+
+  window.addEventListener('error', function (e) {
+    say('fault: ' + (e.message || 'unknown'));
+    console.error(e);
+  });
+
+  window.__loveBoot = function () {
+    say('compiling engine');
+    mark('compile-start');
+    try { Love(Module); } catch (err) { console.error(err); say('engine failed to start'); }
+  };
+})();
+</script>
+<script>/*__GAME_JS__*/</script>
+<script>/*__LOVE_JS__*/</script>
+<script>window.__loveBoot();</script>
