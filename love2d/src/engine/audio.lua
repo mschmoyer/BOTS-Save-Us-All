@@ -2,14 +2,22 @@
 -- played through a small voice-pooled mixer with buses, ducking, variation and
 -- world-positional panning.
 --
---   Audio.load()                      -- synthesize the bank (target < 2.5 s)
+--   Audio.load()                      -- synthesize the bank (~2.6 s, 11.8 MB)
 --   Audio.play(name, opts)            -- opts: volume, pan, pitch (ratio),
 --                                     --       semitones, x/y, variation, loop
+--   Audio.playIn(delay, name, opts)   -- the same, a moment from now
 --   Audio.stop(name | voice)
 --   Audio.update(dt, listenerX, listenerY)
 --   Audio.setBusVolume("master"|"sfx"|"music"|"ui", v)
 --   Audio.duck(amount, dur)
 --   Audio.setForestProgress(0..1)     -- lifts the plant chime up the pentatonic
+--
+-- and for the finale, which is the only part of the game with a continuous
+-- sound source in it and the only part with a crowd cue:
+--
+--   Audio.rigOpen() / rigStop(hard)   -- bracket the rig's drone
+--   Audio.rigSet(x, y, core, phase, hp)   -- per frame while the rig lives
+--   Audio.rebelCohort(n)              -- a wave of the workforce turns around
 --
 -- Nothing here assumes an audio device exists: every love.audio call is guarded
 -- so the headless CI run (SDL_AUDIODRIVER=dummy) behaves exactly the same, and

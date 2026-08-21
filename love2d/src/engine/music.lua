@@ -171,7 +171,9 @@ local BOSS_PARTS = {
     layers = { pad = 0.46, bass = 0.7, arp = 0.56, bell = 0.8, perc = 0.58, choir = 0.78 },
     theme = "full", density = 1.0, fadeBars = 2 },
   { name = "fall",       bpm = 62,  barsPerChord = 4, prog = { 1, 1, 1, 1 },
-    layers = { pad = 0.8, bass = 0.28, arp = 0, bell = 0.45, perc = 0, choir = 0.9 },
+    -- no bell layer: the only melodic note in the fall is the one Music
+    -- .bossFell fires by hand, on the downbeat of the rig hitting the island
+    layers = { pad = 0.8, bass = 0.28, arp = 0, bell = 0, perc = 0, choir = 0.9 },
     theme = "none", density = 0, fadeBars = 1 },
 }
 
@@ -502,7 +504,7 @@ function Music.bossFell()
   -- hi-hat is a slowing-down, not an ending
   M.gains.arp, M.targets.arp = 0, 0
   M.gains.perc, M.targets.perc = 0, 0
-  M.armed.pad, M.armed.choir, M.armed.bell, M.armed.bass = true, true, true, true
+  M.armed.pad, M.armed.choir, M.armed.bass = true, true, true
 
   local t = chordTones(1)
   note("choir", t[1] + 12, { volume = 1.0 * TRIM.choir, pan = -0.3 })
@@ -604,6 +606,9 @@ local function stepTick(step)
     -- the finale's four-on-the-floor pedal, but not while the rig is still
     -- landing: part 1 keeps the two-hit heartbeat so part 2 has somewhere to go
     if boss and part >= 2 and part <= 4 and (sib % 4 == 0) then hit = true end
+    -- ...and the fall keeps one tonic a bar, under the held chord. A cadence
+    -- with a syncopated bass fill in it is not a cadence.
+    if boss and part == 5 then hit = (sib == 0) end
     if hit then
       local n = tones[1] - 12
       if sib ~= 0 and rng:chance(0.25) then n = tones[3] - 12 end

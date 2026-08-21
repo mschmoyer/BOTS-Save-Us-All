@@ -733,6 +733,9 @@ function World:updateRebellion(dt)
   if sent > 0 then
     self.rebelSent = (self.rebelSent or 0) + sent
     Signal.emit("bots:cohort", sent)
+    -- one voice per bot in the wave, staggered onto chord tones, so a cohort
+    -- of four is a chord rather than four copies of the same chirp
+    if Audio.rebelCohort then Audio.rebelCohort(sent) end
   end
 end
 

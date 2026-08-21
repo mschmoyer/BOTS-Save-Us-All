@@ -362,7 +362,10 @@ function Bot:updateRebel(dt)
     t:damage(self.world and self.world.rebelDamage or 1, self.x, self.y, { source = "bot" })
     VFX.emit("bot_death", self.x, self.y, { power = 1.2 })
     VFX.emit("love_heart", self.x, self.y, { power = 1.5 })
-    Audio.play("bot_down", { pitch = 1.1 })
+    -- Not bot_down at a higher pitch: that cue tells the player a Chomper
+    -- popped, and it ducks the music 0.28 for 1.1s -- forty of those land
+    -- during the finale, holding the score down for the whole of it.
+    Audio.play("bot_sacrifice", { x = self.x, y = self.y })
     J.shake(0.2) J.stop(0.04)
     self.alive = false
     self.state = "dead"

@@ -177,6 +177,10 @@ end
 
 function Game:bindSignals()
   Signal.clearOwner(self)
+  -- The score listens for the finale itself: the rig landing, each cohort
+  -- leaving, the two phase breaks and the fall. It is inert until this is
+  -- called, and it owns its own bindings.
+  if Music.bindSignals then Music.bindSignals() end
   Signal.on("phase:dawn", function(cycle, report)
     if self.world.player.agent then
       -- headless autoplay: take a chip and carry on, so captures reach cycle 5
