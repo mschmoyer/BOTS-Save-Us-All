@@ -54,9 +54,9 @@ local BOT_NAMES = { "SEED-07", "FRAME-02", "PYLON-11", "THORN-04", "SCRAP-09",
 local function buildStub()
   local rng = U.rng(4242)
   local chips = Chips.new()
-  chips:add("mycelium")
-  chips:add("kineticCuffs")
-  chips:add("veinSense")
+  chips:add("pioneer")
+  chips:add("pinBreaker")
+  chips:add("seedBank")
 
   local bots = {}
   local order = TU.bots.order

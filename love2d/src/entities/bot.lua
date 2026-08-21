@@ -43,7 +43,7 @@ function Bot:init(x, y, botType, world, rng)
 
   self.state       = "boot"           -- boot | work | down | dead | rebel
   self.stateT      = 0
-  self.bootT       = T.bootTime * ((world and world.chips and world.chips:has("quickBoot")) and 0.12 or 1)
+  self.bootT       = T.bootTime
   self.mood        = "normal"         -- normal | confused | love
   self.eyeX, self.eyeY = 0, 1
   self.actionT     = self.rng:range(0.3, 1.4)
@@ -72,7 +72,6 @@ end
 function Bot:speed()
   local m = 1
   if self.world and self.world.chips then m = self.world.chips:get("botSpeed", 1) end
-  if self.chorus then m = m * 1.2 end
   return self.def.speed * m
 end
 
@@ -82,7 +81,6 @@ function Bot:workRate()
     m = m * (1 + TU.rally.workBonus * self.world:rallyPull(self.x, self.y))
   end
   if self.world and self.world.chips then m = self.world.chips:get("botWork", 1) end
-  if self.chorus then m = m * 1.2 end
   if self.world and self.world.beaconBoostAt then
     m = m * (1 + self.world:beaconBoostAt(self.x, self.y))
   end
@@ -209,9 +207,8 @@ function Bot:update_planter(dt)
   self.actionT = self.actionT - dt * self:workRate()
   if self:moveToward(self.wx, self.wy, dt) then self:pickWander(0.45) end
   if self.actionT <= 0 then
-    local n = (self.world and self.world.chips and self.world.chips:has("secondShift")) and 2 or 1
     local planted = 0
-    for _ = 1, n do
+    do
       if self.world and self.world:plantTree(
            self.x + self.rng:range(-14, 14), self.y + self.rng:range(6, 22), self) then
         planted = planted + 1
@@ -343,7 +340,6 @@ function Bot:update_harvester(dt)
     return
   end
   local node = self.world and self.world:nearestCobalt(self.x, self.y, self.def.seekRange)
-  local tithe = self.world.chips and self.world.chips:has("tithe")
   if node then
     if self:moveToward(node.x, node.y, dt) or U.dist(self.x, self.y, node.x, node.y) < 26 then
       if self.world:consumeCobaltNear(self.x, self.y, 30) then

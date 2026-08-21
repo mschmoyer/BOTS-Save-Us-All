@@ -332,9 +332,9 @@ local C = {
   -- sentence the rig can say. So it is built the way molten metal actually
   -- looks: a near-black crust floating on a pool that is the brightest thing in
   -- the frame, and the only place the pool shows is the cracks between plates.
-  crust    = P.mix(P.ramp.ember[1], P.black, 0.78),
-  crustLit = P.mix(P.ramp.ember[1], P.black, 0.44),
-  crustCold= P.mix(P.ramp.metal[1], P.black, 0.66),
+  crust    = P.mix(P.ramp.ember[1], P.black, 0.88),
+  crustLit = P.mix(P.ramp.ember[1], P.black, 0.56),
+  crustCold= P.mix(P.ramp.metal[1], P.black, 0.74),
   poolRim  = P.shade(P.ramp.ember, 1.25),
   poolMid  = P.shade(P.ramp.ember, 2.35),
   poolHot  = P.mix(P.shade(P.ramp.ember, 4), P.white, 0.32),
@@ -1036,79 +1036,82 @@ function Boss:drawDeck(lift)
   Draw.setColor(C.void)
   LG.ellipse("fill", 0, deckY, rOut * 1.10, rOut * 1.10 * isq)
 
-  -- The pool the crust floats on, drawn *opaque* and genuinely hot: the middle
-  -- of it is the brightest value on the machine by a wide margin, because
-  -- everything laid over it in a moment is going to be near-black, and a crack
-  -- only reads as a crack if what shows through it is a light source.
+  -- The crust. Near-black, and it is nearly all of the well: what the eye is
+  -- given here is a *surface*, and the only bright thing inside the machine is
+  -- what is coming up through the breaks in it.
+  --
+  -- This was a graded tan disc -- brass, or a wooden hatch, at the exact centre
+  -- of a machine that has come to strip a planet. A tessellation of crust
+  -- plates was tried first and at the size the core actually occupies on screen
+  -- it read as a gear: three concentric rings of even cells is a machined
+  -- thing, and this has to be a failing one. Cracks drawn as strokes carry it,
+  -- because a stroke can be thin, crooked and moving, and a cell cannot.
   local pRim = P.mix(C.poolRim, C.coreDeep, 1 - open)
   local pMid = P.mix(C.poolMid, C.coreMidC, 1 - open)
   local pHot = P.mix(C.poolHot, C.coreHiC, 1 - open)
-  ngonLit(0, deckY, rOut, rOut * isq, 20, 0, pRim, pRim, 1)
-  plate(0, deckY, 0, TAU, 0, rOut, isq, pMid, pRim, 1, 22)
-  -- Three hot spots wandering under the crust rather than one bright middle.
-  -- A single graded centre is a headlight; melt has no centre, it has weather.
-  for k = 0, 2 do
-    local w = self.age * (0.31 + k * 0.17) + k * 2.1
-    Draw.radialGradient(sin(w) * rOut * 0.34, deckY + cos(w * 0.83) * rOut * 0.30 * isq,
-                        rOut * (0.34 - k * 0.06), pHot, P.alpha(pHot, 0),
-                        rOut * (0.34 - k * 0.06) * isq)
-  end
-
-  -- The crust: two rings of cooled plate drifting over the pool at different
-  -- rates and in opposite directions, with gaps that breathe. The gaps *are*
-  -- the cracks -- the pool is already behind them -- so the fissure network
-  -- opens, closes and travels without one of them being drawn as a line, and
-  -- the value range across four pixels of it runs from near-black to white.
-  local drift = self.age * TAU * AR.coreDriftRps
-  local crack = r * (AR.coreCrack + AR.coreCrackOpen * open)
-  local flow  = self.age * TAU * AR.coreFlowHz
   local crustC = P.mix(C.crustCold, C.crust, open)
   local crustL = P.mix(C.crustCold, C.crustLit, open)
-  local CR = AR.coreCells
-  for ring = 1, #CR do
-    local cells = CR[ring]
-    local spin  = drift * (ring % 2 == 1 and 1 or -0.62) + ring * 0.7
-    local r0 = rOut * (0.16 + (ring - 1) * 0.28)
-    local r1 = rOut * (0.16 + ring * 0.28)
-    if ring == #CR then r1 = rOut * 0.99 end
-    local rm = (r0 + r1) * 0.5
-    local span = TAU / cells
-    for k = 0, cells - 1 do
-      local a0 = spin + k * span
-      local a1 = a0 + span
-      local am = (a0 + a1) * 0.5
-      -- Each plate breathes on its own clock, so the network never repeats --
-      -- but a crack is never allowed to eat its own plate: capped, the crust
-      -- stays the majority of the surface and the heat stays a seam in it.
-      local g = math.min(crack * (0.55 + 0.45 * sin(flow + k * 1.7 + ring * 2.3)) / rm,
-                         span * AR.coreCrackMax)
-      if span > g * 2.4 then
-        local j0 = r0 + crack * (0.30 + hash(k, ring, 3) * 0.40)
-        local j1 = r1 - crack * (0.30 + hash(k, ring, 7) * 0.40)
-        local up = 0.5 + 0.5 * cos(am - math.pi * 1.25)
-        local tone = hash(k, ring, 11) * 0.30
-        local cLo = P.mix(crustC, crustL, tone * 0.4)
-        local cHi = P.mix(crustC, crustL, tone + up * 0.34)
-        plate(0, deckY, a0 + g, a1 - g, j0, j1, isq, cHi, cLo, 1, 4)
-        -- the plate's own inner lip, catching the light out of the crack it
-        -- is sitting over: this is what makes it a slab and not a hole
-        plate(0, deckY, a0 + g, a1 - g, j0, j0 + crack * 1.1, isq,
-              P.mix(cHi, pMid, 0.60), P.alpha(P.mix(cHi, pMid, 0.60), 0), 0.9, 3)
-      end
-    end
+  ngonLit(0, deckY, rOut, rOut * isq, 20, 0, crustL, crustC, 1)
+  plate(0, deckY, 0, TAU, rOut * 0.55, rOut, isq, P.alpha(C.void, 0), C.void, 0.75, 20)
+  -- broken plate lying on it, so the crust has a grain rather than a tone
+  for k = 1, 9 do
+    local a = hash(k, 51, 3) * TAU + self.age * 0.05
+    local d = rOut * (0.22 + hash(k, 53, 4) * 0.66)
+    Draw.setColor(P.mix(crustC, crustL, hash(k, 57, 5) * 0.8), 0.55)
+    Draw.blob(cos(a) * d, deckY + sin(a) * d * isq, rOut * (0.13 + hash(k, 59, 6) * 0.16),
+              7, k * 17, 0.40, 0.55)
   end
 
+  -- Pockets where the crust has given way and the melt is simply open. They
+  -- wander, so the core is never the same shape twice.
+  for k = 0, 2 do
+    local w = self.age * (0.29 + k * 0.16) + k * 2.1
+    local px, py = sin(w) * rOut * 0.36, deckY + cos(w * 0.83) * rOut * 0.30 * isq
+    local pr = rOut * (0.30 - k * 0.07)
+    Draw.setColor(P.mix(pRim, C.void, 0.35), 0.9)
+    Draw.blob(px, py, pr * 1.12, 8, k * 23 + 5, 0.34, isq)
+    Draw.radialGradient(px, py, pr, pMid, P.alpha(pMid, 0), pr * isq)
+    Draw.radialGradient(px, py, pr * 0.46, pHot, P.alpha(pHot, 0), pr * 0.46 * isq)
+  end
+
+  -- The cracks. Each one walks outward from the vent in four steps with a
+  -- crooked wobble, and a bright pulse travels up it -- so the fissure network
+  -- is legibly *moving* without a frame of it being drawn twice.
+  local drift = self.age * TAU * AR.coreDriftRps
+  local flow  = self.age * TAU * AR.coreFlowHz
+  local wide  = r * (AR.coreCrack + AR.coreCrackOpen * open)
+  local NC, NS = AR.coreCracks, 4
   Draw.additive(function()
-    -- convection: three broad hot wedges turning under the crust, so the
-    -- cracks brighten and dim in a pattern that is going somewhere
-    for k = 0, 2 do
-      local a = flow * 0.5 + k * TAU / 3
-      plate(0, deckY, a - 0.55, a + 0.55, rOut * 0.10, rOut, isq,
-            P.alpha(pHot, 0.10), P.alpha(pRim, 0), 1, 5)
+    for i = 1, NC do
+      local a = drift + i / NC * TAU + hash(i, 71, 2) * 0.5
+      local px, py, pw = 0, deckY, wide * 1.15
+      for st = 1, NS do
+        local t  = st / NS
+        local d  = rOut * (0.10 + t * 0.92)
+        local aa = a + (hash(i, st, 13) - 0.5) * 0.55 + sin(flow * 0.7 + i + st) * 0.10
+        local qx, qy = cos(aa) * d, deckY + sin(aa) * d * isq
+        local w  = wide * (1.15 - t * 0.80)
+        -- the pulse running up the crack
+        local pu = 0.28 + 0.72 * U.saturate(sin(flow * 2.0 - st * 1.05 + i * 1.7))
+        local c0 = P.mix(pHot, pMid, (t - 1 / NS) * 0.9)
+        local c1 = P.mix(pHot, pMid, t * 0.9)
+        local nx0, ny0 = -(qy - py), (qx - px)
+        local nl = math.sqrt(nx0 * nx0 + ny0 * ny0)
+        if nl > 1e-4 then
+          nx0, ny0 = nx0 / nl, ny0 / nl
+          Draw.quad(px + nx0 * pw, py + ny0 * pw, px - nx0 * pw, py - ny0 * pw,
+                    qx - nx0 * w, qy - ny0 * w, qx + nx0 * w, qy + ny0 * w,
+                    P.alpha(c0, 0.85 * pu), P.alpha(c0, 0.85 * pu),
+                    P.alpha(c1, 0.70 * pu * (1 - t * 0.35)),
+                    P.alpha(c1, 0.70 * pu * (1 - t * 0.35)))
+        end
+        px, py, pw = qx, qy, w
+      end
     end
-    -- and the bloom the melt throws back up over its own crust
-    plate(0, deckY, 0, TAU, rOut * 0.06, rOut * 1.02, isq,
-          P.alpha(pMid, (0.10 + 0.12 * open) * pulse), P.alpha(pRim, 0), 1, 20)
+    -- the vent at the middle, and the light the whole well throws back up
+    Draw.setColor(pHot, 0.75)
+    LG.ellipse("fill", 0, deckY, wide * 1.5, wide * 1.5 * isq, 12)
+    Draw.glow(0, deckY, rOut * (0.55 + 0.30 * open) * pulse, pMid, (0.20 + 0.24 * open))
   end)
 
   -- the leaves, retracting outward as the machine opens
@@ -1128,11 +1131,6 @@ function Boss:drawDeck(lift)
             C.void, P.alpha(C.void, 0), 0.8, 4)
     end
   end
-
-  Draw.additive(function()
-    Draw.glow(0, deckY, r * (0.10 + 0.17 * open) * pulse,
-              P.mix(C.molten, C.coreMidC, 1 - open), 0.12 + 0.17 * open, 2)
-  end)
 
   -- the machined ring the leaves run in, and its bolts: without it a closed
   -- aperture is a grey disc and nothing says it is a door

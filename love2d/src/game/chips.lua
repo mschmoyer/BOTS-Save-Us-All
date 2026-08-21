@@ -572,23 +572,50 @@ function Chips:tick(dt)
 end
 
 --- Three distinct offers, weighted by rarity and biased away from what you have.
+--- One dawn's offer. Three cards, one taken, the other two gone forever.
+---
+--- From `rareFrom` onward one seat in the hand is reserved for a rare, if the
+--- player has not already taken every rare in the pool. Rares are the cards
+--- that reshape a night rather than adjust a number, and a draft that offers
+--- three commons in a row reads to the player as noise rather than as a
+--- decision they authored -- which is exactly the failure the pool was cut from
+--- forty-six cards to twenty-six to avoid.
+local RARE_FROM = 4
+
 function Chips:draft(rng, n, cycle)
   n = n or 3
-  local pool = {}
-  for _, c in ipairs(C) do
-    if not self:has(c.id) then
-      local weight = (c.r == 1 and 6 or (c.r == 2 and 3 or 1))
-      weight = weight + (cycle or 1) * (c.r - 1) * 0.6      -- rares get likelier late
-      for _ = 1, max(1, floor(weight)) do pool[#pool + 1] = c end
+  cycle = cycle or 1
+
+  local function poolOf(pred)
+    local pool = {}
+    for _, c in ipairs(C) do
+      if not self:has(c.id) and (pred == nil or pred(c)) then
+        local weight = (c.r == 1 and 6 or (c.r == 2 and 3 or 1))
+        weight = weight + cycle * (c.r - 1) * 0.6      -- rares get likelier late
+        for _ = 1, max(1, floor(weight)) do pool[#pool + 1] = c end
+      end
     end
+    return pool
   end
+
   local out, seen = {}, {}
-  local guard = 0
-  while #out < n and guard < 400 do
-    guard = guard + 1
-    local c = rng:pick(pool)
-    if c and not seen[c.id] then seen[c.id] = true out[#out + 1] = c end
+  local function take(pool)
+    for _ = 1, 120 do
+      local c = rng:pick(pool)
+      if c and not seen[c.id] then
+        seen[c.id] = true
+        out[#out + 1] = c
+        return true
+      end
+    end
+    return false
   end
+
+  if cycle >= RARE_FROM and n > 1 then
+    take(poolOf(function(c) return c.r >= 3 end))
+  end
+  local any = poolOf(nil)
+  while #out < n and take(any) do end
   return out
 end
 

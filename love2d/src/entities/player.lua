@@ -63,7 +63,6 @@ function Player:speedMul()
   if self.carrying then m = m * T.carry.speedMul end
   if self.charging then m = m * 0.45 end
   if self.world and self.world.chips then m = m * (self.world.chips:get("moveSpeed", 1)) end
-  if self.lastLightOn then m = m * 1.35 end
   return m
 end
 
@@ -200,15 +199,6 @@ function Player:update(dt, camera)
   end
 
   ------------------------------------------------------------------ cosmetic
-  -- LAST LIGHT: on your final heart the world slows and you get quicker
-  if self:chips() and self:chips():has("lastLight") then
-    local low = self.hp <= 1 and self.state == "alive"
-    if low ~= self.lastLightOn then
-      self.lastLightOn = low
-      J.dilate(low and 0.72 or 1, low and 999 or 0.4)
-    end
-  end
-
   local sp = U.len(self.vx, self.vy) / T.maxSpeed
   self.lean = U.damp(self.lean, U.clamp(self.vx / T.maxSpeed, -1, 1) * 0.22, 9, dt)
   self.squash = U.damp(self.squash, 1, 10, dt)

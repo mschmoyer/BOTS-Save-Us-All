@@ -289,6 +289,13 @@ S.hud = {
   holdCost  = "%d%% HEAVIER NIGHT",
   holdTaken = "DAWN HELD",
   holdAfter = "THE NIGHT WILL BE WORSE FOR IT",
+  -- The day's opposition announces itself. Without this a Scar is a dot on the
+  -- minimap that the player never learns is the reason the night started in the
+  -- middle of their wood.
+  scarRooted  = "BLIGHT TOOK ROOT",
+  scarWhere   = "IT WILL SPREAD, AND THE NIGHT WILL START THERE",
+  scarSpread  = "IT SPREAD",
+  scarCleared = "GROUND RECLAIMED",
 }
 
 --------------------------------------------------------------------- tutorial

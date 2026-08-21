@@ -305,10 +305,7 @@ function World:plantTree(x, y, by)
   local gap = TU.tree.spreadReject * 0.74
   if self.hTree:nearest(x, y, gap, function(t) return t.alive end) then return false end
 
-  local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000), {
-    startGrown = (by == "player" and self.chips:has("greenThumb")) or nil,
-    growth = (by == "player" and self.chips:has("greenThumb")) and 0.5 or nil,
-  }) or nil
+  local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000)) or nil
   if not t then return false end
   t.world = self
   t.canElder = true
@@ -426,9 +423,7 @@ function World:acidSplash(x, y)
   if self.decals and self.decals.add then self.decals.add("acid", x, y) end
   local r = 46
   self.hTree:each(x, y, r, function(t)
-    if t.alive and t.stage == "sapling" and not self.chips:has("hardBark") then
-      self:fellTree(t, "acid")
-    end
+    if t.alive and t.stage == "sapling" then self:fellTree(t, "acid") end
   end)
   self.hBot:each(x, y, r, function(b)
     if b.alive and b.state ~= "down" and U.dist(b.x, b.y, x, y) < r then b:damage(1, x, y) end
@@ -718,7 +713,6 @@ function World:buildDawnReport()
   self.lastO2 = self.o2
   self.lostNames = {}
   self.dawnReport = r
-  if self.chips:has("surplus") then self:addCobalt(math.floor(self.treeCount / 4)) end
   return r
 end
 
@@ -875,16 +869,6 @@ function World:update(dt)
   end
 
   self:updateSpread(dt)
-
-  -- chorus chip: bots near friends work faster
-  if self.chips:has("chorus") then
-    for i = 1, #self.bots do
-      local b = self.bots[i]
-      local c = 0
-      self.hBot:each(b.x, b.y, 120, function(o) if o ~= b and o.alive then c = c + 1 end end)
-      b.chorus = c >= 2
-    end
-  end
 
   -- speech bubbles
   for i = #self.speeches, 1, -1 do
@@ -1318,9 +1302,6 @@ Signal.on("bot:lost", function(bot, peaceful)
                                           planted = bot.planted or 0,
                                           built = bot.built or 0 }
   Signal.emit("bot:epitaph", bot.name, bot:epitaph())
-  if w.chips:has("salvage") then
-    w:addCobalt(math.floor(bot.def.cost * 0.5), bot.x, bot.y)
-  end
 end)
 
 -- Old Growth applies to what you plant next, not to the wood you already have:
@@ -1331,9 +1312,6 @@ Signal.on("chip:added", function(chip)
   if chip.id == "glassLungs" and w.player then
     w.player.maxHp = 1
     w.player.hp = 1
-  elseif chip.id == "heldBreath" and w.player then
-    w.player.maxHp = w.player.maxHp + 1
-    w.player.hp = w.player.hp + 1
   elseif chip.id == "richSeam" then
     w.extraNodes = (w.extraNodes or 0) + 4
   end

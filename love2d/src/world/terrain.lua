@@ -532,6 +532,11 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     float live = smoothstep(0.80, 0.94, hash21(pa.xy + 7.1))
                * smoothstep(0.54, 0.78, fbm3(w * 0.0062 + 41.0));
     dead += cBlight[3] * smoothstep(0.009, 0.0, pa.z * cvz) * deep * deep * live * 0.20;
+    // TEMP DEBUG
+    float dbg = fract(w.x * 0.0035);
+    if (dbg < 0.33) { dead = vec3(tA, tB, 0.0); }
+    else if (dbg < 0.66) { dead = cAsh[3]; }
+    else { dead = cBlight[3]; }
     col = mix(col, dead, scarT);
     // The rot rim: living ground going grey a few metres before it dies. Value
     // and saturation, not hue -- a violet halo round every scar was the tell.

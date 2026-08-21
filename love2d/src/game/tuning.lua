@@ -424,11 +424,10 @@ T.boss = {
     -- Two rings of cooled plate turn over the melt in opposite directions and
     -- the gaps between them are the cracks, so the fissure network moves on its
     -- own without a frame of it being authored.
-    coreCells     = { 5, 8, 11 },  -- crust plates per ring, inner ring first
-    coreDriftRps  = 0.026,  -- crust rotation, revs/sec; the rings differ
-    coreCrack     = 0.016,  -- crack width, in rig radii, with the core sealed
-    coreCrackOpen = 0.013,  -- ...added on top once it is open
-    coreCrackMax  = 0.11,   -- ...but never more than this share of a plate
+    coreCracks    = 11,     -- fissures walking out of the vent through the crust
+    coreDriftRps  = 0.026,  -- the whole crack field turns at this, revs/sec
+    coreCrack     = 0.017,  -- crack width, in rig radii, with the core sealed
+    coreCrackOpen = 0.014,  -- ...added on top once it is open
     coreFlowHz    = 0.30,   -- the breathing and the convection turn at this
     coreVeins     = 6,      -- cracks running out of the core over the deck
     deckRivets    = 8,      -- one per deck seam; it used to be twenty-four

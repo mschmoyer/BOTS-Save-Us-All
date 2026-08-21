@@ -491,6 +491,16 @@ function HUD.init(world)
   end)
   Signal.on("chip:added", function(c) HUD.toast(c.name, P.ramp.ember[4], c.f, 5.5) end)
   Signal.on("director:dawn", function() HUD.toast("NIGHT SURVIVED", P.accent, nil, 5) end)
+  -- The day's opposition has to announce itself, or a Scar is only ever a dot
+  -- on the minimap and the player never connects it to the night that then
+  -- starts in the middle of their wood.
+  Signal.on("blight:rooted", function(_, spread)
+    HUD.toast(spread and Script.hud.scarSpread or Script.hud.scarRooted,
+              P.shade(P.ramp.blight, 3.4), Script.hud.scarWhere, 6, RANK_LOSS)
+  end)
+  Signal.on("blight:cleared", function()
+    HUD.toast(Script.hud.scarCleared, P.accent, nil, 4)
+  end)
   Signal.on("phase:dusk", function(cycle, sx, sy)
     HUD.sideX, HUD.sideY = sx or 0, sy or -1
     HUD.toast("DUSK", P.warn, "THE RIFT IS OPENING", 5)
