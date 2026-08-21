@@ -130,7 +130,35 @@ local TUNE = {
 
   lodPixels     = 52,     -- on-screen height under which the cheap mesh is used
   rimPixels     = 96,     -- ... above which the additive rim pass is worth it
-  shadowPixels  = 24,     -- ... under which shadows are skipped entirely
+  -- On-screen height under which a tree stops casting a contact shadow, and the
+  -- band above it over which the shadow fades in. This used to be 24px, which
+  -- is small enough that it never removed anything: measured on the 900-tree
+  -- night island, 479 of 479 visible trees drew a shadow, tree shadow alone was
+  -- 9.27 screens of overdraw a frame, and shadows were 479 of 1,628 draw calls.
+  -- Sweeping the threshold on that scene: 40px -> 477 draws, 56 -> 470, 72 ->
+  -- 457, 96 -> 406, 128 -> 363, 160 -> 309. 128 is where the curve has given up
+  -- a useful quarter of the draws (and 17% of the shadow fill) while the
+  -- picture is still the picture: against the 24px capture of a grown day
+  -- forest, 128 moves 798 pixels of 1.44 million by more than 10/255, all of
+  -- them inside canopy shade, and 160 starts visibly taking the shadow out from
+  -- under trees standing alone on bare rock, which is exactly the contact the
+  -- shadow is there to sell.
+  -- The fade band matters at this size. At 24px a tree crossing the threshold
+  -- gained a shadow nobody could see; at 128 it would pop one on, so a shadow
+  -- ramps in over 128..160px instead. It is free: those trees were drawing
+  -- anyway, the ramp only takes alpha off them.
+  -- One thing that WILL look like a bug and is not. This is a screen-space
+  -- LOD, and demo_tree's FOREST phase sits at zoom 0.62 -- half the game's
+  -- range, which is 1.16 at its widest and 1.25 at rest. So the flora test bed
+  -- renders almost no shadows at its default zoom while the game renders them
+  -- normally, and a demo_tree capture taken across this change moves ~8% of its
+  -- pixels against ~0.06% in the game. The tool is not lying; it is showing
+  -- what the game would show if the game ever pulled the camera back that far.
+  -- Press `]` to bring it into the game's range before judging shadow work.
+  -- If that trade is ever judged wrong, 96 is the fallback: it keeps ~15% of
+  -- the draw-call saving and moves 97 in-game pixels instead of 798.
+  shadowPixels  = 128,
+  shadowFade    = 1.25,   -- shadow reaches full strength at shadowPixels * this
   cullPad       = 90,
   sleepFrames   = 4,      -- an off-screen tree runs its slow block 1 frame in N
 }
@@ -1215,19 +1243,32 @@ end
 
 --- Wind, leaves, x-ray and pose have always been view-culled; the slow block
 --- above was not, and ran for all 722 trees whether or not anyone could see
---- them. Measured, that block is 1.4 ms of a 10.4 ms Lua frame here and 3.5 ms
---- of the browser's 17 - 20% of its whole Lua budget - and it scales straight
---- to ~9 ms at the 1,900-tree design ceiling.
+--- them. An off-screen tree now runs it one frame in `TUNE.sleepFrames`,
+--- carrying the skipped frames' `dt` in `slowT` and handing it over whole.
 ---
---- So an off-screen tree runs it one frame in `TUNE.sleepFrames`, carrying the
---- skipped frames' `dt` in `slowT` and handing it over whole. That is not an
---- approximation: every term in `tickSlow` is a plain `+ dt * rate`, so four
---- steps of `dt` and one step of `4*dt` reach the same number, and the two
---- springs below - the only integrators on a tree - stay on the per-frame path
---- where they belong. Slots are dealt round-robin at birth, so a quarter of the
---- forest ticks on each frame rather than the whole forest on every fourth one.
---- Coming back into view flushes the carry on the spot, so a tree that walks
---- on screen is never a fraction of a tick behind the one standing next to it.
+--- That is not an approximation. Every term in `tickSlow` is a plain
+--- `+ dt * rate`, so four steps of `dt` and one step of `4*dt` reach the same
+--- number: driving 240 trees off screen for 2,400 frames, total growth and
+--- total elder time accumulate at rates that agree to six figures between
+--- sleepFrames 1 and 4, and felled/faded counts come out identical. The only
+--- difference is read phase - three quarters of the forest is up to three
+--- frames stale when something asks - and nothing reads it but the oxygen
+--- census, which is already amortised over four frames itself. The two springs
+--- below stay on the per-frame path where they belong, because they are the
+--- only integrators on a tree and a spring does not survive being stepped 4x.
+--- Slots are dealt round-robin at birth, so a quarter of the forest ticks on
+--- each frame rather than the whole forest on every fourth one, and coming back
+--- into view flushes the carry on the spot.
+---
+--- Be honest about the size of this. `PERFORMANCE.md` costs the block at 3.5 ms
+--- of the browser's 17 ms of Lua, but on the standard 723-tree perf scene the
+--- rota measures inside the noise, because that scene's forest is fully grown
+--- and a grown, unbothered tree falls out of the block after a handful of
+--- instructions. What it buys is the case the profile does not hold still for:
+--- a forest that is still growing (every tree in it re-buckets a mesh and
+--- recomputes a stage), and the 1,900-tree ceiling, where most of the island is
+--- off screen. It costs nothing to keep, and it stops the block scaling with
+--- the forest instead of with the view.
 function Tree:update(dt)
   local on = self:visible()
   self.onScreen = on
@@ -1524,7 +1565,16 @@ end
 ---   ambient   - 0..1, how much fill light there is; softens/lightens shadows
 function Tree:drawShadow(sunAngle, sunLength, ambient)
   if not self.onScreen or self.fade <= 0 then return end
-  if self.height * (Tree.zoom or 1) < TUNE.shadowPixels then return end
+  -- Small trees keep no shadow, and the ones just above the line ramp into
+  -- theirs rather than switching it on - see TUNE.shadowPixels for the sweep
+  -- that picked the number.
+  local px = self.height * (Tree.zoom or 1)
+  if px < TUNE.shadowPixels then return end
+  local fade = self.fade
+  local band = TUNE.shadowPixels * (TUNE.shadowFade - 1)
+  if band > 0 and px < TUNE.shadowPixels + band then
+    fade = fade * (px - TUNE.shadowPixels) / band
+  end
   local mesh = LIB.shadow[self.key]
   if not mesh then return end
 
@@ -1547,13 +1597,13 @@ function Tree:drawShadow(sunAngle, sunLength, ambient)
       local k = self.size * (Tree.zoom or 1)
       Tree.fill.shadow = Tree.fill.shadow + (self.meta.areaShadow or 0) * k * k
     end
-    love.graphics.setColor(1, 1, 1, self.fade)
+    love.graphics.setColor(1, 1, 1, fade)
     love.graphics.draw(mesh, self.x, self.y, self.drot, self.dsx, self.dsy)
   else
     -- no-shader fallback: a flat contact ellipse
     bind(nil)
     love.graphics.setColor(SHADOW_COL[1], SHADOW_COL[2], SHADOW_COL[3],
-                           TUNE.shadowAlpha * self.fade)
+                           TUNE.shadowAlpha * fade)
     love.graphics.ellipse("fill", self.x + cos(sunAngle) * self.height * (sunLength or 1) * 0.4,
                           self.y + sin(sunAngle) * self.height * (sunLength or 1) * 0.4,
                           self.canopyR * 0.9, self.canopyR * 0.36)

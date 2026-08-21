@@ -99,22 +99,55 @@ calls and a tree costs two**.
    runs of identical code differ on 96% of pixels by ±1, because the grade is
    wall-clock dependent. Use a fixed probe scene for pixel regression.
 
-4. **Drop contact shadows on small trees.** `treeDraw` 271 + `treeShadow` 259 =
-   530 of 1,178 draw calls, and trees alone are 19.6 screens of overdraw a
-   frame — 7.74 of it shadow, most of which is under a canopy anyway. Raising
-   the pixel threshold at which a tree keeps its shadow is 259 draw calls and
-   40% of the overdraw for very little picture. *Risk: low.*
+4. ~~**Drop contact shadows on small trees.**~~ **DONE, and the 40% was not
+   reachable.** The estimate assumed a population of small trees that a mature
+   forest does not have: at the end of a run essentially *every* visible tree
+   draws a shadow, so taking 40% of the shadow fill would mean taking shadows
+   off grown trees, which is the contact the shadow exists to sell.
 
-5. **Tick off-screen trees on a rota.** Wind, leaves, x-ray and pose are
-   already view-culled; the growth, elder, chew and topple block is not, and
-   runs for all 722. A quarter of the list per frame at `dt*4` is identical
-   behaviour. That is 3.5 ms of the browser's 17 ms of Lua — 20% — and at the
-   1,900-tree design ceiling it is ~9 ms. *Risk: low, no visual change.*
+   Swept on a 900-tree night scene, the threshold sits at **128 px** with a
+   128→160 fade band (a pop at 128 px would be visible where one at 24 px never
+   was; the ramp is free, those trees were already drawing). *Measured: shadow
+   draw calls 479.3 -> 363.4 (−116, −24%, 7% of the frame's 1,628), shadow
+   overdraw −17%. In-game picture cost: 798 of 1.44 M pixels move by more than
+   10/255, all inside canopy shade.* 160 starts taking the shadow out from under
+   trees standing alone on bare rock; 96 is the documented fallback.
 
-6. **One persistent visible list instead of two sweeps and a sort.**
-   `World:draw` sweeps the 722-tree array twice and sorts ~450 entries through
-   a Lua comparator. `Tree:update` already computes `onScreen` in a sweep it is
-   doing anyway. 3.0 ms, 10.7% of the frame. *Risk: low.*
+   Note for anyone reading a `demo_tree` capture: that scene's FOREST phase sits
+   at zoom 0.62, below the game's 1.16–1.25, so it renders almost no shadows now
+   and its capture moves ~8% of its pixels. That is the LOD behaving correctly at
+   a zoom the game never uses, not a regression.
+
+5. ~~**Tick off-screen trees on a rota.**~~ **DONE — correct, but the 3.5 ms is
+   not there.** Equivalence is proven: 240 trees parked off screen for 2,400
+   frames accumulate growth at rates agreeing to 0.00004% and elder time to
+   0.00000% between `sleepFrames` 1 and 4.
+
+   The saving is not measurable on this scene — `treeUpdate` 1.677 -> 1.597 ms
+   min-of-3, but −0.109/−0.080/+0.127 round by round, which is inside the noise.
+   The reason is that the perf scene's forest is fully grown, and a grown,
+   unbothered tree falls out of the block after a handful of instructions. Kept
+   anyway: it is free, it is proven equivalent, and it makes the block scale with
+   the view rather than with the forest.
+
+   Also worth knowing: **the autoplay trace could never have tested this.** In
+   headless capture `love.draw()` only runs on photographed frames, so
+   `Tree.setViewFromCamera` is never called, `view` stays at its ±1e9 default,
+   every tree reports `onScreen`, and the rota never engages.
+
+6. ~~**One persistent visible list instead of two sweeps and a sort.**~~
+   **DONE, and it is the real win of the three.** *Measured, Lua-only:
+   `sortEtc` 1.247 -> 0.536 ms (−57%), `World:draw` 3.757 -> 3.048 (−19%),
+   whole Lua frame 12.207 -> 11.445 (−6%).* At the 2.7x browser factor that is
+   ~1.9 ms of the browser's 17 ms, against 3.0 predicted.
+
+   `self.trees` order is deliberately untouched — the spread cursor draws from
+   the shared RNG, so reordering it would move the run. A parallel `treesZ` is
+   kept in depth order by binary-search insert at plant time.
+
+   One trap worth recording: `t:isDone()` per tree per frame is a metatable
+   lookup plus a call, and measured ~0.5 ms at 825 trees — it ate most of the
+   win until the loop asked `t.alive` first.
 
 7. **Per-frame allocation.** ~125 KB a frame with the GC stopped: ~50 KB in
    `World:update`, ~60 KB in `World:draw`, and zero in the entity paths — so it

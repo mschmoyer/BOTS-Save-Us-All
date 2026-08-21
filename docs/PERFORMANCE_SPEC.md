@@ -329,12 +329,39 @@ document and are not repeated.
   translate of the tip (~0.5 px slant on a ~3 px leaf), and baked circles use a
   scale-independent segment count, so a large zoom shows a coarser disc. Both
   documented in the code; both invisible at play scale.
-- **F2. Drop contact shadows on small trees.** 259 draw calls, 40% of tree
-  overdraw, under a canopy anyway.
-- **F3. Tick off-screen trees on a rota.** 3.5 ms of the browser's 17 ms of Lua.
-  No visual change.
-- **F4. One persistent visible list.** Removes two sweeps and a Lua-comparator
-  sort. 3.0 ms.
+
+  **Verified on the ship target.** The whole item rests on a renderer behaviour,
+  so it was re-measured in the browser rather than assumed: a probe drawing 100
+  consecutive `lg.polygon` fills and then the same 100 shapes as meshes reports
+  **polygons=1, meshes=100 draw calls — identically under native GL and under
+  WebGL.** The batching holds, and the `Mesh` approach the item prescribed would
+  have been worse in the browser too.
+- **F2. Drop contact shadows on small trees.** — **DONE at 128 px**, with a
+  128→160 fade band. *Shadow draw calls 479 → 363 (−24%), shadow overdraw −17%,
+  798 of 1.44 M in-game pixels moved.* The item's "40% of the overdraw" was not
+  reachable: a mature forest has no population of small trees, so 40% would mean
+  taking shadows off grown trees.
+- **F3. Tick off-screen trees on a rota.** — **DONE, and honestly a null
+  result.** Equivalence proven to 0.00004% on growth rate over 2,400 frames, but
+  the predicted 3.5 ms is not measurable — a grown, unbothered tree leaves the
+  block after a handful of instructions. Kept because it is free, proven, and
+  makes the block scale with the view rather than the forest.
+- **F4. One persistent visible list.** — **DONE, and the real win of the three.**
+  *`sortEtc` 1.247 → 0.536 ms (−57%), whole Lua frame −6%.*
+
+Three measurement traps came out of this batch, all now recorded in
+`PERFORMANCE.md`: the autoplay **trace** is not reproducible run to run on a
+contended machine (two identical runs ended at 466 and 250 trees); the autoplay
+**capture** is not a valid pixel A/B (±1 on 96% of pixels, the grade is
+wall-clock dependent); and headless capture only calls `love.draw()` on
+photographed frames, so `Tree.setViewFromCamera` never runs and **every tree
+reports on-screen** — which would have silently invalidated any view-culling
+measurement taken that way. Use a deterministic probe scene.
+
+**Found, not fixed** — worth its own item. `World:draw` gates both tree passes on
+`t.alive`, and `Tree:kill` clears `alive` immediately, so a felled tree's topple
+animation and `Tree:drawStump` never render in gameplay. Pre-existing, preserved
+deliberately so "no visual change" held for F4.
 - **F5. Per-frame allocation.** ~125 KB/frame, all in container code.
   `Lighting.addLight(..., {flicker=...})` alone is 5-7 KB.
 - **F6. Trees through a sprite atlas.** The only route to 60 fps at 720p, and the

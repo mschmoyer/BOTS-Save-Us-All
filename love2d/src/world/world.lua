@@ -254,15 +254,24 @@ end
 --- Nothing in this loop can call back into the world, so nothing can append to
 --- either list while it is being compacted. If that ever stops being true it
 --- needs the same slide-down `sweep` does, for the same reason.
+---
+--- The live branch is written to ask `t.alive` first and stop there. Asking
+--- `t:isDone()` of every tree instead is a metatable lookup and a call per tree
+--- per frame: at 825 trees that alone measured around 0.5 ms, which ate most of
+--- the 0.73 ms the two removed draw sweeps and the sort give back. A dead tree
+--- still gets the call, and there are never many of those at once.
 function World:refreshVisibleTrees()
   local z, vis = self.treesZ, self.visTrees
   local n, w, v = #z, 0, 0
   for i = 1, n do
     local t = z[i]
-    if not (t.isDone and t:isDone()) then
+    if t.alive then
       w = w + 1
       z[w] = t
-      if t.alive and t.onScreen then v = v + 1 vis[v] = t end
+      if t.onScreen then v = v + 1 vis[v] = t end
+    elseif not (t.isDone and t:isDone()) then
+      w = w + 1
+      z[w] = t
     end
   end
   for i = w + 1, n do z[i] = nil end
