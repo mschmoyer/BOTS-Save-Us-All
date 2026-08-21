@@ -529,6 +529,7 @@ function Handle:finish(skipped)
   self.step = nil
   self.cam = nil
   if self.world then self.world.cutscene = false end
+  if Audio.setDialogue then Audio.setDialogue(false) end
   if A == self then A = nil end
   -- the panel does not snap out: it fades with the letterbox
   LAST = self
@@ -614,6 +615,7 @@ function Dialogue.play(sequence, opts)
   LAST = nil
   if h.world then
     h.world.cutscene = true
+    if Audio.setDialogue then Audio.setDialogue(true) end
     h.world.flags = h.world.flags or {}
   end
   barTarget = 1
@@ -637,6 +639,7 @@ end
 
 --- Force-close without running anything else. Only for scene teardown.
 function Dialogue.abort()
+  if Audio.setDialogue then Audio.setDialogue(false) end
   if A and not A.done then A:finish(true) end
   A, LAST = nil, nil
   barTarget = 0

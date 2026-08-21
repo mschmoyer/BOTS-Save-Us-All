@@ -397,10 +397,14 @@ local function stepTick(step)
         end
       end
     end
-    -- the ending's empty half: one low tonic under four bars of nothing, so the
-    -- silence is a room the phrase is standing in rather than a dropout
-    if ending and sip == 32 then
-      note("bell", M.root + semisOf(1) - 12, { volume = g.bell * TRIM.bell * 0.5, pan = 0 })
+    -- The ending's empty half. Two low tonics, one per two bars, holding the
+    -- floor under the bars where the answer should have been -- so the silence
+    -- is a room the phrase is standing in, and not a dropout. Without them the
+    -- cue goes to true digital zero for five seconds, which does not read as
+    -- loneliness; it reads as the audio having stopped.
+    if ending and (sip == 32 or sip == 48) then
+      note("bell", M.root + semisOf(1) - 12,
+           { volume = g.bell * TRIM.bell * (sip == 32 and 0.5 or 0.34), pan = 0 })
     end
   end
 

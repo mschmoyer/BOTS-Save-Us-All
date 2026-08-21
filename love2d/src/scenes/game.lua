@@ -33,7 +33,8 @@ function Game:enter(opts)
   opts = opts or {}
   local w, h = love.graphics.getDimensions()
   self.camera = Camera.new(w, h)
-  self.world = World.new(opts.seed or math.random(1, 999999), opts)
+  local envSeed = tonumber(os.getenv("BOTS_SEED") or "")
+  self.world = World.new(opts.seed or envSeed or math.random(1, 999999), opts)
   self.world.camera = self.camera
   self.world.post = Post
   self.camera:setBounds(0, 0, TU.world.w, TU.world.h)
@@ -52,6 +53,7 @@ function Game:enter(opts)
     self.world.player.agent = require("src.game.autoplay").new(self.world)
     self.showPerf = true
     J.enabled = false
+    self.storyCapture = (os.getenv("BOTS_STORY") or "") ~= ""
   end
   self.speed = tonumber(os.getenv("BOTS_SPEED") or "") or 1
   self.telemetryT = 0
@@ -178,9 +180,20 @@ function Game:update(dt, realDt)
   self.camera.zoomTarget = TU.camera.zoom * (world.phase == "extraction" and 0.94 or 1)
 
   if self.world.player.agent then
-    -- headless autoplay has nobody to press a key, so cutscenes are skipped
-    if Dialogue.isActive and Dialogue.isActive() then Dialogue.abort() end
-    self.world.cutscene = false
+    -- Headless autoplay has nobody to press a key. By default cutscenes are
+    -- skipped so balance traces are not blocked; BOTS_STORY=1 instead advances
+    -- them on a beat, which is how the cutscenes get captured in context.
+    if Dialogue.isActive and Dialogue.isActive() then
+      if self.storyCapture then
+        self.advanceT = (self.advanceT or 0) - realDt
+        if self.advanceT <= 0 then self.advanceT = 1.6 Dialogue.advance() end
+      else
+        Dialogue.abort()
+        self.world.cutscene = false
+      end
+    elseif not self.storyCapture then
+      self.world.cutscene = false
+    end
     self:telemetry(dt)
   end
 
@@ -263,14 +276,29 @@ function Game:draw()
   if Post.render then Post.render() end
   require("src.world.weather").drawOverlay()
 
-  if HUD.draw then HUD.draw(world, cam) end
-  if BuildMenu.draw then BuildMenu.draw(cam) end
+  if self.photoHide and self.photoHide > 0 then
+    self.photoHide = self.photoHide - 1
+  else
+    if HUD.draw then HUD.draw(world, cam) end
+    if BuildMenu.draw then BuildMenu.draw(cam) end
+  end
   Minimap.draw(world, cam)
   if Story.draw then Story.draw() end
   if Dialogue.draw then Dialogue.draw() end
   if Touch.active then Touch.draw() end
 
   if self.showPerf then self:drawPerf() end
+end
+
+--- Photo mode. Hides every overlay for one frame and writes a clean capture to
+--- the save directory, because people will want to show this to someone.
+function Game:photo()
+  self.photoHide = 2
+  local name = string.format("reforest_%s.png", tostring(math.floor(self.world.time * 10)))
+  love.graphics.captureScreenshot(function(img)
+    img:encode("png", name)
+  end)
+  if HUD.toast then HUD.toast("SAVED " .. name, nil, "photo mode") end
 end
 
 function Game:drawPerf()
@@ -289,6 +317,7 @@ end
 
 function Game:keypressed(k)
   if k == "f3" then self.showPerf = not self.showPerf end
+  if k == "f2" then self:photo() end
   if k == "f5" then
     Screen.transition(0.4, function() Screen.switch(require("src.scenes.game")) end)
   end

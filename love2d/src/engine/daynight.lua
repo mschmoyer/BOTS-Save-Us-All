@@ -29,14 +29,18 @@ local START = { day = 0.00,   dusk = 0.40,    night = 0.52,   dawn = 0.88 }
 
 -- Scalar lighting response per phase. The *colours* all come from P.tod; these
 -- are the numbers the palette does not carry.
-local AMB    = { day = 1.06, dusk = 0.54, night = 0.50, dawn = 0.72 } -- ambient strength
+local AMB    = { day = 1.06, dusk = 0.54, night = 0.44, dawn = 0.72 } -- ambient strength
 local CONTR  = { day = 1.06, dusk = 1.12, night = 1.20, dawn = 1.06 } -- grade contrast
 -- How much of the phase's hue goes into the *ambient* (which multiplies albedo)
 -- rather than into the grade. Pushing a saturated hue through a multiply is what
 -- makes a sunset look like mud, so the warm phases keep the ambient near-neutral
 -- and let the grade carry the colour; night keeps its blue, because moonlight
 -- really does recolour everything it touches.
-local AMBTINT = { day = 0.26, dusk = 0.55, night = 0.96, dawn = 0.50 }
+-- Night used to sit at 0.96, which is very nearly pure moon-blue: it multiplied
+-- every albedo in the world down onto one hue, so a forest, a beach and a blight
+-- scar all came out the same teal. Letting more of the albedo through and paying
+-- for the blue out of the grade instead keeps night blue *and* legible.
+local AMBTINT = { day = 0.26, dusk = 0.55, night = 0.66, dawn = 0.50 }
 -- Saturation is the main thing that separates the phases. Day is *more*
 -- saturated than the raw albedo, so noon reads as a bright stylised frame and
 -- not as a photograph; night keeps enough chroma to stay blue rather than grey,

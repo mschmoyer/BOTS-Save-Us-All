@@ -283,10 +283,16 @@ function World:plantTree(x, y, by)
   self.stats.planted = self.stats.planted + 1
 
   VFX.emit("plant_burst", x, y)
-  Audio.play("plant", { x = x, y = y })
-  Audio.setForestProgress(U.saturate(self.treeCount / 420))
+  Audio.play("plant", { x = x, y = y, volume = (by == "player") and 1 or 0.6 })
+  self:updateForestChime()
   Signal.emit("tree:planted", t, by)
   return true
+end
+
+--- The plant chime climbs a pentatonic ladder with the forest. It has to be able
+--- to come back down, or a bad night leaves the sound lying about the world.
+function World:updateForestChime()
+  Audio.setForestProgress(U.saturate(self.treeCount / 620))
 end
 
 function World:fellTree(t, by)
@@ -295,6 +301,7 @@ function World:fellTree(t, by)
   self.treeCount = math.max(0, self.treeCount - 1)
   self.stats.lost = self.stats.lost + 1
   Audio.play("tree_fall", { x = t.x, y = t.y })
+  self:updateForestChime()
   local yield = self.chips:get("fellYield", 0)
   if yield > 0 then self:addCobalt(yield, t.x, t.y) end
   VFX.emit("leaf_litter", t.x, t.y, { count = 14, power = 1.4 })
@@ -533,8 +540,9 @@ function World:speak(who, line)
     table.remove(self.speeches, worst)
   end
   self.speeches[#self.speeches + 1] = { who = who, line = line, t = 0, dur = 3.2 }
+  -- a stable variant per bot, so each one keeps its own voice all run
   Audio.play("bot_chatter", { volume = 0.35, pitch = 0.9 + (who.serial % 7) * 0.04,
-                              x = who.x, y = who.y })
+                              variation = who.serial, x = who.x, y = who.y })
 end
 
 --------------------------------------------------------------------- the clock
@@ -578,6 +586,7 @@ function World:setPhase(phase)
   elseif phase == "dawn" then
     for i = 1, #self.enemies do self.enemies[i]:flee() end
     Audio.play("dawn")
+    Music.setCycle(self.cycle)
     Music.setState("draft")
     self:buildDawnReport()
     Signal.emit("phase:dawn", self.cycle, self.dawnReport)

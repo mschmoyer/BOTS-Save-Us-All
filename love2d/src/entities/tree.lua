@@ -90,6 +90,9 @@ local TUNE = {
   shadowAlpha   = 0.60,
   shadowSquash  = 0.34,   -- vertical flattening of the projected canopy
   airDepth      = 0.34,   -- peak aerial-perspective blend at the top of the view
+  xrayRadius    = 96,     -- world units around the focus a canopy must clear
+  xrayAlpha     = 0.62,   -- how much alpha an occluding canopy gives up
+  xrayRate      = 8.0,    -- fade in/out speed, 1/seconds
 
   chewSag       = 0.13,   -- radians of lean a fully chewed tree droops
   chewRecover   = 0.22,   -- damage healed per second once the chomper leaves
@@ -790,6 +793,22 @@ local uShd = { 0, 0, 0, 0 }
 
 local view = { x = -1e9, y = -1e9, w = 3e9, h = 3e9 }
 
+-- Canopy x-ray. Once the island is forested the player, the bots and the
+-- enemies vanish under opaque canopies and the minimap ends up doing all the
+-- situational-awareness work. Any tree whose crown covers the focus point and
+-- which sorts in front of it fades down, with a short ramp so it never pops.
+local focusX, focusY, focusR = nil, nil, 0
+local focusFresh = false
+
+--- Point the x-ray at something (normally the player), in world space.
+--- `radius` widens the protected area to cover whatever is standing near it.
+function Tree.setFocus(x, y, radius)
+  focusX, focusY, focusR = x, y, radius or 60
+  focusFresh = true
+end
+
+function Tree.clearFocus() focusX, focusY = nil, nil focusFresh = false end
+
 --- Tell the tree system what the camera can see. Trees outside it neither
 --- update their particles nor draw. Call once per frame.
 function Tree.setView(x, y, w, h)
@@ -806,7 +825,19 @@ function Tree.setViewFromCamera(cam)
   local DN = DayNight
   if DN then
     Tree.setAir(DN.fogColor, TUNE.airDepth * (0.55 + 0.90 * (DN.fogStrength or 0)))
+    -- the dimmer the key, the more work the rim has to do to keep edges in the
+    -- canopy: at midnight it is most of what separates one tree from the next
+    local dark = U.saturate(1 - (DN.ambientStrength or 1))
+    Tree.setKeyRim(DN.sunColor, 0.42 + dark * 0.36, 1 + dark * 1.05)
   end
+  -- If nobody set an explicit focus this frame, fall back to what the camera is
+  -- looking at: it tracks the player with a little lookahead, so a generous
+  -- radius covers the player and everything standing with them.
+  if not focusFresh then
+    focusX, focusY = cam.tx or cam.x, cam.ty or cam.y
+    focusR = TUNE.xrayRadius
+  end
+  focusFresh = false
 end
 
 Tree.zoom = 1
@@ -831,6 +862,11 @@ local function bind(shader)
 end
 
 local RIM_WARM = P.mix(P.warn, P.ink, 0.30)
+-- The rim takes the colour of whatever is actually keying the scene, so a canopy
+-- is rimmed gold at dusk and cold silver under the moon. A fixed warm rim is
+-- what left the night forest as one flat teal mass with no edges in it.
+local RIM_KEY  = { RIM_WARM[1], RIM_WARM[2], RIM_WARM[3] }
+local rimGain  = 1
 local RIM_GOLD = P.mix(P.warn, P.ramp.ember[4], 0.45)
 local DEAD_TINT = P.mix(P.ramp.soil[3], P.ramp.sand[2], 0.4)
 local SHADOW_COL = P.ramp.rock[1]
@@ -1044,6 +1080,9 @@ function Tree:update(dt)
     self.swayLag = (swayL + flut * 0.7) * amp * 1.25 + self.hitS * 0.7
     self.windStr = str
     self:updateLeaves(dt, str)
+    self:updateXray(dt)
+  elseif (self.xray or 0) > 0 then
+    self.xray = 0
   end
 end
 
@@ -1132,6 +1171,21 @@ end
 local AMB_POLLEN = { power = 1 }
 local AMB_FLY    = { power = 1 }
 
+--- Canopy x-ray: 1 while this tree's crown is over the focus point and in front
+--- of it, ramped so it fades rather than pops.
+function Tree:updateXray(dt)
+  local want = 0
+  if focusX and self.onScreen and self.growth > 0.30 and self.fade > 0
+     and self.y > focusY - 6 then
+    local rx = self.canopyR * 1.10 + focusR
+    local ry = self.height * 0.52 + focusR * 0.75
+    local dx = (self.x - focusX) / (rx > 1 and rx or 1)
+    local dy = (self.y - self.height * 0.58 - focusY) / (ry > 1 and ry or 1)
+    if dx * dx + dy * dy < 1 then want = 1 end
+  end
+  self.xray = U.damp(self.xray or 0, want, TUNE.xrayRate, dt)
+end
+
 function Tree:updateLeaves(dt, windStr)
   -- ambient motes: pollen while the sun is up, fireflies once it is down
   if Tree.ambient and self.alive and self.growth > 0.55 and self.onScreen then
@@ -1200,6 +1254,21 @@ end
 
 --- The colour and strength of the air trees recede into. Drive this from the
 --- day/night atmosphere; `amount` 0 disables aerial perspective entirely.
+local rimEpoch = 0
+
+--- Colour and strength of the canopy rim light. Driven from the key light so it
+--- follows the sun and then the moon.
+function Tree.setKeyRim(color, warmth, gain)
+  local w = warmth or 0.5
+  RIM_KEY[1] = RIM_WARM[1] + (color[1] - RIM_WARM[1]) * w
+  RIM_KEY[2] = RIM_WARM[2] + (color[2] - RIM_WARM[2]) * w
+  RIM_KEY[3] = RIM_WARM[3] + (color[3] - RIM_WARM[3]) * w
+  rimGain = gain or 1
+  rimEpoch = rimEpoch + 1
+  if rimEpoch > 1000 then rimEpoch = 0 end
+  cur.rimKey = nil
+end
+
 function Tree.setAir(color, amount)
   uAir[1], uAir[2], uAir[3] = color[1], color[2], color[3]
   uAir[4] = amount or 0
@@ -1301,13 +1370,13 @@ function Tree:draw(sunDirX, sunDirY)
     -- elders take a warm golden rim; everything else a cool sky rim.
     -- Both of these are the same for almost every tree in the forest, so they
     -- are only re-uploaded when they actually change.
-    local eld = floor(self.elderness * 8)
+    local eld = floor(self.elderness * 8) + rimEpoch * 16
     if cur.rimKey ~= eld then
       cur.rimKey = eld
       local e = eld / 8
-      local rc = e > 0.05 and RIM_GOLD or RIM_WARM
+      local rc = e > 0.05 and RIM_GOLD or RIM_KEY
       uRimC[1], uRimC[2], uRimC[3] = rc[1], rc[2], rc[3]
-      uRimC[4] = TUNE.rimAlpha + e * 0.34
+      uRimC[4] = (TUNE.rimAlpha + e * 0.34) * rimGain
       shTree:send("uRim", uRimC)
     end
     local dk = floor(self.death * 16)
@@ -1322,7 +1391,8 @@ function Tree:draw(sunDirX, sunDirY)
     bind(nil)
   end
 
-  love.graphics.setColor(self.tintR, self.tintG, self.tintB, self.fade)
+  local a = self.fade * (1 - (self.xray or 0) * TUNE.xrayAlpha)
+  love.graphics.setColor(self.tintR, self.tintG, self.tintB, a)
   love.graphics.draw(mesh, self.x, self.y, self:drawRot(),
                      self.size * self:popX(), self.size * self:popY())
 

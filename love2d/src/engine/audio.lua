@@ -494,10 +494,11 @@ def("bot_down", {
       layers = { { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0016, curve = 3 },
                    amp = 1 } },
       fx = { { "resonate", mix = 0.9, gain = 2.6, modes = brassModes(1180 * spread, 0.5, 1.3) },
+             { "shelf", type = "high", freq = 2600, db = 4 },
              { "reverb", mix = 0.3, room = 0.85, damp = 0.3 } },
-      normalize = 0.5, trim = false } }
+      normalize = 0.85, trim = false } }
     return { dur = 3.1, layers = layers, fx = {
-      { "svf", type = "lp", cutoff = { from = 7200, to = 2200, tau = 1.1 }, q = 0.8 },
+      { "svf", type = "lp", cutoff = { from = 7200, to = 3000, tau = 1.1 }, q = 0.8 },
       { "svf", type = "hp", cutoff = 62, q = 0.7 },
       { "reverb", mix = 0.34, room = 0.88, damp = 0.3 },
     }, loudness = 0.16, loudWin = 0.3, ceiling = 0.94 }
@@ -1064,22 +1065,24 @@ def("boss_hurt", {
 def("boss_beam", {
   gain = 0.95, variants = 2, duckMusic = 0.35, duckTime = 1.6, limit = 1,
   build = function(v, n, r)
-    local warn = 180 * ({ 1, 0.95 })[v]
-    local fire = 1.35 + (v - 2) * 0.06
+    local warn = 180 * ({ 1, 0.88 })[v]
+    local climb = ({ 1.78, 2.06 })[v]
+    local fire = ({ 1.35, 1.22 })[v]
     return { dur = 2.7, layers = {
-      { osc = "saw", freq = { from = warn, to = warn * 1.78, tau = 1.2, curve = "lin" },
-        env = { type = "bp", points = { { 0, 0 }, { 1.2, 0.7 }, { fire, 1 }, { 2.4, 0 } } },
+      { osc = "saw", freq = { from = warn, to = warn * climb, tau = 1.2, curve = "lin" },
+        env = { type = "bp", points = { { 0, 0 }, { fire - 0.15, 0.7 }, { fire, 1 }, { 2.4, 0 } } },
         amp = 0.26, detune = -8 },
-      { osc = "square", duty = 0.24, freq = { from = 90, to = 160, tau = 1.2, curve = "lin" },
+      { osc = "square", duty = ({ 0.24, 0.17 })[v],
+        freq = { from = 90, to = 160 * climb / 1.78, tau = 1.2, curve = "lin" },
         env = { type = "bp", points = { { 0, 0 }, { 1.3, 0.6 }, { 2.4, 0 } } }, amp = 0.18 },
       { osc = "noise", env = { type = "bp", points = { { 0, 0 }, { fire - 0.02, 0.2 },
                                                        { fire + 0.03, 1 }, { 2.3, 0 } } },
         amp = 0.45 },
-      { osc = "sine", freq = { from = 1200, to = 240, tau = 0.5 },
+      { osc = "sine", freq = { from = 1200 * climb / 1.78, to = 240, tau = 0.5 },
         env = { type = "bp", points = { { 0, 0 }, { fire, 0 }, { fire + 0.04, 0.8 },
                                         { 2.4, 0 } } }, amp = 0.4 },
     }, fx = {
-      { "svf", type = "bp", cutoff = { from = 800, to = 2600, tau = 1.0 }, q = 1.8 },
+      { "svf", type = "bp", cutoff = { from = 800, to = 2600 * climb / 1.78, tau = 1.0 }, q = 1.8 },
       { "softclip", drive = 2, mix = 0.6 },
       { "reverb", mix = 0.3, room = 0.86 },
     }, loudness = 0.2, loudWin = 0.35 }
