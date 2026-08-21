@@ -181,16 +181,19 @@ T.o2 = {
   -- Traced across three seeds, this lands a thoughtless autoplay run at 87-100%
   -- rather than 65-96%, with the strong runs filling the sky around cycle six
   -- and triggering the early extraction, which is what the win condition is for.
-  fullForest    = 810,          -- fallback when there is no terrain
-  forestPerArea = 1 / 4200,     -- tree-points per square world unit of plantable land
+  fullForest    = 1200,         -- fallback when there is no terrain
+  forestPerArea = 1 / 2700,     -- tree-points per square world unit of plantable land
   -- The clamp does most of the work on purpose. A linear-in-area target cannot
   -- be right for both ends: set it so a small island is a real job and the big
   -- ones become unfillable; set it so the big ones are fillable and the small
   -- ones fill at cycle four and cut three cycles off the run. A full sky is
-  -- about eight hundred tree-points wherever you land, tilted a little by how
-  -- much ground there is.
-  forestMin     = 760,
-  forestMax     = 920,          -- tree-points that read as a fully restored sky
+  -- around twelve hundred tree-points wherever you land, tilted by how much
+  -- ground there is. Retuned upward twice as the economy fixes landed: with
+  -- Builders no longer draining the bank and deposits no longer evaporating,
+  -- the forest grows fast enough that the old target was met at cycle four and
+  -- cut three cycles off the run.
+  forestMin     = 950,
+  forestMax     = 1400,         -- tree-points that read as a fully restored sky
   rise        = 0.42,           -- how fast the reading climbs toward the forest
   fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
   weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 1.5 },

@@ -394,6 +394,16 @@ local function earc(cx, cy, rx, ry, a0, a1, w, c, alpha)
   LG.line(EA)
 end
 
+--- A dashed ring on the *ground plane*. love.graphics has no elliptical arc
+--- and a true circle drawn flat over a squashed zone reads as a hoop standing
+--- upright in the middle of the frame.
+local function edash(cx, cy, rx, ry, n, frac, w, c, alpha, phase)
+  for i = 0, n - 1 do
+    local a0 = (phase or 0) + i / n * TAU
+    earc(cx, cy, rx, ry, a0, a0 + frac * TAU / n, w, c, alpha)
+  end
+end
+
 --- A tapered limb segment with round ends: every leg bone and strut.
 local function limb(x1, y1, x2, y2, w1, w2, c, alpha)
   local dx, dy = x2 - x1, y2 - y1
@@ -1443,12 +1453,16 @@ function Boss:drawTelegraph(arrive)
     if t < AR.slamTell then
       local k = U.saturate(t / AR.slamTell)
       local rr = AR.slamRadius * U.lerp(1.35, 1.0, U.ease.inQuad(k))
-      Draw.setColor(P.danger, 0.10 + 0.16 * k)
-      g.ellipse("fill", self.x, self.y + r * 0.16, rr, rr * 0.44)
-      Draw.ring(self.x, self.y + r * 0.16, rr, 3 + k * 5, 0, TAU, P.danger, 3)
+      local cy = self.y + r * 0.16
+      Draw.radialGradient(self.x, cy, rr, P.alpha(P.danger, 0.05 + 0.10 * k),
+                          P.alpha(P.danger, 0.16 + 0.26 * k), rr * 0.44)
+      -- the closing ring, on the ground plane rather than standing up in the
+      -- middle of the frame: love.graphics.arc only knows circles
+      earc(self.x, cy, rr, rr * 0.44, 0, TAU, 9 + k * 9, P.danger, 0.18 + 0.22 * k)
+      earc(self.x, cy, rr, rr * 0.44, 0, TAU, 3 + k * 4, P.danger, 0.55 + 0.45 * k)
       -- and a second, honest ring at the radius it will actually reach
-      Draw.setColor(P.warn, 0.35 + 0.4 * k)
-      Draw.dashedCircle(self.x, self.y + r * 0.16, AR.slamRadius, 22, 16, self.age * 60, 3)
+      edash(self.x, cy, AR.slamRadius, AR.slamRadius * 0.44, 22, 0.55, 3,
+            P.warn, 0.45 + 0.45 * k, self.age * 0.9)
       -- chevrons converging on the impact
       for i = 0, 5 do
         local a = i * TAU / 6 + self.age * 0.4

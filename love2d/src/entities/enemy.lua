@@ -910,25 +910,100 @@ function Enemy:body_bulwark(r, a)
   love.graphics.circle("fill", 0, r * 0.25, r * 0.18)
 end
 
+--- The pips over anything that is closed by working at it, rather than killed.
+--- The Maw has had them since it existed; the Scar needs the same readout for
+--- the same reason, so one function draws both and the player learns it once.
+function Enemy:drawClosePips(r, a)
+  local n = self.def.shovesToClose
+  if not n then return end
+  local w = r * 1.8
+  for i = 1, n do
+    local lit = i <= (self.shovesLeft or 0)
+    Draw.setColor(lit and P.ramp.rift[4] or P.inkFaint, (lit and 0.9 or 0.2) * a)
+    love.graphics.circle("fill", -w * 0.5 + (i - 1) * (w / math.max(1, n - 1)),
+                         -r * 1.7, r * 0.1)
+  end
+end
+
 function Enemy:body_maw(r, a)
   local p = 0.85 + math.sin(self.pulse or 0) * 0.15
+  -- Shut in daylight: the throat closes to a seam and the glow goes out of it,
+  -- so a dormant Maw reads as a thing that is waiting rather than a thing that
+  -- is broken.
+  local open = self.dormant and 0.34 or 1
   Draw.setColor(P.shade(P.ramp.rift, 1.4), a)
   Draw.blob(0, 0, r * 1.25 * p, 12, 31, 0.22, 0.7)
   Draw.setColor(P.black, a)
-  Draw.blob(0, 0, r * 0.8 * p, 10, 33, 0.24, 0.7)
+  Draw.blob(0, 0, r * 0.8 * p * open, 10, 33, 0.24, 0.7)
   Draw.setColor(P.shade(P.ramp.rift, 3.6), a * 0.9)
   Draw.ring(0, 0, r * 1.1 * p, 3, 0, U.TAU, P.shade(P.ramp.rift, 3.6), 0.8)
-  Draw.glow(0, 0, r * 3.2, P.ramp.rift[3], 0.5 * a)
-  for i = 1, self.def.shovesToClose do
-    Draw.setColor(i <= (self.shovesLeft or 0) and P.ramp.rift[4] or P.inkFaint,
-                  i <= (self.shovesLeft or 0) and 0.9 or 0.2)
-    love.graphics.circle("fill", -r * 0.9 + (i - 1) * (r * 1.8 / 5), -r * 1.7, r * 0.1)
+  Draw.glow(0, 0, r * 3.2, P.ramp.rift[3], 0.5 * a * open)
+  self:drawClosePips(r, a)
+end
+
+function Enemy:body_warden(r, a)
+  local br = 0.9 + math.sin(self.hoverT * 0.8) * 0.1
+  -- The field, drawn as the field: whoever is inside this circle is the reason
+  -- your shove stopped working, and that has to be visible from across a grove.
+  local wr = self.def.wardRadius
+  Draw.setColor(P.ramp.blight[4], (0.16 + (self.shielded or 0)) * a)
+  Draw.dashedCircle(0, 22, wr, 16, 22, self.age * 26, 2)
+  Draw.glow(0, 0, r * 3.4, P.ramp.blight[3], (0.30 + (self.shielded or 0) * 0.8) * a)
+
+  Draw.setColor(bl(1.5), a * 0.92)
+  Draw.blob(0, 0, r * 1.1 * br, 11, (self.serial or 13) + 17, 0.14, 1.0)
+  -- a slack cage of ribs around a lit centre; it is a lamp, not an animal
+  Draw.setColor(bl(0.9), a * 0.8)
+  love.graphics.setLineWidth(2)
+  for i = 0, 4 do
+    local ang = i * U.TAU / 5 + self.age * 0.5
+    love.graphics.line(math.cos(ang) * r * 0.3, math.sin(ang) * r * 0.3 - r * 0.4,
+                       math.cos(ang) * r * 1.15, math.sin(ang) * r * 0.85 + r * 0.5)
   end
+  love.graphics.setLineWidth(1)
+  Draw.setColor(P.ramp.blight[4], a * (0.75 + 0.25 * math.sin(self.age * 2.3)))
+  love.graphics.circle("fill", 0, 0, r * 0.34 * br)
+  self.shielded = math.max(0, (self.shielded or 0) - 0.02)
+end
+
+function Enemy:body_scar(r, a)
+  local p = 0.9 + math.sin(self.pulse or 0) * 0.1
+  local frac = U.saturate(((self.creep or self.def.creepStart) - self.def.creepStart)
+                          / math.max(1, self.def.creepMax - self.def.creepStart))
+  -- A low crust of matter with a lit fissure through it. It grows with the
+  -- creep, so how far gone a scar is reads off its silhouette and not only off
+  -- the ring on the ground.
+  local s = 1 + frac * 0.45
+  Draw.setColor(bl(1.0), a)
+  Draw.blob(0, r * 0.2, r * 1.15 * s, 11, (self.serial or 17) + 23, 0.26, 0.55)
+  Draw.setColor(P.shade(P.ramp.ash, 2.0), a * 0.85)
+  Draw.blob(0, r * 0.1, r * 0.82 * s, 9, (self.serial or 17) + 29, 0.3, 0.6)
+  Draw.setColor(P.shade(P.ramp.rift, 1.2), a)
+  Draw.blob(0, 0, r * 0.5 * s * p, 8, 37, 0.34, 0.5)
+  Draw.setColor(P.ramp.rift[3], a * (0.55 + 0.25 * math.sin((self.pulse or 0) * 2.1)))
+  Draw.capsule("fill", -r * 0.42 * s, 0, r * 0.42 * s, -r * 0.1, r * 0.09 * p)
+  Draw.glow(0, 0, r * 2.6 * s, P.ramp.rift[3], 0.30 * a)
+  -- and the tendril it has in whatever it is eating, so the tree it is taking
+  -- is never a guess
+  local t = self.chewing
+  if t and t.alive then
+    Draw.setColor(P.acid, a * 0.45)
+    love.graphics.setLineWidth(2)
+    love.graphics.line(0, 0, t.x - self.x, t.y - self.y)
+    love.graphics.setLineWidth(1)
+  end
+  self:drawClosePips(r, a)
 end
 
 function Enemy:emitLight(Lighting)
   if self.type == "maw" then
-    Lighting.addLight(self.x, self.y, 260, P.ramp.rift[3], 1.1, { flicker = 0.12 })
+    Lighting.addLight(self.x, self.y, 260, P.ramp.rift[3],
+                      self.dormant and 0.35 or 1.1, { flicker = 0.12 })
+  elseif self.type == "scar" then
+    Lighting.addLight(self.x, self.y, (self.creep or 120) * 0.8, P.ramp.rift[3], 0.55,
+                      { flicker = 0.09 })
+  elseif self.type == "warden" then
+    Lighting.addLight(self.x, self.y - 22, self.def.wardRadius * 0.8, P.ramp.blight[4], 0.7)
   elseif self.type == "siphon" then
     Lighting.addLight(self.x, self.y - 22, 120, P.ramp.blight[4], 0.5)
   elseif self.type == "spitter" then
