@@ -829,14 +829,18 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float tongue = fbm3(w * 0.0072 + 41.0);
   float ex = clamp(S.a * (0.60 + 0.80 * tongue) + (wob - 0.5) * 0.42, 0.0, 1.0);
   float surge = 0.5 + 0.5 * sin(uTime * 0.62 + tongue * 5.5);
-  float reach = (2.0 + 20.0 * surge * (0.55 + 0.9 * wob)) * (0.18 + 1.05 * ex);
+  // `ex` moves the run-up's reach only gently, and gates its alpha hard. Scaled
+  // the other way round, the leading edge stops hugging the water and the band
+  // narrows to a hairline that wanders off along whatever contour it is on --
+  // the wash comes out as a scribble of white filament over the sand.
+  float reach = (4.0 + 18.0 * surge * (0.55 + 0.9 * wob)) * (0.62 + 0.58 * ex);
 
   float run = 1.0 - smoothstep(0.0, reach, sd);
   float lip = smoothstep(0.62, 0.93, run) * smoothstep(1.0, 0.91, run);
   float wet = run * run;
 
   vec3 col = mix(cWet, cFoam, clamp(lip * 2.4 + smoothstep(0.90, 1.0, run) * 0.4, 0.0, 1.0));
-  float a = (wet * 0.24 + lip * 0.80) * smoothstep(0.05, 0.42, ex);
+  float a = (wet * 0.24 + lip * 0.80) * smoothstep(0.10, 0.50, ex);
   a *= smoothstep(-2.0, 2.0, sd);
   return vec4(col * a, a) * vcol;
 }

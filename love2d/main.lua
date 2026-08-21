@@ -66,15 +66,33 @@ end
 Boot.headless = H
 
 --------------------------------------------------------------- boot budgets
--- The only synthesis left on the critical path: a short head start so the menu
--- cues and the title bed are usually there before anything asks for them. It is
--- a hard ceiling, in seconds of wall time, and it is deliberately small.
-local BURN = tonumber(cfg("BOTS_AUDIO_BURN") or "") or 0.25
--- ...and the background stream. It may hold the game at 20 fps and no worse:
--- whatever the frame already cost comes off the budget first, so a busy night
--- gets a trickle and an idle title screen gets most of the frame.
-local STREAM_TARGET = 1 / 20
-local STREAM_MIN, STREAM_MAX = 0.002, 0.060
+-- THE SHAPE OF THE BOOT, and why it is two speeds.
+--
+-- Synthesizing the sound bank is ~2.7 s here and the better part of half a
+-- minute in the browser's interpreter. It cannot all happen before the first
+-- frame, and it cannot all happen quietly behind the game either -- a title
+-- theme missing notes for its first ten seconds is the game's first impression.
+--
+-- So the boot has a BURST and then a STREAM.
+--
+--   BURST -- the web shell's panel is still over the canvas, so nothing on
+--     screen is worth a frame. We draw one frame in BURST_DRAW (enough to warm
+--     the shaders and have a picture ready behind the fade) and give the rest
+--     to the bank. It ends when the *warm set* is built: the menu cues and the
+--     five title instruments, ~0.39 s of the 2.7 s. BURST_MAX is a hard stop,
+--     because a device slow enough to hit it is a device the player should be
+--     looking at a game on regardless.
+--
+--   STREAM -- the rest of the bank, behind a running game, priced so it may
+--     hold the frame at STREAM_TARGET and no worse. Whatever the frame already
+--     cost comes off the budget first, so a busy night gets a trickle and an
+--     idle title screen gets most of a frame. Anything not built when it is
+--     asked for is silent and jumps the queue (see Audio.play).
+local BURN        = tonumber(cfg("BOTS_AUDIO_BURN") or "") or 0.05
+local BURST_MAX   = tonumber(cfg("BOTS_BURST_MAX") or "") or 12
+local BURST_DRAW  = 6
+local STREAM_TARGET = 1 / 30
+local STREAM_MIN, STREAM_MAX = 0.002, 0.050
 -- The headless harness builds the whole bank up front, so captures and balance
 -- traces are reproducible and no cue can be missing from one. BOTS_AUDIO_STREAM
 -- puts it on the streaming path anyway, which is how the streaming path itself
@@ -202,7 +220,7 @@ function love.load()
   -- only synthesis left on the critical path, and it can never grow.
   if STREAM then
     Audio.stream(BURN)
-    Boot.stage(0.34, "voices warming")
+    Boot.stage(0.30, "voices warming")
   end
 
   local ok, err = pcall(function()
@@ -214,14 +232,28 @@ function love.load()
     Boot.fatal = err
     print("BOOT ERROR: " .. tostring(err))
   end
-  Boot.stage(0.9, "island awake")
+  Boot.stage(0.36, "island awake")
+  Boot.burstUntil = (love.timer and love.timer.getTime() or 0) + BURST_MAX
+  Boot.bursting = STREAM and not Audio.warmDone()
 end
 
 --------------------------------------------------------------- audio streaming
---- Spend what is left of a 20 fps frame on the sound bank. Called from love.run
---- after the frame has been presented, so the picture never waits on it.
+--- Build the sound bank. Called from love.run after the frame has been
+--- presented, so the picture never waits on it. Two speeds; see the note above
+--- BURN for why.
 function Boot.streamAudio(frameCost)
   if not STREAM or Boot.fatal or Audio.complete then return end
+  if Boot.bursting then
+    Audio.stream(0.25)
+    if Audio.warmDone() or (love.timer and love.timer.getTime() or 0) > Boot.burstUntil then
+      Boot.bursting = false
+    else
+      -- 36% is where love.load left the bar; the warm set carries it the rest
+      -- of the way, and Boot.ready puts it on 100 when there is a picture.
+      Boot.stage(0.36 + 0.60 * Audio.warmProgress(), "synthesizing voices")
+    end
+    return
+  end
   local b = STREAM_TARGET - (frameCost or 0)
   if b < STREAM_MIN then b = STREAM_MIN elseif b > STREAM_MAX then b = STREAM_MAX end
   Audio.stream(b)
@@ -353,6 +385,13 @@ function love.run()
     love.update(dt)
 
     local wantDraw = (not H.on) or H.drawAll or H.drawOn[H.frame]
+    -- Bursting: the boot panel is still over the canvas. Draw occasionally --
+    -- enough to compile the shaders and have a picture ready behind the fade --
+    -- and give the rest of the frame to the sound bank.
+    if Boot.bursting then
+      Boot.burstFrame = (Boot.burstFrame or 0) + 1
+      wantDraw = wantDraw and (Boot.burstFrame % BURST_DRAW == 1)
+    end
     if wantDraw and love.graphics and love.graphics.isActive() then
       love.graphics.origin()
       love.graphics.clear(love.graphics.getBackgroundColor())
@@ -368,13 +407,18 @@ function love.run()
       end
 
       love.graphics.present()
-      -- The picture exists. The web shell's boot panel is sitting on top of the
-      -- canvas waiting for exactly this, and it fades from here.
-      Boot.ready()
+      -- The picture exists and the bank is warm. The web shell's boot panel is
+      -- sitting on top of the canvas waiting for exactly this; it fades from
+      -- here, over the title screen's own entrance.
+      if not Boot.bursting then Boot.ready() end
+      Boot.drew = true
     end
 
     if H.on and H.frame >= H.frames and H.pending <= 0 then return 0 end
     Boot.streamAudio(love.timer and (love.timer.getTime() - tFrame) or 0)
+    -- The burst ended inside a frame that had already decided not to draw, so
+    -- the panel is waiting on a picture that exists from the last burst frame.
+    if Boot.drew and not Boot.bursting then Boot.ready() end
     if not H.on and love.timer then love.timer.sleep(0.001) end
   end
 end

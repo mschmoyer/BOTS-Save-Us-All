@@ -140,7 +140,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 
   // The breaking lip. Width, brightness and existence are all `ex`: on a
   // headland it is wide and violent, in the lee of one it is not there.
-  float lipW = 2.5 + 14.0 * ex;
+  float lipW = 4.0 + 12.0 * ex;
   float edge = 1.0 - smoothstep(0.0, lipW, -sdw);
   float surge = 0.55 + 0.45 * sin(uTime * 1.05 + n1 * 6.2 + n3 * 4.4);
   float lip = edge * edge * surge * smoothstep(0.08, 0.44, ex);

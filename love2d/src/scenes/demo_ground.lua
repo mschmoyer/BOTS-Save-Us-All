@@ -86,6 +86,30 @@ function S:enter()
       { "corner z0.8", TWx * 2, THy, 0.8 },
       { "corner z1.62", TWx * 2 + 0.5, THy + 0.5, 1.62 },
     }
+  elseif ov == "shore" then
+    -- Six stretches of coast spread round the island, plus the whole island.
+    -- The surf is the one thing that cannot be judged from one panel: it is
+    -- meant to be violent in one place and absent in another, and a single
+    -- close view of it proves nothing either way.
+    local cxw, cyw = T.w * 0.5, T.h * 0.5
+    local picks = {}
+    for k = 0, 4 do
+      local want = k / 5 * math.pi * 2 - math.pi
+      local best, bd = nil, 1e18
+      for i = 1, gw * T.gh do
+        if T.biome[i] == 1 then
+          local x, y = ((i - 1) % gw) * cell, math.floor((i - 1) / gw) * cell
+          local a = math.atan2(y - cyw, x - cxw)
+          local d = math.abs(((a - want + math.pi) % (math.pi * 2)) - math.pi)
+          if d < bd then bd, best = d, { x, y } end
+        end
+      end
+      picks[#picks + 1] = best or { cxw, cyw }
+    end
+    self.panels = { { "ISLAND z0.26", cxw, cyw, 0.26 } }
+    for k, pk in ipairs(picks) do
+      self.panels[#self.panels + 1] = { "COAST " .. k, pk[1], pk[2], 1.0 }
+    end
   elseif ov == "scar" then
     self.panels = { { "SCAR z1", scx, scy, 1 }, { "SCAR z2", scx, scy, 2 },
                     { "SCAR z3.5", scx, scy, 3.5 }, { "SCAR edge", scx + 190, scy, 2 },

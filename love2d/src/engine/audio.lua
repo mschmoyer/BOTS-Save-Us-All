@@ -2147,6 +2147,12 @@ local TIER = {
 
 local Q, Qi = {}, 1        -- job queue and cursor
 local Qspent = 0           -- seconds of DSP actually spent, cumulative
+-- The WARM SET: tiers 1 and 2, the menu cues and the five title instruments.
+-- This is the only part of the bank the boot panel waits for, because it is the
+-- only part that would be *heard* to be missing -- a title theme with holes in
+-- its first ten seconds is the game's first impression. ~0.39 s of DSP here
+-- against ~2.7 s for the whole bank.
+local warmTotal, warmLeft = 0, 0
 Audio.prepared = false     -- the bank is registered and Audio.play works
 Audio.complete = false     -- every variant has been synthesized
 
@@ -2201,6 +2207,7 @@ local function runJob(j)
     end
     registerBuffer(e, buf, false)
   end
+  if j.warm then warmLeft = warmLeft - 1 end
   if #e.data >= e.expect then
     e.ready = true
     e.anchors = nil
@@ -2229,9 +2236,16 @@ function Audio.prepare()
   Synth.rate = Audio.rate
 
   Q, Qi = {}, 1
+  warmTotal, warmLeft = 0, 0
   local bucket = { {}, {}, {}, {} }
   local function push(name, job)
-    local b = bucket[TIER[name] or TIER_CORE]
+    local t = TIER[name] or TIER_CORE
+    if t <= TIER_TITLE then
+      job.warm = true
+      warmTotal = warmTotal + 1
+      warmLeft = warmLeft + 1
+    end
+    local b = bucket[t]
     b[#b + 1] = job
   end
 
@@ -2298,6 +2312,7 @@ function Audio.prepare()
     for k = 1, #b do Q[#Q + 1] = b[k] end
   end
   Audio.stats.jobs = #Q
+  Audio.stats.warmJobs = warmTotal
   Audio.loaded = true          -- the API is live; `complete` says the DSP is done
   Audio.complete = (#Q == 0)
 end
@@ -2328,6 +2343,15 @@ function Audio.stream(budget)
     return true, 1
   end
   return false, (Qi - 1) / n
+end
+
+--- Is the warm set built? The boot panel waits on this and nothing else.
+function Audio.warmDone() return Audio.complete or warmLeft <= 0 end
+
+--- 0..1 across the warm set only.
+function Audio.warmProgress()
+  if Audio.complete or warmTotal <= 0 then return 1 end
+  return U.saturate((warmTotal - warmLeft) / warmTotal)
 end
 
 --- 0..1 across the whole bank.
