@@ -1,0 +1,171 @@
+-- The offline half of the baked tree mesh library (see the note above BAKE_DIR
+-- in src/entities/tree.lua). Runs the tessellator over all 250 library cells and
+-- writes the exact bytes the vertex buffers want, plus the manifest the game
+-- checks before it trusts them.
+--
+--   BOTS_TREEBAKE_OUT=/tmp/bake BOTS_SCENE=tools.treebakescene tools/shot.sh 1 1 /tmp/x
+--
+-- tools/bake_trees.sh is the supported way in; it drops the result into
+-- src/bake/trees. Nothing here may depend on the machine it runs on: no
+-- timestamp, no path, no float that is not written to the precision it reads
+-- back at. Two bakes of the same tree are the same bytes, and
+-- `tools/bake_trees.sh && cmp` is a real check rather than a hopeful one.
+local Tree = require("src.entities.tree")
+
+local S = {}
+local floor, min, unpack = math.floor, math.min, unpack or table.unpack
+
+-- Floats go out through love.data.pack in blocks. One call per float would be
+-- three million calls; one call for the whole mesh would blow the C stack that
+-- unpack() pushes its results onto. A thousand at a time is neither.
+local FCHUNK = 1000
+local fmtCache = {}
+local function packRun(out, flat, n, code)
+  local i = 1
+  while i <= n do
+    local m = min(FCHUNK, n - i + 1)
+    local key = code .. m
+    local f = fmtCache[key]
+    if not f then f = "<" .. string.rep(code, m) fmtCache[key] = f end
+    out[#out + 1] = love.data.pack("string", f, unpack(flat, i, i + m - 1))
+    i = i + m
+  end
+end
+
+--- The shortest decimal that reads back as the same double. The extents decide
+--- how big a tree draws and what it culls against, so a manifest that rounded
+--- them would be a bake that renders differently from the tessellator -- which
+--- is the one thing this whole path is not allowed to do. Most values need nine
+--- digits or fewer; the loop only reaches for seventeen when it has to.
+local function num(v)
+  if v ~= v or v == math.huge or v == -math.huge then return "0" end
+  if v == floor(v) and v < 1e15 and v > -1e15 then return string.format("%d", v) end
+  for _, p in ipairs({ "%.9g", "%.12g", "%.15g", "%.17g" }) do
+    local s = string.format(p, v)
+    if tonumber(s) == v then return s end
+  end
+  return string.format("%.17g", v)
+end
+
+function S:enter()
+  local out = os.getenv("BOTS_TREEBAKE_OUT") or "/tmp/bots_treebake"
+  local info = Tree.bakeInfo()
+  local t0 = love.timer.getTime()
+
+  -- Pass 1: how wide do the indices have to be? Nothing in the library is
+  -- anywhere near 65k vertices today (the biggest is a few thousand), but the
+  -- file says which width it used so a future canopy cannot quietly truncate.
+  local maxV = 0
+  Tree.bakeCells(function(_, _, meshes)
+    for i = 1, 3 do
+      local V = meshes[i][1]
+      if V and #V > maxV then maxV = #V end
+    end
+  end)
+  local wide = maxV > 65535
+  local itype, icode, isize = "uint16", "I2", 2
+  if wide then itype, icode, isize = "uint32", "I4", 4 end
+
+  -- Pass 2: vertices first, then indices, so every vertex block lands on a
+  -- four-byte boundary whatever the index width is.
+  local vChunks, iChunks = {}, {}
+  local cells, order = {}, {}
+  local vBytes, iBytes = 0, 0
+  local nVert, nIdx = 0, 0
+  local flat = {}
+
+  Tree.bakeCells(function(key, meta, meshes)
+    local rec = { meta.extentY, meta.extentR,
+                  meta.areaFull or 0, meta.areaLod or 0, meta.areaShadow or 0 }
+    for i = 1, 3 do
+      local V, I = meshes[i][1], meshes[i][2]
+      if not V then
+        rec[#rec + 1] = 0 rec[#rec + 1] = 0 rec[#rec + 1] = 0 rec[#rec + 1] = 0
+      else
+        local n = 0
+        for vi = 1, #V do
+          local v = V[vi]
+          for c = 1, 12 do n = n + 1 flat[n] = v[c] end
+        end
+        packRun(vChunks, flat, n, "f")
+        rec[#rec + 1] = vBytes
+        rec[#rec + 1] = #V
+        vBytes = vBytes + n * 4
+        nVert = nVert + #V
+        -- the vertex map goes out as raw GPU indices, which are 0-based; the
+        -- table form Mesh:setVertexMap takes elsewhere is the 1-based one
+        for ii = 1, #I do flat[ii] = I[ii] - 1 end
+        packRun(iChunks, flat, #I, icode)
+        rec[#rec + 1] = #I          -- patched to a byte offset once vBytes is final
+        rec[#rec + 1] = #I
+        iBytes = iBytes + #I * isize
+        nIdx = nIdx + #I
+      end
+    end
+    cells[key] = rec
+    order[#order + 1] = key
+  end)
+
+  -- The index offsets were left as counts above because the vertex section's
+  -- length is not known until it is finished. Walk them once and make them real.
+  table.sort(order)
+  local at = vBytes
+  for _, key in ipairs(order) do
+    local rec = cells[key]
+    for k = 8, 16, 4 do
+      if rec[k + 1] > 0 then rec[k] = at at = at + rec[k + 1] * isize else rec[k] = 0 end
+    end
+  end
+
+  local blob = table.concat(vChunks) .. table.concat(iChunks)
+  assert(#blob == vBytes + iBytes, "bake: the blob is not the length it claims")
+  local f = assert(io.open(out .. "/trees.bin", "wb"), "bake: cannot write trees.bin")
+  f:write(blob) f:close()
+
+  local m = {
+    "-- Generated by tools/bake_trees.sh. Do not edit; re-bake.",
+    "-- The tree mesh library, tessellated once at build time instead of by",
+    "-- every browser tab. `fingerprint` is md5(tree.lua .. palette.lua ..",
+    "-- util.lua): if it does not match at load, the geometry moved without the",
+    "-- bake and src/entities/tree.lua says so and tessellates instead of",
+    "-- shipping the wrong trees.",
+    "--",
+    "-- A cell is [libKey] = { extentY, extentR, areaFull, areaLod, areaShadow,",
+    "--   then for each of full, lod, shadow: vertexOffset, vertexCount,",
+    "--   indexOffset, indexCount }. Offsets are bytes into trees.bin, which is",
+    "--   every vertex buffer end to end and then every index buffer.",
+    "return {",
+    "  version = " .. info.version .. ",",
+    "  stride = " .. info.stride .. ",",
+    "  itype = " .. string.format("%q", itype) .. ",",
+    "  data = \"trees.bin\",",
+    "  bytes = " .. #blob .. ",",
+    "  count = " .. #order .. ",",
+    "  verts = " .. nVert .. ",",
+    "  indices = " .. nIdx .. ",",
+    "  fingerprint = " .. string.format("%q", info.fingerprint) .. ",",
+    "  cells = {",
+  }
+  for _, key in ipairs(order) do
+    local rec = cells[key]
+    local parts = {}
+    for i = 1, #rec do parts[i] = num(rec[i]) end
+    m[#m + 1] = string.format("    [%d] = { %s },", key, table.concat(parts, ", "))
+  end
+  m[#m + 1] = "  },"
+  m[#m + 1] = "}"
+
+  local mf = assert(io.open(out .. "/manifest.lua", "wb"), "bake: cannot write the manifest")
+  mf:write(table.concat(m, "\n")) mf:write("\n") mf:close()
+
+  print(string.format("TREEBAKE %d cells, %d verts, %d indices (%s), %.2f MB in %.2f s",
+                      #order, nVert, nIdx, itype, #blob / 1048576,
+                      love.timer.getTime() - t0))
+  if #order ~= info.cells then
+    print(string.format("TREEBAKE WARNING: %d cells written, %d expected", #order, info.cells))
+  end
+  if love.event then love.event.quit() end
+end
+
+function S:draw() end
+return S
