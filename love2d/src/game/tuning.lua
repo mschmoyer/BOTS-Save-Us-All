@@ -341,6 +341,9 @@ T.enemy = {
               armoured = true, armour = 0.45, shovesToClose = 5,
               creepStart = 110, creepMax = 300, creepGrow = 2.2,
               rotEvery = 9, rotRamp = 0.55, spreadEvery = 26, maxAlive = 6,
+              -- how far apart the dawn quota plants them, so a morning is
+              -- several problems in several places rather than one thick one
+              rootSpread = 300,
               bounty = 8 },
   spawnEdgePad = 90,
   fleeOnDawn   = 8,             -- seconds to retreat and despawn at dawn

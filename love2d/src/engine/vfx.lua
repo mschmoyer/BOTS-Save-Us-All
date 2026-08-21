@@ -600,14 +600,17 @@ DEFS.heal_ground = {
 }
 
 ------------------------------------------------------------------ economy
+-- A deposit breathing. Authored, and never emitted from anywhere in the game,
+-- which is why cobalt nodes read as flat hard-edged diamonds sitting on the
+-- grass with no life in them at all. src/entities/cobalt.lua streams it now.
 DEFS.cobalt_shimmer = {
-  layer = "air", blend = "add", shape = "mote", rate = 11,
+  layer = "air", blend = "add", shape = "mote", rate = 7,
   count = 1, life = { 0.7, 1.4 }, emit = "disc", radius = { 3, 15 },
   speed = { 10, 34 }, angle = -pi * 0.5, spread = 1.6, drag = 1.2, grav = -46,
   swirl = 24, swirlFreq = 3.4,
-  size = { 4, 8 }, sizeCurve = "softIn", alphaCurve = "softIn",
+  size = { 3, 6 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.7,
   pulse = 0.4, pulseFreq = 11,
-  colors = { c(R.cobalt[4], 0.9), c(W, 1), c(R.cobalt[3], 0) },
+  colors = { c(R.cobalt[3], 0.7), c(R.cobalt[4], 0.9), c(R.cobalt[3], 0) },
 }
 
 DEFS.cobalt_pickup = {

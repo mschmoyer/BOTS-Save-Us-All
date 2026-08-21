@@ -49,6 +49,22 @@ function Director:init(world)
   -- attrition into a siege you have to break -- a different problem, for the
   -- same money.
   Signal.on("enemy:targeted", function(e, target) self:onTargeted(e, target) end, self)
+
+  -- `tree:lost` was emitted and listened to by nothing. It is the record of
+  -- where the night actually won, and that is where the Blight digs in at
+  -- dawn -- see rootRemaining().
+  Signal.on("tree:lost", function(t) self:onTreeLost(t) end, self)
+end
+
+--- Remember where the forest was taken tonight. A short ring, because the
+--- point is where the Blight was winning *recently*, not a full ledger.
+local WOUND_MAX = 48
+function Director:onTreeLost(t)
+  if not self.active or self.world ~= Signal._world or not t then return end
+  local w = self.wounds
+  if not w then w = {}; self.wounds = w end
+  w.n = (w.n or 0) % WOUND_MAX + 1
+  w[w.n] = { x = t.x, y = t.y }
 end
 
 --- Ignore anything that did not happen in the world this Director belongs to: a
@@ -97,10 +113,73 @@ function Director:endNight()
   if not self.active then return end
   self.active = false
   self.anchors = nil
-  -- The Blight may leave this many behind at the coming dawn; `Enemy:flee` asks.
+  -- The Blight leaves this many behind at the coming dawn. `Enemy:flee` gets
+  -- first refusal -- a Chomper with its teeth in a trunk becoming a Scar on
+  -- the spot is the best-reading version of it -- and rootRemaining() spends
+  -- whatever is left over.
   local q = TU.cycle.scarQuota
   self.scarsLeft = q[math.min(self.cycle, #q)] or 0
   Signal.emit("director:dawn", self.cycle)
+end
+
+--- Spend the rest of the dawn quota.
+---
+--- This existed as a quota and an `Enemy:flee` branch that could only fire if
+--- an enemy happened to have its teeth in a tree at the exact tick of dawn.
+--- By dawn the Sentries have almost always cleared the field, so across four
+--- seeds the quota was claimed in 4.6% of daylight samples -- a whole system,
+--- authored and wired, that never once fired. A quota is a thing you spend.
+---
+--- Where they dig in is the point. First choice is the ground the night took:
+--- a wound left by a tree that went down in the small hours, which puts the
+--- morning's problem exactly where last night's loss was. Failing that, an
+--- anchor the night used. The Blight does not root in ground it never reached.
+function Director:rootRemaining()
+  local w = self.world
+  if not w or (self.scarsLeft or 0) <= 0 then return 0 end
+  local cap = (TU.enemy.scar and TU.enemy.scar.maxAlive) or 6
+  local spread = (TU.enemy.scar and TU.enemy.scar.rootSpread) or 260
+
+  local sites = {}
+  local wounds = self.wounds
+  if wounds then
+    for i = 1, WOUND_MAX do
+      local p = wounds[i]
+      if p then sites[#sites + 1] = p end
+    end
+  end
+  if #sites == 0 then return 0 end
+
+  local placed = 0
+  local tries = 0
+  while (self.scarsLeft or 0) > 0 and tries < 40 do
+    tries = tries + 1
+    if self:countLive("scar") >= cap then break end
+    local p = sites[self.rng:int(1, #sites)]
+    -- never two on top of each other, and never in the home clearing
+    local tooClose = false
+    for i = 1, #w.enemies do
+      local e = w.enemies[i]
+      if e.alive and e.type == "scar" and U.dist(e.x, e.y, p.x, p.y) < spread then
+        tooClose = true break
+      end
+    end
+    if U.dist(p.x, p.y, w.homeX, w.homeY) < TU.world.homeRadius then tooClose = true end
+    if not tooClose then
+      local s = w:spawnEnemyAt(p.x, p.y, "scar")
+      if s then
+        self.scarsLeft = self.scarsLeft - 1
+        placed = placed + 1
+        Signal.emit("blight:rooted", s, true)
+      end
+    end
+  end
+  self.wounds = nil
+  if os.getenv("BOTS_TRACE_SCARS") then
+    print(string.format("SCARS|cycle=%d placed=%d left=%d sites=%d live=%d",
+          self.cycle, placed, self.scarsLeft or 0, #sites, self:countLive("scar")))
+  end
+  return placed
 end
 
 --- Anything already dug into the island that the night can use as a way in: the

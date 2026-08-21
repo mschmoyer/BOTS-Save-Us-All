@@ -717,7 +717,16 @@ function World:setPhase(phase)
     Music.setState("night")
     Signal.emit("phase:night", self.cycle)
   elseif phase == "dawn" then
+    -- End the night here rather than waiting for the director's own timer to
+    -- notice: endNight is what sets the dawn quota, and the fleeing pass below
+    -- spends it. Called from two places a frame apart, the quota was still
+    -- zero when the only code that could claim it ran.
+    self.director:endNight()
+    -- The fleeing pass gets first claim on the quota -- a Chomper with its
+    -- teeth in a trunk becoming a Scar where it stood is the best-reading
+    -- version -- and the director spends the rest on the ground the night took.
     for i = 1, #self.enemies do self.enemies[i]:flee() end
+    if self.director.rootRemaining then self.director:rootRemaining() end
     Audio.play("dawn")
     Music.setCycle(self.cycle)
     Music.setState("draft")

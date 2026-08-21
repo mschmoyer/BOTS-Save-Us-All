@@ -38,6 +38,12 @@ end
 function Cobalt:update(dt)
   self:updateCommon(dt)
   if (self.mineT or 0) > 0 then self.mineT = self.mineT - dt end
+  -- only for deposits the player can actually see: an island's worth of
+  -- off-screen shimmer is a particle budget spent on nothing
+  local cam = self.world and self.world.camera
+  if self.node and (not cam or cam:visible(self.x, self.y, self.radius * 3)) then
+    self:ambient(dt)
+  end
   if self.homing then
     local t = self.homing
     local dx, dy, d = U.norm(t.x - self.x, t.y - self.y)
@@ -98,15 +104,36 @@ function Cobalt:draw()
     local s = self.shards[i]
     if self.node and i > math.max(1, self.left) then break end
     local x, y = math.cos(s.a) * s.d, math.sin(s.a) * s.d * 0.6
-    Draw.setColor(P.shade(P.ramp.cobalt, 1.6))
-    Draw.diamond(x, y + s.s * 0.35, s.s * 0.95, s.s * 0.6, "fill")
-    Draw.setColor(P.shade(P.ramp.cobalt, 2.6 + shimmer * 0.6))
+    -- A cut crystal, not a lozenge. These sat next to smooth vector trees as
+    -- four-vertex polygons with one flat fill each, and read as pixel art
+    -- pasted into a different game. Same silhouette, but given a shadowed
+    -- flank, a lit flank and a rim, so it turns in the light.
+    Draw.setColor(P.shade(P.ramp.cobalt, 1.15))
+    Draw.diamond(x, y + s.s * 0.42, s.s * 1.02, s.s * 0.62, "fill")
+    Draw.setColor(P.shade(P.ramp.cobalt, 1.9))
     Draw.diamond(x, y, s.s, s.s * 1.5, "fill")
-    Draw.setColor(P.shade(P.ramp.cobalt, 4), 0.55 + shimmer * 0.45)
-    Draw.diamond(x - s.s * 0.16, y - s.s * 0.3, s.s * 0.34, s.s * 0.6, "fill")
+    -- lit half: a slimmer diamond pushed to the key side, so the body splits
+    -- into two facets down the vertical axis instead of reading as one slab
+    Draw.setColor(P.shade(P.ramp.cobalt, 2.9 + shimmer * 0.5))
+    Draw.diamond(x + s.s * 0.30, y - s.s * 0.04, s.s * 0.70, s.s * 1.40, "fill")
+    Draw.setColor(P.shade(P.ramp.cobalt, 4), 0.50 + shimmer * 0.40)
+    Draw.diamond(x - s.s * 0.16, y - s.s * 0.30, s.s * 0.34, s.s * 0.60, "fill")
+    -- a thin bright edge along the top facets: the one line that stops it
+    -- dissolving into grass at play scale
+    Draw.setColor(P.ramp.cobalt[4], 0.30 + shimmer * 0.30)
+    g.setLineWidth(1.2)
+    g.line(x - s.s, y, x, y - s.s * 1.5, x + s.s, y)
   end
   g.pop()
   Draw.glow(self.x, self.y, self.radius * (1.7 + shimmer * 0.4), P.ramp.cobalt[3], 0.28)
+end
+
+--- The ambient shimmer. VFX.stream wants the per-frame dt, and a node is
+--- static, so this is the whole of it.
+function Cobalt:ambient(dt)
+  if not self.node or self.left <= 0 then return end
+  VFX.stream("cobalt_shimmer", self.x, self.y - self.radius * 0.35, dt,
+             { rate = 0.35 + 0.65 * math.min(1, self.left / 12) })
 end
 
 function Cobalt:emitLight(Lighting)
