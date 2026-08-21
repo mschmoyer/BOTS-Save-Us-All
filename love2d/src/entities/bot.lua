@@ -286,6 +286,15 @@ function Bot:update_repulsor(dt)
       end
     end)
   end
+  -- The reach telegraph runs whether or not anything is in range: knowing the
+  -- footprint matters most while you are still deciding where to stand.
+  self.reachT = (self.reachT or self.rng:range(0, self.def.reachEvery)) - dt
+  if self.reachT <= 0 then
+    self.reachT = self.def.reachEvery
+    VFX.emit("repulsor_reach", self.x, self.y,
+             { scale = self.def.radius_pulse / 200 })
+  end
+
   if not armed then
     self.pulseT = math.min(self.pulseT, self.def.pulseEvery)
     return
@@ -762,10 +771,15 @@ function Bot:body_repulsor(r)
   love.graphics.polygon("fill", 0, -r * 1.02, r * 0.86, r * 0.34, -r * 0.86, r * 0.34)
   Draw.setColor(RIM, 0.5)
   Draw.capsule("fill", -r * 0.04, -r * 0.96, -r * 0.74, r * 0.26, r * 0.065)
-  -- the emitter, which is the whole point of it
-  Draw.ring(0, -r * 1.12, r * 0.46 + pa * r * 0.6, r * 0.16, 0, U.TAU,
+  -- The emitter, which is the whole point of it. The glow behind it used to run
+  -- to three quarters alpha over a disc two and a half times the pylon's own
+  -- radius: at night it was a ball of light with the machine invisible inside
+  -- it, and now that a Repulsor also lights the ground it covers and paints its
+  -- own reach, the emitter does not have to shout as well. The ring is the
+  -- reading; the glow is the hint under it.
+  Draw.ring(0, -r * 1.12, r * 0.46 + pa * r * 0.6, r * 0.13, 0, U.TAU,
             P.alpha(P.accentCool, 0.6 + pa * 0.4), 0.4)
-  Draw.glow(0, -r * 1.12, r * (1.0 + pa * 1.6), P.accentCool, 0.24 + pa * 0.5, 2)
+  Draw.glow(0, -r * 1.12, r * (0.78 + pa * 1.1), P.accentCool, 0.13 + pa * 0.26, 2)
   -- charges left, as pips along the base
   local n = self.def.charges
   for i = 1, n do
@@ -881,8 +895,11 @@ end
 function Bot:emitLight(Lighting)
   if self.state == "dead" then return end
   if self.type == "beacon" and self.state == "work" then
+    -- A Beacon is a lamp you planted, so it burns in the player's own yellow
+    -- rather than the crew's blue: standing inside one should feel like
+    -- standing inside your own light.
     local pulse = 0.85 + math.sin((self.glowPhase or 0)) * 0.15
-    Lighting.addLight(self.x, self.y - self.radius * 1.4, self.def.radius_field, P.eye,
+    Lighting.addLight(self.x, self.y - self.radius * 1.4, self.def.radius_field, P.lightPlayer,
                       1.15 * pulse, { flicker = 0.03 })
   else
     -- A bot's eye is drawn into the scene, and the scene is multiplied by this
@@ -890,8 +907,22 @@ function Bot:emitLight(Lighting)
     -- lit is the light it puts back. It used to put back barely any, and a night
     -- crew of thirty read as thirty grey lumps. Now they read as what they are:
     -- your lights, spread across the dark, each one somebody.
+    -- Blue, always, whatever the eye is doing. A downed bot's eye goes red and
+    -- a smitten one goes pink, and if the *light* followed the eye then the two
+    -- states that most need reading as "one of ours, in trouble" would light
+    -- the ground in the enemy's colour. Mood belongs on the face; the lamp is
+    -- the crew's colour and nothing rotates it.
     local k = self.world and self.world.chips and self.world.chips:get("botLight", 1) or 1
-    Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * 4.8 * k, self:eyeColor(),
+    if self.type == "repulsor" and self.state == "work" then
+      -- A Repulsor is a pylon holding a charge. It lights the ground it covers
+      -- so you can see the mine you placed, and breathes so you can see it is
+      -- still armed.
+      local br = 0.82 + 0.18 * math.sin(self.age * 2.4)
+      Lighting.addLight(self.x, self.y - self.radius * 0.4, self.def.lightRadius * k,
+                        P.lightFriend, self.def.lightGain * br * k, { flicker = 0.04 })
+      return
+    end
+    Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * 4.8 * k, P.lightFriend,
                       (self.state == "down" and 0.26 or 0.48) * k, { flicker = 0.03 })
   end
 end

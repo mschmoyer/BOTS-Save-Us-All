@@ -44,7 +44,19 @@ T.player = {
   plant  = { cost = 0, cooldown = 4.5 },
   carry  = { speedMul = 0.66, pickupRange = 34 },
   mineEvery = 0.55,            -- seconds per chunk while standing on a deposit
-  lamp   = { radius = 310, warm = 1.0 },   -- the pool you actually work inside at night
+  lamp   = { radius = 310, warm = 1.25 },  -- the pool you actually work inside at night
+
+  -- The sidearm. It fires itself, at the nearest thing inside about five body
+  -- lengths, and that short range is the whole design: it is not a weapon you
+  -- fight a night with, it is the reason walking toward trouble is a decision
+  -- rather than a mistake. Anything further away is still the crew's job.
+  blaster = {
+    range  = 175,      -- ~5 body lengths at radius 17
+    every  = 0.40,     -- seconds between shots
+    damage = 1,
+    speed  = 620,
+    spread = 0.035,
+  },
 }
 
 ------------------------------------------------------------------------- rally
@@ -97,7 +109,10 @@ T.bots = {
     desc = "Wanders and plants saplings, forever.",
   },
   builder = {
-    label = "BUILDER", prefix = "FRAME", cost = 35, hp = 5, radius = 15, speed = 66,
+    -- Doubled. A Builder makes Planters for free forever, which is the single
+    -- best thing cobalt buys; at 35 it was the obvious first purchase and every
+    -- run bought the same thing in the same order.
+    label = "BUILDER", prefix = "FRAME", cost = 70, hp = 5, radius = 15, speed = 66,
     buildEvery = 14.0, carryStart = 3, carryMax = 6,
     -- What a Builder spends out of its *own* pockets to make a Planter. It used
     -- to charge half an escalating price to the player's bank, every fourteen
@@ -117,6 +132,11 @@ T.bots = {
   repulsor = {
     label = "REPULSOR", prefix = "PYLON", cost = 12, hp = 4, radius = 14, speed = 0,
     pulseEvery = 1.2, radius_pulse = 230, force = 900, charges = 4, stun = 0.9, damage = 1,
+    -- How often it shows you what it covers. A Repulsor is a mine you place in
+    -- front of a wave and its footprint was invisible until it fired, so it
+    -- could only ever be placed hopefully.
+    reachEvery = 2.8,
+    lightRadius = 300, lightGain = 0.7,
     desc = "Four hard shockwaves, fast, then it is gone. Throw it in front of a wave.",
   },
   sentry = {
@@ -347,6 +367,17 @@ T.enemy = {
               bounty = 8 },
   spawnEdgePad = 90,
   fleeOnDawn   = 8,             -- seconds to retreat and despawn at dawn
+
+  -- What the Blight puts back into the lighting buffer after dusk. Night is
+  -- the game, and until these existed the thing attacking you was a dark shape
+  -- on dark ground.
+  light = {
+    radius   = 5.6,   -- multiples of the enemy's own radius
+    gain     = 0.86,  -- at full dark; scaled down toward dusk
+    core     = 1.5,   -- a tight hot centre so the body reads as lit
+    coreGain = 0.55,
+    rooted   = 2.1,   -- Maws and Scars are landmarks: visible from across the island
+  },
 }
 
 -------------------------------------------------------------------------- boss

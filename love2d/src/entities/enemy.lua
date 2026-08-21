@@ -731,6 +731,8 @@ local function bl(t) return P.shade(P.ramp.blight, t) end
 -- a chomper walking into a lamp-lit clearing was a dark smudge on dark ground.
 -- One soft glow at the eyes, at night only, in the colour that thing already
 -- has on its face. It costs nothing in daylight and it never repaints the body.
+local LIGHT = TU.enemy.light
+
 local EYE = {
   chomper = P.shade(P.ramp.blight, 3.6),
   skitter = P.acid,
@@ -741,6 +743,39 @@ local EYE = {
   maw     = P.shade(P.ramp.rift, 3),
   scar    = P.shade(P.ramp.rift, 3.2),
 }
+
+--- The Blight puts light back into the scene.
+---
+--- Everything else on the island already did -- bots, the rig, cobalt, the
+--- player -- and the lighting buffer the scene is multiplied by is the only
+--- thing keeping anything visible after dusk. Enemies had no emitLight at all,
+--- so at night the thing attacking you was a dark shape on dark ground and the
+--- minimap ended up doing all the work.
+---
+--- All of it is red. Per-type colours were prettier and told you nothing you
+--- could act on at a glance; one hostile colour, against the crew's blue and
+--- the player's yellow, means a night reads as three kinds of light and you
+--- never have to look anything up. See P.lightHostile.
+function Enemy:emitLight(Lighting)
+  if not self.alive or self.fleeing then return end
+  local T = TU.enemy[self.type] or {}
+  local r = self.radius or 14
+  local c = P.lightHostile
+  local dark = U.saturate(1 - (DayNight.ambientStrength or 1))
+  -- daylight needs none of this, and paying for it in the day is 40 lights the
+  -- lighting pass would rather spend on the forest
+  if dark < 0.12 then return end
+  local oy = T.float and -22 or -r * 0.25
+  local k = LIGHT.gain * (0.35 + 0.65 * dark)
+  local flick = 0.85 + 0.15 * math.sin(self.age * 3.1 + (self.seed or 0))
+  -- A Maw and a Scar are landmarks: they do not move, they deny ground, and
+  -- what you need at night is to know where they are from across the island.
+  local wide = (self.type == "maw" or self.type == "scar") and LIGHT.rooted or 1
+  Lighting.addLight(self.x, self.y + oy, r * LIGHT.radius * wide, c,
+                    k * flick, { flicker = 0.05 })
+  -- a hot little core so the body reads as lit rather than as a glow behind it
+  Lighting.addLight(self.x, self.y + oy, r * LIGHT.core, c, k * LIGHT.coreGain, nil)
+end
 
 function Enemy:drawShadow()
   -- A Scar's reach is the whole of its threat and it is invisible unless it is

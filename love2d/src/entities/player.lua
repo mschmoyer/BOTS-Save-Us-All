@@ -101,6 +101,8 @@ function Player:update(dt, camera)
   end
   self.aimX, self.aimY = ax, ay
 
+  self:updateBlaster(dt, canAct)
+
   ------------------------------------------------------------------ dash
   self.dashCd = math.max(0, self.dashCd - dt)
   if self.dashTimer > 0 then
@@ -515,12 +517,17 @@ function Player:draw()
 
   g.pop()
 
-  -- charge ring
+  -- Charge ring. The glow behind it used to run to 0.6 alpha over a disc more
+  -- than three times the player's radius, which at full charge put a solid
+  -- bloom exactly where the character is -- so the tell for "you are about to
+  -- do something" worked by hiding the person doing it. The ring carries the
+  -- reading; the glow is a hint underneath it, and it sits *behind* rather
+  -- than on top.
   if self.charging then
     local p = U.saturate(self.chargeT / T.pulse.charge)
-    Draw.ring(self.x, self.y, r * 2.4 + (1 - p) * 22, 3, -math.pi / 2, -math.pi / 2 + p * U.TAU,
-              P.accent, 0.6)
-    Draw.glow(self.x, self.y, r * (1.4 + p * 2.2), P.accent, p * 0.6)
+    Draw.glow(self.x, self.y, r * (1.9 + p * 2.4), P.accent, p * 0.20)
+    Draw.ring(self.x, self.y, r * 2.4 + (1 - p) * 22, 2.5, -math.pi / 2, -math.pi / 2 + p * U.TAU,
+              P.accent, 0.75)
   end
 
   -- dash cooldown dial
@@ -528,6 +535,31 @@ function Player:draw()
     local p = 1 - self.dashCd / T.dash.cooldown
     Draw.ring(self.x, self.y + r * 1.5, r * 0.9, 2, -math.pi / 2, -math.pi / 2 + p * U.TAU,
               P.inkFaint, 0.4)
+  end
+
+  -- the sidearm firing. Short, hot and gone in a tenth of a second: it has to
+  -- say "that shot came from you" without competing with the shot itself
+  local bf = self.blasterFlash or 0
+  if bf > 0 and self.blasterAim then
+    local a = self.blasterAim
+    local cx, cy = self.x + math.cos(a) * r * 1.15, self.y - 8 + math.sin(a) * r * 1.15
+    Draw.setColor(P.lightPlayer, 0.75 * bf)
+    love.graphics.setLineWidth(2 + 2 * bf)
+    love.graphics.line(cx, cy, cx + math.cos(a) * 14 * bf, cy + math.sin(a) * 14 * bf)
+    Draw.glow(cx, cy, 13 * bf, P.lightPlayer, 0.5 * bf)
+  end
+
+  -- a hairline to whatever the blaster has picked, so the auto-target is a
+  -- thing you can see deciding rather than a thing that happens
+  local tgt = self.blasterTarget
+  if tgt and tgt.alive then
+    local a = math.atan2(tgt.y - self.y, tgt.x - self.x)
+    local d = U.dist(self.x, self.y, tgt.x, tgt.y)
+    Draw.setColor(P.lightPlayer, 0.13)
+    love.graphics.setLineWidth(1)
+    love.graphics.line(self.x + math.cos(a) * r * 1.3, self.y - 8 + math.sin(a) * r * 1.3,
+                       self.x + math.cos(a) * (d - (tgt.radius or 12)),
+                       self.y - 8 + math.sin(a) * (d - (tgt.radius or 12)))
   end
 
   -- carried bot rides on the shoulder
@@ -550,8 +582,51 @@ function Player:drawDown()
 end
 
 --- The player's lamp, registered with the lighting system each frame.
+--- The sidearm.
+---
+--- It picks its own target and fires on a cooldown, because the thing this
+--- game asks of your hands is where to stand and what to build, and adding an
+--- aim-and-click on top of that would take attention off both. Range is about
+--- five body lengths, which is short on purpose: it makes stepping toward a
+--- Chomper a real decision instead of a free one, and it never turns the
+--- player into a substitute for a Sentry line.
+function Player:updateBlaster(dt, canAct)
+  local B = T.blaster
+  self.fireT = math.max(0, (self.fireT or 0) - dt)
+  self.blasterFlash = math.max(0, (self.blasterFlash or 0) - dt * 9)
+  self.blasterTarget = nil
+  if not canAct or self.state ~= "alive" then return end
+  local w = self.world
+  if not w or not w.nearestEnemy then return end
+
+  local e = w:nearestEnemy(self.x, self.y, B.range, function(en)
+    return en.alive and not en.fleeing
+  end)
+  if not e then return end
+  self.blasterTarget = e
+  if self.fireT > 0 then return end
+  self.fireT = B.every
+
+  -- lead it, the same way a Sentry does, or nothing fast ever gets hit
+  local d = U.dist(self.x, self.y, e.x, e.y)
+  local tt = d / B.speed
+  local ang = math.atan2(e.y + (e.vy or 0) * tt - self.y,
+                         e.x + (e.vx or 0) * tt - self.x)
+  if w.rng then ang = ang + w.rng:range(-B.spread, B.spread) end
+  local mx, my = math.cos(ang), math.sin(ang)
+  w:spawnDart(self.x + mx * 18, self.y - 8 + my * 18, ang, B.speed, B.damage, self)
+  self.blasterFlash = 1
+  self.blasterAim = ang
+  VFX.emit("blaster_muzzle", self.x + mx * 22, self.y - 8 + my * 22,
+           { dx = mx * 90, dy = my * 90 })
+  Audio.play("spit", { pitch = 1.85, volume = 0.42, x = self.x, y = self.y })
+end
+
 function Player:emitLight(Lighting)
-  local warm = P.mix(P.eye, P.white, 0.25)
+  -- Yellow, and the only yellow that moves. The crew light the ground blue and
+  -- the Blight lights it red, so the one warm pool on a night island is you --
+  -- which is the whole of how you find yourself in a crowded frame.
+  local warm = P.lightPlayer
   Lighting.addLight(self.x, self.y, T.lamp.radius, warm, T.lamp.warm, { flicker = 0.05 })
   if self.charging then
     Lighting.addLight(self.x, self.y, 120 * (0.4 + self.chargeT), P.accent, 1.2)

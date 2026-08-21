@@ -72,15 +72,31 @@ P.black      = hex "#05070b"
 P.white      = hex "#ffffff"
 P.eye        = hex "#ffc46b"
 P.eyeDown    = hex "#ff6a4d"
--- The crew's own light, and it is not `eye`. An amber that hot is orange
--- (hue 33 degrees); bloom it, run it through the extraction's cool grade and it
--- lands a short walk from `danger` (349) and the Blight's own bar, so your
--- friends end up glowing like the thing eating them. This is the *yellow* the
--- dialogue portraits promised -- hue 51, sixty degrees further from red, with a
--- red channel that is no longer dominant, so no grade in the game can rotate it
--- into the danger family. `eye` stays exactly where it belongs: on a Beacon's
+-- The crew's own eye, and it is not `eye`. An amber that hot is orange (hue 33
+-- degrees); bloom it, run it through the extraction's cool grade and it lands a
+-- short walk from `danger` (349) and the Blight's own bar, so your friends
+-- ended up glowing like the thing eating them. This is blue, because blue is
+-- what the crew's light is, and an eye that does not match the lamp behind it
+-- is two machines. `eye` stays exactly where it belongs: on a Beacon's
 -- lantern, which is a lamp and ought to be warm.
-P.botEye     = hex "#ffe45c"
+P.botEye     = hex "#8fd4ff"
+
+-- The night's colour language. After dusk the scene is multiplied by the
+-- lighting buffer, so the light a thing puts back is most of what you can see
+-- of it -- which makes these three colours the difference between reading a
+-- night at a glance and reading the minimap instead.
+--
+--   red     something that wants to hurt you
+--   blue    your crew
+--   yellow  you, and the beacons you planted
+--
+-- Nothing else may borrow them. The bot eye above is in the blue family for
+-- the same reason: it used to be amber, which under the extraction's teal
+-- grade came back salmon-pink -- the same family as P.danger -- so at the one
+-- moment the game is about your crew, your crew glowed like the enemy.
+P.lightHostile = hex "#ff4a3d"
+P.lightFriend  = hex "#5cb8ff"
+P.lightPlayer  = hex "#ffd15c"
 P.love       = hex "#ff7ba8"
 P.acid       = hex "#b6ff3d"
 P.o2         = hex "#6fe4ff"

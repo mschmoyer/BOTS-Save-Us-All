@@ -504,26 +504,57 @@ DEFS.impact = {
 -- Two 72-segment rings, each drawn as three concentric strokes, is 864 line
 -- segments per pulse -- and the player and every repulsor bot fire it. At r=210
 -- a 48-segment circle is off by half a pixel, which nobody has ever seen.
+-- A Repulsor telling you what it covers, without firing. It is a mine you
+-- place in front of a wave and its whole value is its footprint, which was
+-- invisible until the moment it went off -- so you could not place one on
+-- purpose, only hopefully. One thin ring, out to exactly radius_pulse, slow
+-- enough to read and quiet enough that it never reads as a discharge.
+DEFS.repulsor_reach = {
+  { layer = "air", blend = "add", shape = "ring",
+    count = 1, life = 1.15, emit = "point",
+    ring0 = 12, ring1 = 200, ringW = 2.4, ringSegs = 64, ringCurve = "swell",
+    alphaCurve = "smoothOut", alpha = 0.36,
+    colors = { c(P.lightFriend, 0.55), c(P.o2, 0.4), c(P.lightFriend, 0) } },
+}
+
+-- The player's shove, and the Repulsor's. Both stops used to open on pure
+-- white, additive, at 210 px -- so the one object in the game you must never
+-- lose track of spent every pulse inside a blown-out disc with itself
+-- invisible in the middle of it. It is a pressure wave, not a flashbang: the
+-- hot stop is the player's own yellow and it falls off through the cool
+-- accent, and nothing in it reaches white.
 DEFS.pulse_ring = {
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.62, emit = "point",
-    ring0 = 14, ring1 = 210, ringW = 34, ringSegs = 48, ringCurve = "swell",
-    alphaCurve = "smoothOut", alpha = 0.7,
-    colors = { c(W, 0.8), c(P.o2, 0.6), c(P.accentCool, 0) } },
+    ring0 = 14, ring1 = 210, ringW = 22, ringSegs = 48, ringCurve = "swell",
+    alphaCurve = "smoothOut", alpha = 0.42,
+    colors = { c(P.lightPlayer, 0.55), c(P.o2, 0.45), c(P.accentCool, 0) } },
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.5, emit = "point",
-    ring0 = 10, ring1 = 200, ringW = 5, ringSegs = 48, ringCurve = "swell",
-    alphaCurve = "sharpOut",
-    colors = { c(W, 1), c(P.o2, 0.9), c(P.accentCool, 0) } },
+    ring0 = 10, ring1 = 200, ringW = 3.5, ringSegs = 48, ringCurve = "swell",
+    alphaCurve = "sharpOut", alpha = 0.8,
+    colors = { c(P.lightPlayer, 0.9), c(P.o2, 0.7), c(P.accentCool, 0) } },
   { layer = "air", blend = "alpha", shape = "glow",
     count = 1, life = 0.5, emit = "point",
-    size = { 120, 330 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.15,
-    colors = { c(P.accentCool, 0.6), c(P.o2, 0.3), c(P.accentCool, 0) } },
+    size = { 120, 330 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.10,
+    colors = { c(P.accentCool, 0.5), c(P.o2, 0.25), c(P.accentCool, 0) } },
   { layer = "air", blend = "add", shape = "mote",
     count = { 10, 14 }, life = { 0.3, 0.6 }, emit = "ring", radius = { 20, 40 },
     speed = { 240, 460 }, spread = 0.5, drag = 2.6,
     size = { 4, 12 }, sizeCurve = "shrink", alphaCurve = "smoothOut",
     colors = { c(W, 1), c(P.o2, 0.8), c(P.accentCool, 0) } },
+}
+
+-- The sidearm's muzzle. Its own def rather than borrowing hit_spark, which is
+-- an impact and opens on pure white: fired two and a half times a second it
+-- wrapped the player in a permanent halo of white spindles. Three sparks, in
+-- the player's yellow, thrown forward and gone in a tenth of a second.
+DEFS.blaster_muzzle = {
+  layer = "air", blend = "add", shape = "streak",
+  count = { 2, 3 }, life = { 0.06, 0.13 }, emit = "point",
+  speed = { 210, 380 }, spread = 0.5, drag = 11, align = true, stretch = 0.010,
+  size = { 4, 9 }, sizeCurve = "shrink", alphaCurve = "sharpOut", alpha = 0.7,
+  colors = { c(P.lightPlayer, 0.9), lt(P.lightPlayer, 0.3, 0.7), c(R.ember[3], 0) },
 }
 
 DEFS.hit_spark = {
@@ -532,8 +563,11 @@ DEFS.hit_spark = {
   speed = { 200, 460 }, spread = 1.6, drag = 9, align = true, stretch = 0.0125,
   -- a wider size spread: identical spindles at identical lengths is the single
   -- most legible "default particle system" tell in the whole library
-  size = { 5, 18 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
-  colors = { c(W, 1), lt(R.ember[4], 0.4, 0.9), c(R.ember[3], 0) },
+  size = { 5, 18 }, sizeCurve = "shrink", alphaCurve = "sharpOut", alpha = 0.85,
+  -- Not white. Every dart, every sentry, every shot the player fires ends in
+  -- one of these, so a busy night was a field of blown-out spindles; ember is
+  -- hot enough to read as an impact and stays inside the game's palette.
+  colors = { lt(R.ember[4], 0.5, 1), lt(R.ember[4], 0.2, 0.9), c(R.ember[3], 0) },
 }
 
 -- `crit` lived here: thirty-five particles of white-and-orange firework for a
