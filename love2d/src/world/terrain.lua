@@ -490,10 +490,14 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // spots ahead of itself and the spots join up later. A handful of islands of
   // dead ground just beyond the edge is the whole difference between blight
   // and a stencil.
-  float spotF = fbm3(w * 0.0170 + 517.0);
-  float spot = smoothstep(0.635, 0.865, spotF)
-             * smoothstep(0.01, 0.24, scarN) * (1.0 - smoothstep(0.30, 0.47, scarN));
-  scarT = clamp(scarT + spot * (1.0 - beachT) * 0.80, 0.0, 1.0);
+  // Guarded on the raw field, which is exactly zero over most of the island:
+  // an unguarded fbm here is three octaves of noise on every land pixel in the
+  // bake to decorate the fringe of four scars.
+  if (scar > 0.004) {
+    float spot = smoothstep(0.635, 0.865, fbm3(w * 0.0170 + 517.0))
+               * smoothstep(0.01, 0.24, scarN) * (1.0 - smoothstep(0.30, 0.47, scarN));
+    scarT = clamp(scarT + spot * (1.0 - beachT) * 0.80, 0.0, 1.0);
+  }
   if (scarT > 0.002 || scarEdge > 0.002) {
     // Poisoned ground, not dry ground. Everything wide-area here is value and
     // texture: necrotic blotches with a bloom margin for the masses, a fibrous
@@ -534,8 +538,14 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 
     // Cracked ground is *cells*: flat plates with a fissure between them,
     // warped so no edge is ruled and stretched so they are not equilateral.
-    vec2 cwp = w + vec2((fbm3(w * 0.0105 +  5.0) - 0.5) * 34.0,
-                        (fbm3(w * 0.0105 + 61.0) - 0.5) * 34.0);
+    float wa = fbm3(w * 0.0105 +  5.0);
+    float wb = fbm3(w * 0.0105 + 61.0);
+    // The last term is small and fast, and it is the one that stops every
+    // fissure being a clean straight bisector -- which is what a Voronoi net
+    // gives you, and what reads as paving rather than as ground that has split.
+    vec2 cwp = w + vec2((wa - 0.5) * 34.0, (wb - 0.5) * 34.0)
+                 + vec2((vn(w * 0.055 + 13.0) - 0.5) * 8.5,
+                        (vn(w * 0.055 + 71.0) - 0.5) * 8.5);
     vec2 pcs = vec2(0.0138, 0.0176);              // ~72 x 57 px plates
     vec3 pa  = cells(cwp * pcs);
     vec2 pas = cellId((cwp + uSun * 6.0) * pcs);
@@ -558,15 +568,19 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
                * (1.0 + bloom * 1.7);
     float crackA = smoothstep(0.070, 0.006, pa.z * open) * (0.30 + 0.70 * brk);
     float crackB = smoothstep(0.115, 0.016, pb.z * open) * brk * (1.0 - crackA * 0.80);
-    float crack  = clamp(crackA * 0.92 + crackB * 0.54, 0.0, 1.0) * (1.0 - seep * 0.88);
+    float crack  = clamp(crackA * 0.92 + crackB * 0.54, 0.0, 1.0)
+                 * (1.0 - seep * 0.88) * (1.0 - necro * 0.45);
 
     // ---- value ----
     // The hierarchy reads as tone before it reads as line: a big plate has its
     // own value and the pieces it has broken into have theirs, and the fissures
     // only have to separate them.
-    float v = 0.78 + tA * 0.86 + tB * 0.44 + form * 0.30
+    // `wa` is already paid for above; reusing it as a ~95 px value field is
+    // what gives the crust regions of its own instead of one even tone with a
+    // net drawn on it.
+    float v = 0.70 + tA * 0.88 + tB * 0.46 + form * 0.30 + (wa - 0.5) * 0.62
             + (curd - 0.5) * 0.52 + (d2 - 0.5) * 0.44 + (d3 - 0.5) * 0.28
-            - necro * 0.86 + bloom * 0.50;
+            + bloom * 0.50;
     vec3 dead = ramp(cAsh[0], cAsh[1], cAsh[2], cAsh[3], clamp(v, 0.0, 3.0));
     dead = mix(dead, vec3(dot(dead, vec3(0.299, 0.587, 0.114))), 0.40);
     // ---- the bruise ----
@@ -577,7 +591,11 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     float vt = clamp(v * 0.42 - 0.06, 0.0, 1.0);
     dead = mix(mix(dead, cBlight[1], 0.58), mix(dead, cNecrosis, 0.26),
                smoothstep(0.08, 0.60, vt));
-    dead = mix(dead, mix(cBlight[0], cBlight[1], 0.60), necro * 0.30);
+    // Where the crust has gone through. Sinking the value here rather than
+    // taking it off the ramp is the whole point: subtracted, the bottom stop
+    // clamps and a breach comes out as one flat hole with a soft edge. Scaled,
+    // the plates that fell into it keep their tone and the breach has a floor.
+    dead = mix(dead, mix(dead * 0.34, mix(cBlight[0], cBlight[1], 0.55), 0.55), necro);
     // the heart of a scar is burnt out; the rim is still dust
     dead *= 0.80 + 0.24 * (1.0 - deep) + 0.18 * form;
     // pale bloom along the curdled ridges: efflorescence, or mould, or both

@@ -54,6 +54,29 @@ function A:decide(p, dt)
     return dx, dy, act
   end
 
+  -- A Blight Scar is the day's job and it does not chase you, so nothing else
+  -- in this routine would ever have gone to one -- which made every balance
+  -- trace read as though Scars were free damage rather than a chore with a
+  -- deadline. Only in daylight, and only when nothing live is on top of us.
+  if w.phase == "day" and not (w.boss and w.boss.alive) then
+    local near = w:nearestEnemy(p.x, p.y, 300, function(e) return e.type ~= "scar" end)
+    if not near then
+      local scar = w:nearestEnemy(p.x, p.y, 2600, function(e) return e.type == "scar" end)
+      if scar then
+        local d = U.dist(p.x, p.y, scar.x, scar.y)
+        self.gx, self.gy = scar.x, scar.y
+        self.aimX, self.aimY = U.norm(scar.x - p.x, scar.y - p.y)
+        if d < TU.player.shove.range + (scar.radius or 20) then
+          act.shove = true
+          return 0, 0, act
+        end
+        local dx, dy = U.norm(scar.x - p.x, scar.y - p.y)
+        if d > 320 and self.rng:chance(dt * 1.5) then act.dash = true end
+        return dx, dy, act
+      end
+    end
+  end
+
   -- the rig outranks everything: it is draining the sky while we stand here
   local threat = (w.boss and w.boss.alive) and w.boss or w:nearestEnemy(p.x, p.y, 420)
   -- stand off big things rather than walking into them; the shove out-ranges

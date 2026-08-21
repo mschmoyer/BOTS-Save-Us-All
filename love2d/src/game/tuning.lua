@@ -239,7 +239,12 @@ T.cycle = {
   -- in exact proportion, so growth was self-punishing and loss was
   -- self-relieving. The pressure is authored per cycle now and the forest term
   -- is a much smaller reminder that a bigger wood is a longer perimeter.
-  budget     = { 26, 46, 74, 110, 156, 208, 268 },   -- floor for the night's spend
+  -- Re-cut once the crew was capped at forty-eight. This curve was set when a
+  -- traced run fielded ninety to a hundred and thirty bots; against a workforce
+  -- half that size, and a Director that now spends the same budget on far more
+  -- dangerous compositions, the late nights took a forest apart -- one seed
+  -- finished at eighty-nine trees and fourteen percent.
+  budget     = { 24, 42, 66, 94, 130, 168, 214 },    -- floor for the night's spend
   budgetPerTree = 0.16,        -- ...plus this much for every tree you have grown
   -- What the night is made of, by cycle: the weight of each type at the cycle it
   -- unlocks, and how that weight drifts per cycle afterwards (under 1 fades,

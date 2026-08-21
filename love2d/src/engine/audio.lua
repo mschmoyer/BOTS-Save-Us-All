@@ -2104,86 +2104,258 @@ local function registerBuffer(entry, buf, loopFlag)
   Audio.stats.bytes = Audio.stats.bytes + buf.n * buf.ch * 2
 end
 
-function Audio.load()
-  if Audio.loaded then return Audio.stats.loadTime end
-  local t0 = (love and love.timer) and love.timer.getTime() or os.clock()
+------------------------------------------------------------------- streaming
+-- WHY THE BANK IS NOT BUILT IN ONE CALL ANY MORE
+--
+-- 46 cues, 324 variants, 11.8 MB of SoundData, about three seconds of DSP on a
+-- desktop with a JIT. The shipping target is LOVE compiled to WebAssembly
+-- running PUC Lua 5.1 with no JIT, where the same work is most of half a
+-- minute -- and it used to be spent inside one main-loop tick, which in a
+-- browser means the page stops painting and the button the player just pressed
+-- stops answering. Measured: 21.4 s of dead tab before the first drawn frame.
+--
+-- Nothing on a title screen needs the extraction rig's intake drone.
+--
+-- So the bank is *registered* up front (cheap: tables, no DSP) and
+-- *synthesized* in time-boxed slices afterwards, in priority order. Audio.play
+-- is usable from the first frame. A cue that has not been built yet plays
+-- nothing and jumps to the head of the queue; see the table above Audio.play.
+--
+-- Every job carries its own seed, derived from the cue's name and the variant
+-- index, so the bank is bit-identical however the queue is reordered. A cue
+-- that got promoted must not sound different from the same cue built in turn.
 
+-- Priority tiers, cheapest need first. Anything not named here is TIER_CORE.
+local TIER_UI, TIER_TITLE, TIER_CORE, TIER_LATE = 1, 2, 3, 4
+local TIER = {
+  -- the first thing a player can do is move a menu selection
+  ui_move = TIER_UI, ui_select = TIER_UI, ui_back = TIER_UI,
+  -- the title bed: five instruments, no percussion (the title has none)
+  mus_pad = TIER_TITLE, mus_bass = TIER_TITLE, mus_bell = TIER_TITLE,
+  mus_pluck = TIER_TITLE, mus_choir = TIER_TITLE,
+  -- ...TIER_CORE is everything the first two minutes of a run can produce...
+  -- and the rest is verbs and set pieces that are minutes away at the earliest
+  pulse_charge = TIER_LATE, pulse_release = TIER_LATE, player_down = TIER_LATE,
+  spit = TIER_LATE, siphon_latch = TIER_LATE, siphon_drain = TIER_LATE,
+  rift_open = TIER_LATE, rift_close = TIER_LATE,
+  card_hover = TIER_LATE, card_pick = TIER_LATE,
+  bot_rebel = TIER_LATE, bot_sacrifice = TIER_LATE,
+  boss_beam = TIER_LATE, boss_step = TIER_LATE, boss_hurt = TIER_LATE,
+  boss_fall = TIER_LATE, rig_intake = TIER_LATE, rig_creak = TIER_LATE,
+  rig_plate = TIER_LATE, rig_land = TIER_LATE, rig_core = TIER_LATE,
+}
+
+local Q, Qi = {}, 1        -- job queue and cursor
+local Qspent = 0           -- seconds of DSP actually spent, cumulative
+Audio.prepared = false     -- the bank is registered and Audio.play works
+Audio.complete = false     -- every variant has been synthesized
+
+local function nowSec()
+  if love and love.timer then return love.timer.getTime() end
+  return os.clock()
+end
+
+--- A stable per-variant seed. Same cue, same index, same sound, whatever order
+--- the queue ends up in.
+local function jobSeed(name, i)
+  local h = 0x5F37
+  for k = 1, #name do h = (h * 131 + name:byte(k)) % 2147483647 end
+  return (h * 8191 + i * 7919 + 1) % 2147483647
+end
+
+local function runJob(j)
+  local e = j.entry
+  local d = e.def
+  local r = U.rng(j.seed)
   Synth.rate = Audio.rate
-  rng = U.rng(0xB075)
+  Synth.resetSeq(j.seed)
+  if j.kind == "sfx" then
+    local spec = d.build(j.v, d.variants, r)
+    spec.rate = d.rate or Audio.rate
+    registerBuffer(e, Synth.render(spec), d.loop)
+  elseif j.kind == "perc" then
+    local spec = e.perc.spec(r)
+    spec.rate = e.perc.rate or Audio.rate
+    registerBuffer(e, Synth.render(spec), false)
+  else
+    -- `sparse` renders every Nth semitone and fills the gaps by resampling the
+    -- nearest anchor. A pad moved a semitone by resampling is indistinguishable
+    -- from one synthesised there, and it is three times cheaper to build.
+    local st, step = j.v, e.step
+    local a = floor(st / step) * step
+    local buf
+    if st == a then
+      local spec = d.build(Synth.noteToHz(MUSIC_BASE + st))
+      spec.rate = d.rate or Audio.rate
+      buf = Synth.render(spec)
+      e.anchors = { [a] = buf }        -- the previous anchor is finished with
+    else
+      local src = e.anchors and e.anchors[a]
+      if not src then                  -- can only happen if a reorder split a run
+        local spec = d.build(Synth.noteToHz(MUSIC_BASE + a))
+        spec.rate = d.rate or Audio.rate
+        src = Synth.render(spec)
+        e.anchors = { [a] = src }
+      end
+      buf = src:copy():pitchShift(st - a)
+    end
+    registerBuffer(e, buf, false)
+  end
+  if #e.data >= e.expect then
+    e.ready = true
+    e.anchors = nil
+  end
+end
+
+--- Move every unbuilt job of `entry` to the head of the queue. Called when
+--- something asked for a cue that is not there yet, so the next trigger has it.
+local function promote(entry)
+  if not entry or entry.ready or entry.hot then return end
+  entry.hot = true
+  local w = Qi
+  for i = Qi, #Q do
+    if Q[i].entry == entry then
+      if i ~= w then Q[i], Q[w] = Q[w], Q[i] end
+      w = w + 1
+    end
+  end
+end
+
+--- Register the whole bank without synthesizing any of it. Cheap enough to sit
+--- in love.load: it allocates one table per cue and one job per variant.
+function Audio.prepare()
+  if Audio.prepared then return end
+  Audio.prepared = true
+  Synth.rate = Audio.rate
+
+  Q, Qi = {}, 1
+  local bucket = { {}, {}, {}, {} }
+  local function push(name, job)
+    local b = bucket[TIER[name] or TIER_CORE]
+    b[#b + 1] = job
+  end
 
   -- sfx bank
   for i = 1, #D do
     local name = D[i]
     local d = D[name]
-    local entry = { def = d, data = {}, env = {}, len = {}, src = {}, next = 1 }
-    local tS = (love and love.timer) and love.timer.getTime() or os.clock()
-    for v = 1, d.variants do
-      local spec = d.build(v, d.variants, rng)
-      spec.rate = d.rate or Audio.rate
-      registerBuffer(entry, Synth.render(spec), d.loop)
-    end
-    Audio.stats.cost[name] = ((love and love.timer) and love.timer.getTime() or os.clock()) - tS
+    local entry = { def = d, data = {}, env = {}, len = {}, src = {}, next = 1,
+                    kind = "sfx", expect = d.variants }
     if d.keyed then
       entry.index = {}
       for k, key in ipairs(d.keyed) do entry.index[key] = k end
     end
     Audio.sounds[name] = entry
     Audio.stats.sounds = Audio.stats.sounds + 1
+    Audio.stats.cost[name] = 0
+    for v = 1, d.variants do
+      push(name, { entry = entry, kind = "sfx", v = v, name = name,
+                   seed = jobSeed(name, v) })
+    end
   end
 
-  -- music instrument bank: one chromatic octave each
+  -- music instrument bank: a chromatic run from C3, `octaves` long
   Audio.music = {}
   for i = 1, #MUSIC do
     local name = MUSIC[i]
     local m = MUSIC[name]
-    local entry = { def = m, data = {}, env = {}, len = {}, src = {}, music = true }
-    local t0m = (love and love.timer) and love.timer.getTime() or os.clock()
-    -- `sparse` renders every Nth semitone and fills the gaps by resampling the
-    -- nearest anchor. A pad moved a semitone by resampling is indistinguishable
-    -- from one synthesised there, and it is three times cheaper to build.
-    local step = m.sparse or 1
-    local anchors = {}
+    local key = "mus_" .. name
     local span = 12 * (m.octaves or 1)
-    entry.span = span
-    for st = 0, span - 1 do
-      local a = floor(st / step) * step
-      local buf
-      if st == a then
-        local spec = m.build(Synth.noteToHz(MUSIC_BASE + st))
-        spec.rate = m.rate or Audio.rate
-        buf = Synth.render(spec)
-        anchors[a] = buf
-      else
-        buf = anchors[a]:copy():pitchShift(st - a)
-      end
-      registerBuffer(entry, buf, false)
-    end
-    local tMus = ((love and love.timer) and love.timer.getTime() or os.clock()) - t0m
+    local entry = { def = m, data = {}, env = {}, len = {}, src = {},
+                    music = true, bus = "music", kind = "mus",
+                    span = span, expect = span, step = m.sparse or 1, anchors = {} }
     Audio.music[name] = entry
-    Audio.sounds["mus_" .. name] = entry
-    entry.bus = "music"
-    Audio.stats.cost["mus_" .. name] = tMus
+    Audio.sounds[key] = entry
+    Audio.stats.cost[key] = 0
+    for st = 0, span - 1 do
+      push(key, { entry = entry, kind = "mus", v = st, name = key,
+                  seed = jobSeed(key, st + 1) })
+    end
   end
 
   -- percussion (pitchless, so it lives in the music bank with 3 variants each)
-  local perc = PERC
-  for name, p in pairs(perc) do
+  local percNames = {}
+  for name in pairs(PERC) do percNames[#percNames + 1] = name end
+  table.sort(percNames)
+  for _, name in ipairs(percNames) do
+    local p = PERC[name]
+    local key = "mus_" .. name
     local entry = { def = { name = name, gain = p.gain, pitchVar = 0.04, gainVar = 0.12,
                             bus = "music", variants = 3 },
-                    data = {}, env = {}, len = {}, src = {}, music = true, bus = "music" }
-    for v = 1, 3 do
-      local spec = p.spec(rng)
-      spec.rate = p.rate or Audio.rate
-      registerBuffer(entry, Synth.render(spec), false)
-    end
+                    data = {}, env = {}, len = {}, src = {}, music = true,
+                    bus = "music", kind = "perc", perc = p, expect = 3 }
     Audio.music[name] = entry
-    Audio.sounds["mus_" .. name] = entry
+    Audio.sounds[key] = entry
+    Audio.stats.cost[key] = 0
+    for v = 1, 3 do
+      push(key, { entry = entry, kind = "perc", v = v, name = key,
+                  seed = jobSeed(key, v) })
+    end
   end
 
-  Audio.loaded = true
-  local t1 = (love and love.timer) and love.timer.getTime() or os.clock()
-  Audio.stats.loadTime = t1 - t0
-  Signal.emit("audio:loaded", Audio.stats)
+  for t = 1, 4 do
+    local b = bucket[t]
+    for k = 1, #b do Q[#Q + 1] = b[k] end
+  end
+  Audio.stats.jobs = #Q
+  Audio.loaded = true          -- the API is live; `complete` says the DSP is done
+  Audio.complete = (#Q == 0)
+end
+
+--- Synthesize for at most `budget` seconds of wall time, then return. Always
+--- makes progress: one job runs even at a zero budget, so a pathological frame
+--- cannot stall the queue forever. Returns done, 0..1.
+function Audio.stream(budget)
+  if Audio.complete then return true, 1 end
+  if not Audio.prepared then Audio.prepare() end
+  budget = budget or 0
+  local n = #Q
+  local t0 = nowSec()
+  while Qi <= n do
+    local j = Q[Qi]
+    Qi = Qi + 1
+    local ts = nowSec()
+    runJob(j)
+    local c = nowSec() - ts
+    Qspent = Qspent + c
+    Audio.stats.cost[j.name] = (Audio.stats.cost[j.name] or 0) + c
+    if nowSec() - t0 >= budget then break end
+  end
+  Audio.stats.loadTime = Qspent
+  if Qi > n then
+    Audio.complete = true
+    Signal.emit("audio:loaded", Audio.stats)
+    return true, 1
+  end
+  return false, (Qi - 1) / n
+end
+
+--- 0..1 across the whole bank.
+function Audio.streamProgress()
+  if Audio.complete then return 1 end
+  local n = #Q
+  if n == 0 then return 0 end
+  return (Qi - 1) / n
+end
+
+--- The cue the queue is on, for a loading readout.
+function Audio.streamLabel()
+  local j = Q[Qi]
+  return j and j.name or nil
+end
+
+--- Ask for a cue to be built next. Free to call speculatively -- a set piece
+--- that knows it is thirty seconds away can warm its own sounds.
+function Audio.warm(name)
+  if not Audio.prepared then Audio.prepare() end
+  promote(Audio.sounds[name] or (Audio.music and Audio.music[name]))
+end
+
+--- Build the entire bank now, blocking. Tools, demo scenes and the headless
+--- harness want the old behaviour; the game does not.
+function Audio.load()
+  if not Audio.prepared then Audio.prepare() end
+  if not Audio.complete then Audio.stream(math.huge) end
   return Audio.stats.loadTime
 end
 
@@ -2264,11 +2436,29 @@ function Audio.killVoice(i)
   U.removeSwap(Audio.voices, i)
 end
 
---- Play a sound. Returns a voice handle (or nil if the sound does not exist).
+--- Play a sound. Returns a voice handle, or nil.
+---
+--- WHAT HAPPENS IF A CUE IS NOT BUILT YET (see the streaming note above)
+---
+---   unknown name                     nil, as it always was
+---   registered, nothing built yet    nil, and the cue jumps the queue
+---   part-built, variant picked at
+---     random (most of the bank)      plays one of the variants that exist
+---   part-built ladder cue (plant,
+---     pickup_streak) above its
+---     built rungs                    plays the highest rung built, promotes
+---   part-built, caller named an
+---     exact variant (a bot type, a
+---     written pitch)                 nil, and the cue jumps the queue
+---
+--- Never blocks, never errors, never plays the wrong bot's chirp. Callers
+--- already have to survive a nil here -- a sound out of earshot returns one --
+--- so nothing downstream needed changing.
 function Audio.play(name, opts)
-  if not Audio.loaded then Audio.load() end
+  if not Audio.prepared then Audio.prepare() end
   local entry = Audio.sounds[name]
   if not entry then return nil end
+  if #entry.data == 0 then promote(entry) return nil end
   local d = entry.def
 
   -- Retrigger throttle. Thirty enemies stepping in the same frame is not thirty
@@ -2311,8 +2501,10 @@ function Audio.play(name, opts)
   -- pick a variant
   local nv = #entry.data
   local vi
+  local exact = false
   local variation = opts and opts.variation
   if variation ~= nil then
+    exact = true
     if type(variation) == "string" then
       vi = entry.index and entry.index[variation] or 1
     else
@@ -2332,6 +2524,14 @@ function Audio.play(name, opts)
     vi = (rung - 1) * takes + rng:int(1, takes)
   else
     vi = rng:int(1, nv)
+  end
+  -- Part-built cue. An index that *means* something -- a named bot's chirp, a
+  -- written pitch -- must not be quietly swapped for its neighbour, so it goes
+  -- silent and jumps the queue. A ladder rung above what exists is simply the
+  -- highest rung built, which is exactly what a smaller forest sounds like.
+  if not entry.ready and vi > nv then
+    promote(entry)
+    if exact then return nil end
   end
   vi = U.clamp(vi, 1, nv)
 
@@ -2533,7 +2733,7 @@ local RIG_FLOOR = 0.34
 ---   hp     0..1 hull fraction; a wounded rig runs rough, not quiet
 function Audio.rigSet(x, y, core, phase, hp)
   if RIG.closed then return end
-  if not Audio.loaded then Audio.load() end
+  if not Audio.prepared then Audio.prepare() end
   if not RIG.on then
     -- cold start: nothing carries over from a previous rig
     RIG.on = true
@@ -2691,7 +2891,7 @@ local SIPH_NEAR, SIPH_FAR, SIPH_FLOOR = 260, 2000, 0.22
 --- One Siphon, feeding, this frame. Call once per frame per feeding Siphon;
 --- allocation-free, and the order they arrive in does not matter.
 function Audio.siphonFeeding(x, y)
-  if not Audio.loaded then return end
+  if not Audio.prepared then return end
   SIPH.pendN = SIPH.pendN + 1
   local d = U.len((x or 0) - listener.x, (y or 0) - listener.y)
   if d < SIPH.pendD then

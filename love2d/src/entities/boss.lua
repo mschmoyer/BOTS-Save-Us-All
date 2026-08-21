@@ -266,7 +266,7 @@ end
 -- The rig is *cold* metal. The bots are warm brass (P.ramp.metalW) and the
 -- Blight is a bruise; making the thing that came for the sky a third material
 -- is what stops the climax reading as one more purple monster. All the colour
--- on it is energy -- the throat, the core, the strobes, the hazard paint -- and
+-- on it is energy -- the throat, the core, the beacon, the hazard paint -- and
 -- the only paint on it is the hazard paint, because somebody had to sign this
 -- machine off before it was put on a ship.
 --
@@ -291,7 +291,7 @@ local A = {
   collarY    = -0.48, collarR = 0.24, collarSq = 0.42,
   mouthY     = -1.16, mouthR  = 0.60, mouthSq = 0.34,
   irisIn     = 0.20, irisOut = 0.38,   -- the core aperture ringing the throat
-  ventR      = 0.64,                    -- where the louvre banks sit on the deck
+  ventR      = 0.64,                    -- where the flank housings sit on the deck
   beaconAt   = 2.45,                    -- the beacon mast's bearing on the deck
   boltR      = 0.028,
   footprint  = 2.30,
@@ -640,7 +640,7 @@ function Boss:footprintBake()
   LG.origin()
   LG.setScissor()
   LG.setCanvas(cv)
-  LG.clear(0, 0, 0, 0)
+  LG.clear()                       -- transparent, which is what a bake starts from
   LG.setBlendMode("alpha", "alphamultiply")
 
   -- Contact. A machine this size that does not darken what it stands on floats
@@ -1007,7 +1007,7 @@ function Boss:drawDeck(lift)
   LG.pop()
 
   -- superstructure: a raised machinery ring around the throat's base, with two
-  -- boxy modules flanking it. A cone standing on a flat disc has no mass; this
+  -- boxy housings flanking it. A cone standing on a flat disc has no mass; this
   -- is what gives the rig a middle.
   Draw.setColor(C.void, 0.9)
   ngon("fill", 0, superY + r * 0.06, r * (A.superR + 0.04), r * (A.superSq + 0.04), 8, 0)
@@ -1142,7 +1142,7 @@ function Boss:drawDeck(lift)
     Draw.radialGradient(px, py, pr, P.mix(pRim, C.void, 0.30), P.alpha(pRim, 0), pr * isq)
   end
 
-  -- The cracks. Each one walks outward from the vent in five steps with a
+  -- The cracks. Each one walks outward from the vent in four steps with a
   -- crooked wobble, and a bright pulse travels up it -- so the fissure network
   -- is legibly *moving* without a frame of it being authored.
   local drift = self.age * TAU * AR.coreDriftRps
