@@ -535,6 +535,8 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     float dryK = smoothstep(0.34, 0.74, form * 0.62 + (1.0 - wetF) * 0.55);
     // ...and where it stayed wet and went to a dark seep instead.
     float seep = smoothstep(0.58, 0.90, wetF) * (0.30 + 0.70 * deep);
+    // and it collects where the crust has already gone
+    seep *= 0.45 + 0.85 * necro;
 
     // Cracked ground is *cells*: flat plates with a fissure between them,
     // warped so no edge is ruled and stretched so they are not equilateral.
@@ -591,13 +593,6 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     float vt = clamp(v * 0.42 - 0.06, 0.0, 1.0);
     dead = mix(mix(dead, cBlight[1], 0.58), mix(dead, cNecrosis, 0.26),
                smoothstep(0.08, 0.60, vt));
-    // Where the crust has gone through. Sinking the value here rather than
-    // taking it off the ramp is the whole point: subtracted, the bottom stop
-    // clamps and a breach comes out as one flat hole with a soft edge. Scaled,
-    // the plates that fell into it keep their tone and the breach has a floor.
-    dead = mix(dead, mix(dead * 0.34, mix(cBlight[0], cBlight[1], 0.55), 0.55), necro);
-    // the heart of a scar is burnt out; the rim is still dust
-    dead *= 0.80 + 0.24 * (1.0 - deep) + 0.18 * form;
     // pale bloom along the curdled ridges: efflorescence, or mould, or both
     dead = mix(dead, mix(dead, cAsh[3], 0.55),
                smoothstep(0.72, 0.95, curd) * (1.0 - seep) * 0.55);
@@ -618,6 +613,18 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     // The stain, and only down the fissures: the ground is opened here and
     // what is underneath it is not soil.
     dead = mix(dead, mix(dead, cBlight[1], 0.42), crackA * deep * (1.0 - seep));
+
+    // ---- the breaches ----
+    // Where the crust has gone through. Sinking the value here rather than
+    // taking it off the ramp is the whole point: subtracted, the bottom stop
+    // clamps and a breach comes out as one flat hole with a soft edge. Scaled,
+    // the plates that fell into it keep their tone and their fissures, and the
+    // breach has a floor -- which is also why this comes after the crazing and
+    // not before it, or the fissures come back out of a dark breach as pale
+    // veins and the whole thing reads as circuitry.
+    dead = mix(dead, mix(dead * 0.44, mix(cBlight[0], cBlight[1], 0.55), 0.34), necro);
+    // the heart of a scar is burnt out; the rim is still dust
+    dead *= 0.80 + 0.24 * (1.0 - deep) + 0.18 * form;
 
     // ---- wet rot ----
     // The seeps are the reason this is not a dried lake bed: soft-edged, cold,
