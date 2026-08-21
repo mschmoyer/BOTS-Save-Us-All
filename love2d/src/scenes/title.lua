@@ -443,8 +443,8 @@ function S:enter()
   if VFX.init then VFX.init() end
   if Music.setState then Music.setState("title") end
 
-  -- Start baking the island the player is about to land on. 4 ms a frame is
-  -- invisible here and is most or all of the wait later.
+  -- Start shaping the island the player is about to land on. 4 ms a frame is
+  -- invisible here and is the single longest item on the loading screen.
   self.runSeed = Warmup.seedFor()
   Warmup.start(self.runSeed)
 end
@@ -482,7 +482,9 @@ function S:update(dt, realDt)
   realDt = realDt or dt
   self.t = self.t + realDt
   build(lg.getDimensions())
-  if self.runSeed then Warmup.pump(0.004) end
+  -- CPU work only: the island's noise fields. Anything that touches the GPU
+  -- stalls a frame that is trying to hold 60, and waits for the loading screen.
+  if self.runSeed then Warmup.pump(0.004, true) end
   if VFX.update then VFX.update(realDt) end
   if Music.update then Music.update(realDt) end
 

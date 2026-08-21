@@ -69,8 +69,9 @@ function Game:buildRun(opts)
   local lap = function(n) marks[#marks + 1] = string.format("%s=%.0f", n,
     (love.timer.getTime() - clock) * 1000); clock = love.timer.getTime() end
 
-  -- most of the wait, and usually already finished by the title screen
-  while Warmup.pump(0.020) < 1 do step(Warmup.p * 0.82, Warmup.label()) end
+  -- most of the wait; the island's fields are usually already ground down by
+  -- the title screen, and what is left is coarse GPU work
+  while Warmup.pump(0.10) < 1 do step(Warmup.p * 0.82, Warmup.label()) end
   lap("warm[" .. Warmup.report() .. "]")
   step(0.82, "raising the island")
 
@@ -85,10 +86,14 @@ function Game:buildRun(opts)
   step(0.90, "waking the crew")
 
   if Post.init then Post.init(w, h) end
+  Warmup.mark("post")
   if Lighting.init then Lighting.init(w, h) end
+  Warmup.mark("light")
   step(0.94, "lighting the sky")
   if HUD.init then HUD.init(self.world) end
+  Warmup.mark("hud")
   Minimap.build(self.world)
+  Warmup.mark("minimap")
   if BuildMenu.init then BuildMenu.init(self.world) end
   step(0.97, "checking the manifest")
 
@@ -145,12 +150,14 @@ function Game:buildRun(opts)
 
   DayNight.set("day", 0)
   Music.setState("day")
+  Warmup.mark("music")
   if Story.begin then Story.begin(self.world, "prologue") end
 
   self:bindSignals()
+  Warmup.mark("story")
   lap("scene")
-  print(string.format("LOAD|%s|total=%.0f", table.concat(marks, " "),
-                      (love.timer.getTime() - t0) * 1000))
+  print(string.format("LOAD|%s|%s|total=%.0f", table.concat(marks, " "),
+                      Warmup.marksReport(), (love.timer.getTime() - t0) * 1000))
   step(1.0, "ready")
 end
 
@@ -296,6 +303,7 @@ function Game:update(dt, realDt)
     if self.load.fade <= 0 then self.load = nil end
   end
 
+
   if Input.pressed("pause") and not Screen.busy() then
     Screen.push(require("src.scenes.pause"), self)
     return
@@ -343,6 +351,13 @@ function Game:update(dt, realDt)
   self:syncDayNight()
   if Story.update then Story.update(dt) end
   if Dialogue.update then Dialogue.update(dt, realDt) end
+  -- and hand the camera back when nobody is staging it. Dialogue pans by
+  -- setting camera.offX/offY and had no one calling its release, so every
+  -- cutscene left its pan behind: the camera went on following the player
+  -- perfectly, several hundred units off to one side, for the rest of the run.
+  if not (Dialogue.isActive and Dialogue.isActive()) then
+    Dialogue.releaseCamera(self.camera, realDt)
+  end
   if HUD.update then HUD.update(dt, world) end
   if Audio.update then Audio.update(realDt, p.x, p.y) end
   if Music.update then Music.update(realDt) end

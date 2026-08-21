@@ -700,8 +700,14 @@ end
 --- Release the camera on the way out, so the pan does not snap back.
 function Dialogue.releaseCamera(camera, dt)
   if not camera then return end
-  camera.offX = U.damp(camera.offX or 0, 0, 3.2, dt)
-  camera.offY = U.damp(camera.offY or 0, 0, 3.2, dt)
+  local ox, oy = camera.offX or 0, camera.offY or 0
+  if ox == 0 and oy == 0 then return end
+  ox = U.damp(ox, 0, 3.2, dt)
+  oy = U.damp(oy, 0, 3.2, dt)
+  -- exponential decay never actually arrives; land it, or the player spends
+  -- the rest of the run a pixel off centre and the camera reads as loose
+  if ox * ox + oy * oy < 0.25 then ox, oy = 0, 0 end
+  camera.offX, camera.offY = ox, oy
 end
 
 --------------------------------------------------------------------- layout

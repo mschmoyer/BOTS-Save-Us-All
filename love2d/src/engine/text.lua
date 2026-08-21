@@ -360,7 +360,9 @@ function Text.format(n, opts)
   local dec = (opts and opts.decimals) or 0
   local s
   if dec > 0 then
-    s = string.format("%." .. dec .. "F", n)
+    -- lowercase f. The browser build's Lua rejects "%F" -- it is the third
+    -- time that has reached a build, so: never %F, anywhere, ever.
+    s = string.format("%." .. dec .. "f", n)
   else
     s = tostring(floor(n + 0.5))
   end

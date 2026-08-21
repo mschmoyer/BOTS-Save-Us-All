@@ -11,6 +11,7 @@ local Opt      = require("src.core.optional")
 local TU       = require("src.game.tuning")
 local Chips    = require("src.game.chips")
 local Director = require("src.game.director")
+local Warmup   = require("src.game.warmup")
 
 local Player     = require("src.entities.player")
 local Bot        = require("src.entities.bot")
@@ -50,7 +51,9 @@ function World:init(seed, opts)
   if self.terrain and self.terrain.bake and not self.terrain.baked then
     self.terrain:bake()
   end
+  Warmup.mark(opts.terrain and "terrain(given)" or "terrain(built)")
   if Decals.init then Decals.init(TU.world.w, TU.world.h) end
+  Warmup.mark("decals")
   self.decals = Decals
 
   self.trees, self.bots, self.enemies = {}, {}, {}
@@ -81,7 +84,9 @@ function World:init(seed, opts)
   self.dawnReport  = nil
 
   if Tree.prewarm and not opts.noPrewarm then pcall(Tree.prewarm) end
+  Warmup.mark("trees")
   if Water.load then pcall(Water.load) end
+  Warmup.mark("water")
 
   -- how much forest this particular island can hold, which is what 100% means
   self.fullForest = TU.o2.fullForest
@@ -92,11 +97,14 @@ function World:init(seed, opts)
 
   self.rallyX, self.rallyY = nil, nil
   self.centerX, self.centerY = TU.world.w / 2, TU.world.h / 2
+
   self:placeHome()
   self:seedCobalt()
+  Warmup.mark("home")
 
   Signal._world = self
   Signal.emit("world:ready", self)
+  Warmup.mark("ready")
 end
 
 function World:placeHome()
