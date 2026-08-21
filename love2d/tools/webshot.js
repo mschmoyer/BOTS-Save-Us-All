@@ -57,6 +57,18 @@ const path = require('path');
       await page.keyboard.up(k);
     }
   }
+  // and clicks: CLICKS="640,400:900,1200,300" -- x,y then a wait, semicolons
+  // between. The mouse path is worth scripting on its own: a click and a key
+  // press take different routes through the UI context, and the pause menu's
+  // "OPTIONS re-opens itself forever" bug only ever reproduced with a click.
+  if (process.env.CLICKS) {
+    for (const part of process.env.CLICKS.split(';')) {
+      const [pt, ms] = part.split(':');
+      const [x, y] = pt.split(',').map(Number);
+      await page.mouse.click(x, y);
+      await page.waitForTimeout(+(ms || 400));
+    }
+  }
   // drag a virtual thumb so the touch layer has something to show
   if (process.env.TOUCH) {
     const [x1, y1, x2, y2] = process.env.TOUCH.split(',').map(Number);

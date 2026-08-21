@@ -512,6 +512,14 @@ function Game:draw()
   if Touch.active then Touch.draw() end
 
   if self.showPerf then self:drawPerf() end
+  if os.getenv("BOTS_DRAWCALLS") then
+    local st = love.graphics.getStats()
+    _G.__dcN = (_G.__dcN or 0) + 1
+    _G.__dcSum = (_G.__dcSum or 0) + st.drawcalls
+    if _G.__dcN % 60 == 0 then
+      print(string.format("DRAWCALLS|avg=%.0f last=%d", _G.__dcSum / _G.__dcN, st.drawcalls))
+    end
+  end
   if self.load and self.load.fade > 0 then
     self:drawLoading(U.ease.inQuad(self.load.fade))
   end

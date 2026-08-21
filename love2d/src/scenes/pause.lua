@@ -107,7 +107,9 @@ function S:update(dt, realDt)
   -- the instrument panel goes quiet while the game is held
   HUD.alpha = U.damp(HUD.alpha, 0.12, 7, realDt)
   BuildMenu.barAlpha = U.damp(BuildMenu.barAlpha, 0.12, 7, realDt)
-  if Screen.current() ~= self then return end
+  -- and belt-and-braces: anything a covered frame managed to queue is not a
+  -- choice the player made on this screen
+  if Screen.current() ~= self then self.pending = nil return end
 
   if self.pending then
     local id = self.pending

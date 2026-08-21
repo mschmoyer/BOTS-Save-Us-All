@@ -68,6 +68,29 @@ local Q = {
   [2] = { scale = 1.00 },
 }
 
+--- The browser never gets a 1:1 light buffer, whatever the quality preset says.
+---
+--- Settings default to "high", which is scale 1.00, and the boot-time
+--- auto-downgrade only fires at 2.2 megapixels -- a 1280x720 browser window is
+--- 0.92, so it never fired and the ship target has been running a full-
+--- resolution light pass this whole time. Measured on a software rasteriser
+--- the pass costs 47.1 ms at 1:1 against 28.9 ms at half, which is nothing on
+--- a desktop GPU and is the difference between playable and not on a phone.
+--- The CPU cost is identical either way: three draw calls, a quarter of a
+--- millisecond.
+---
+--- Capped here rather than by changing the default preset, because the preset
+--- also governs particle density and post-processing, and there is no reason
+--- to take those away from a machine that can afford them.
+local WEB_MAX_SCALE = 0.5
+local function scaleFor(q)
+  local sc = Q[q].scale
+  local web = (_G.BOTS_CFG and _G.BOTS_CFG("BOTS_WEB"))
+           or (love.system and love.system.getOS() == "Web")
+  if web and sc > WEB_MAX_SCALE then sc = WEB_MAX_SCALE end
+  return sc
+end
+
 --------------------------------------------------------------------- shaders
 local COMPOSITE_SRC = [[
 // Turns the accumulated light buffer into the factor the scene is multiplied
@@ -180,7 +203,7 @@ function L.setQuality(q)
   q = math.max(0, math.min(2, math.floor(q or 1)))
   if q == quality and canvas then return end
   quality = q
-  scale = Q[q].scale
+  scale = scaleFor(q)
   if scrW > 0 then allocate(scrW, scrH) end
 end
 

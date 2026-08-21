@@ -680,6 +680,128 @@ T.juice = {
   zoomPunchDecay = 7.0,
 }
 
+------------------------------------------------------------------------ haptics
+-- THE VOCABULARY, and why most of the game is silent in it.
+--
+-- A gamepad -- a DualSense included -- gives LOVE two rumble motors and a
+-- duration. That is the entire instrument: a heavy low-frequency mass on the
+-- left and a light high-frequency one on the right. It has no pitch, no
+-- position and no adaptive triggers reachable from here (see game/haptics.lua).
+--
+-- So it is spent like a small budget, and the first rule is *what does not get
+-- a voice*. This game runs sixty enemy kills a minute at night. A controller
+-- that answers every one of them is a controller the player puts down, and it
+-- also destroys the only dynamic range the instrument has: if a kill is worth
+-- 0.2, then dawn cannot be worth more than 0.2 either, because the hand has
+-- stopped listening. Kills, cobalt pickups, bot chatter, bot-planted trees,
+-- enemy spawns and reinforcements arriving are therefore *silent*, on purpose.
+--
+-- What is left is ranked, and the rank is enforced three ways: `pri` lets a
+-- big moment duck a small one that is already playing, `gap` is the minimum
+-- time between two firings of the same pattern, and the mixer's per-second
+-- budget drops low-priority voices during a storm rather than mudding it.
+--
+--   5  the run's punctuation: dawn, the extraction, the end
+--   4  events that change what the player is doing: night, boss phase, a chip
+--   3  consequence: a bot down, a tree lost, the Blight taking ground
+--   2  acknowledgement: a bot built, a bot back on its feet
+--   1  texture: the hand-plant. Nearly inaudible, and that is correct.
+--
+-- SEPARATION OF THE TWO MOTORS carries meaning and is not decoration:
+--   low  (left)  = mass, impact, dread. Things that are heavy or are ending.
+--   high (right) = mechanism, confirmation, UI. Things that click or complete.
+-- A bot being built is high-then-low: a click, then the weight settling on it.
+-- A bot going down is low alone, sagging to nothing. Nothing else may borrow
+-- that shape.
+--
+-- A pattern is a list of stages, each `{ low, high, seconds }`. The voice ramps
+-- linearly from the previous stage's amplitudes (starting at silence) to this
+-- stage's over `seconds`, so `{0, 0.4, 0}` is an instant attack and a trailing
+-- `{0, 0, 0.3}` is a 300 ms release. Everything is authored here; the mixer in
+-- engine/input.lua knows nothing about any particular moment in the game.
+T.haptics = {
+  -- The mixer. See Input.rumbleUpdate.
+  mix = {
+    maxVoices  = 8,      -- concurrent voices; the oldest lowest-priority is cut
+    duck       = 0.45,   -- a voice is scaled this far by anything above its rank
+    eps        = 0.02,   -- amplitude change worth another call to the driver
+    refresh    = 0.20,   -- re-issue the current amplitudes at least this often
+    hold       = 0.35,   -- duration handed to the driver; > refresh, so a lost
+                         -- frame cannot leave a motor stuck on
+    budget     = 12,     -- new voices per second before triage starts
+    budgetPri  = 3,      -- ...and the rank that survives triage
+    -- The finale sends forty bots into the rig one at a time. Each detonation
+    -- is deliberately below the threshold of notice; what the player feels is
+    -- the *sum* of them, so the same pattern is allowed to stack -- but only
+    -- this far, or a cohort of eight lands as one solid slab.
+    maxSame    = 4,
+  },
+
+  -- The browser has no rumble path at all (SDL's Emscripten joystick backend
+  -- implements none), so the web build can only speak to the page. One line per
+  -- voice, at most this often; see Input.rumbleBridge.
+  web = { gap = 0.08, minPri = 2 },
+
+  pat = {
+    ---------------------------------------------------------------- rank 5
+    -- The sun. A slow warm swell that arrives, opens out and resolves -- the
+    -- only pattern in the game that is allowed to take two seconds, because it
+    -- is the only moment the player is not doing anything.
+    dawn        = { pri = 5, gap = 4.0, s = { {0.16,0.02,0.55}, {0.34,0.09,0.45}, {0.09,0.15,0.35}, {0,0,0.85} } },
+    -- The rig comes down. Nine tenths of it is a rise you feel before you see,
+    -- and then it lands.
+    extraction  = { pri = 5, gap = 10.0, s = { {0.08,0.00,0.90}, {0.30,0.04,0.70}, {1.00,0.85,0.04}, {0.42,0.10,0.45}, {0,0,1.10} } },
+    failed      = { pri = 5, gap = 10.0, s = { {0.90,0.70,0.02}, {0.55,0.15,0.80}, {0.24,0.04,1.20}, {0,0,1.60} } },
+    won         = { pri = 5, gap = 10.0, s = { {0.80,0.50,0.03}, {0.28,0.34,0.60}, {0.11,0.20,1.00}, {0,0,1.40} } },
+
+    ---------------------------------------------------------------- rank 4
+    night       = { pri = 4, gap = 5.0,  s = { {0.05,0.00,0.35}, {0.40,0.03,0.50}, {0.11,0.00,0.60}, {0,0,0.50} } },
+    bossPhase   = { pri = 4, gap = 1.0,  s = { {0.85,0.55,0.02}, {0.34,0.24,0.35}, {0,0,0.50} } },
+    rebel       = { pri = 4, gap = 10.0, s = { {0.10,0.06,0.50}, {0.50,0.22,0.60}, {0.18,0.08,0.80}, {0,0,0.70} } },
+    playerDown  = { pri = 4, gap = 1.0,  s = { {0.75,0.30,0.03}, {0.34,0.05,0.55}, {0,0,0.90} } },
+    -- A chip is a decision the player made. Click, then seat it.
+    chip        = { pri = 4, gap = 0.30, s = { {0.00,0.55,0.01}, {0.00,0.00,0.05}, {0.42,0.12,0.03}, {0.16,0.02,0.18}, {0,0,0.16} } },
+    heldDawn    = { pri = 4, gap = 2.0,  s = { {0.30,0.25,0.05}, {0.14,0.30,0.40}, {0,0,0.40} } },
+    o2          = { pri = 4, gap = 1.0,  s = { {0.00,0.42,0.02}, {0.20,0.14,0.22}, {0,0,0.30} } },
+
+    ---------------------------------------------------------------- rank 3
+    -- Low alone, sagging. Something heavy stopped working.
+    botDown     = { pri = 3, gap = 0.25, s = { {0.52,0.05,0.02}, {0.30,0.00,0.16}, {0,0,0.34} } },
+    botLost     = { pri = 3, gap = 0.35, s = { {0.46,0.10,0.02}, {0.22,0.02,0.30}, {0,0,0.45} } },
+    treeLost    = { pri = 3, gap = 0.40, s = { {0.34,0.06,0.02}, {0.10,0.00,0.20}, {0,0,0.22} } },
+    -- Ground lost for good: two grinding lows, not a hit.
+    blight      = { pri = 3, gap = 0.80, s = { {0.30,0.10,0.06}, {0.10,0.04,0.12}, {0.34,0.12,0.06}, {0,0,0.40} } },
+    wave        = { pri = 3, gap = 3.0,  s = { {0.24,0.08,0.05}, {0.06,0.02,0.20}, {0,0,0.25} } },
+    -- Scaled by the fraction of the boss bar taken off, and hard-gapped: the
+    -- finale lands hundreds of these.
+    bossHurt    = { pri = 3, gap = 0.16, s = { {0.30,0.22,0.01}, {0,0,0.11} } },
+    playerUp    = { pri = 3, gap = 1.0,  s = { {0.05,0.05,0.25}, {0.28,0.30,0.12}, {0,0,0.30} } },
+
+    ---------------------------------------------------------------- rank 2
+    -- The click of the mechanism, then its weight settling.
+    botBuilt    = { pri = 2, gap = 0.15, s = { {0.00,0.40,0.01}, {0.00,0.06,0.05}, {0.34,0.04,0.03}, {0.10,0.00,0.18}, {0,0,0.12} } },
+    botRevived  = { pri = 2, gap = 0.20, s = { {0.16,0.16,0.03}, {0.05,0.28,0.12}, {0,0,0.18} } },
+    cohort      = { pri = 2, gap = 0.50, s = { {0.28,0.10,0.04}, {0.08,0.02,0.22}, {0,0,0.20} } },
+    scarCleared = { pri = 2, gap = 0.50, s = { {0.10,0.24,0.03}, {0.04,0.08,0.16}, {0,0,0.20} } },
+    -- Information, not celebration: two fast, tiny high ticks.
+    denied      = { pri = 2, gap = 0.20, s = { {0.00,0.22,0.005}, {0,0,0.03}, {0.00,0.22,0.005}, {0,0,0.04} } },
+
+    ---------------------------------------------------------------- rank 1
+    -- The verb of the whole game, and it happens constantly, so it is one soft
+    -- tick on the light motor and nothing else. Bot-planted and self-seeded
+    -- trees get nothing at all.
+    plant       = { pri = 1, gap = 0.12, s = { {0.00,0.16,0.005}, {0,0,0.045} } },
+    -- One bot on the hull. Forty of these arrive in the finale and not one of
+    -- them is meant to be felt alone; `mix.maxSame` lets them pile into a
+    -- texture instead.
+    sacrifice   = { pri = 1, gap = 0.00, s = { {0.14,0.05,0.005}, {0,0,0.07} } },
+    -- The catch-all the four existing Input.rumble() calls in entities/player.lua
+    -- land on. Ranked between acknowledgement and consequence so a dash cannot
+    -- cut dawn in half and dawn cannot swallow a hit.
+    legacy      = { pri = 3, gap = 0.00, s = { {1,1,0} } },
+  },
+}
+
 -------------------------------------------------------------------------- touch
 -- The iPhone control layer, entire. Every number the touch UI lays itself out
 -- with lives here; engine/touch.lua contains no geometry of its own.

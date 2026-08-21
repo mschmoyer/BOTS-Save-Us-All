@@ -410,6 +410,14 @@ function Ctx:interact(id, x, y, w, h, enabled)
       self:setFocus(id, true)
       focused = true
       activated = true
+      -- One click, one activation. The keyboard press below has always cleared
+      -- itself; the mouse press did not, and a scene that is *drawn* while
+      -- covered still runs its widgets even though its update -- and so
+      -- beginFrame, which is what clears this -- returns early. So the row the
+      -- player clicked went on firing every frame underneath whatever it had
+      -- opened: clicking OPTIONS in the pause menu queued OPTIONS again on
+      -- every frame it was open, and closing it re-opened it forever.
+      self.mPressed = false
     elseif focused and self.confirmPressed then
       activated = true
       self.confirmPressed = false
