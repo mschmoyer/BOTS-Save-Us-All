@@ -6,9 +6,18 @@ cd "$(dirname "$0")/.." || exit 1
 FRAMES="${1:-420}"
 SHOTS="${2:-$FRAMES}"
 OUT="${3:-/tmp/bots_shots}"
-ID="bots_$(echo "${BOTS_SCENE:-main}${OUT}" | md5sum | cut -c1-10)"
-SAVE="$HOME/.local/share/love/$ID"
-rm -rf "$SAVE" "$OUT"; mkdir -p "$OUT"
+# A per-capture identity so runs cannot see each other's state -- unless the
+# caller names one, which is the only way to test a save and then load it back.
+if [ -n "${BOTS_IDENTITY:-}" ]; then
+  ID="$BOTS_IDENTITY"
+  SAVE="$HOME/.local/share/love/$ID"
+  mkdir -p "$SAVE"; rm -f "$SAVE"/shot_*.png
+else
+  ID="bots_$(echo "${BOTS_SCENE:-main}${OUT}" | md5sum | cut -c1-10)"
+  SAVE="$HOME/.local/share/love/$ID"
+  rm -rf "$SAVE"
+fi
+rm -rf "$OUT"; mkdir -p "$OUT"
 BOTS_IDENTITY="$ID" BOTS_HEADLESS=1 BOTS_FRAMES="$FRAMES" BOTS_SHOTS="$SHOTS" \
   BOTS_SCENE="${BOTS_SCENE:-}" SDL_AUDIODRIVER=dummy \
   xvfb-run -a -s "-screen 0 ${BOTS_W:-1600}x${BOTS_H:-900}x24" \

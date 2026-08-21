@@ -21,6 +21,7 @@ local P        = require("src.engine.palette")
 local Draw     = require("src.engine.draw")
 local Text     = require("src.engine.text")
 local Warmup   = require("src.game.warmup")
+local Save     = require("src.game.save")
 local UI       = require("src.engine.ui")
 local Input    = require("src.engine.input")
 local Screen   = require("src.engine.screen")
@@ -413,10 +414,14 @@ local BOPT = { size = UI.ts.h3 }
 
 local function rebuildMenu()
   for i = #MENU, 1, -1 do MENU[i] = nil end
-  -- No CONTINUE row: runs are not resumable yet, and a menu item that does not
-  -- do what it says is worse than one that is missing. The best-run strip in the
-  -- corner is where a returning player is told the game remembers them.
-  MENU[#MENU + 1] = { id = "begin", label = "BEGIN",
+  -- A run in progress goes on top, and it says which one, because "CONTINUE"
+  -- with nothing after it asks the player to take it on trust.
+  local resume = Save.describe()
+  if resume then
+    MENU[#MENU + 1] = { id = "continue", label = "CONTINUE", sub = resume }
+  end
+  MENU[#MENU + 1] = { id = "begin",
+                      label = resume and "NEW RUN" or "BEGIN",
                       sub = "Seven cycles. One island. No help coming." }
   MENU[#MENU + 1] = { id = "options", label = "OPTIONS" }
   -- There is no quitting a browser tab from inside it, and a row that does
@@ -444,8 +449,12 @@ function S:enter()
   if Music.setState then Music.setState("title") end
 
   -- Start shaping the island the player is about to land on. 4 ms a frame is
-  -- invisible here and is the single longest item on the loading screen.
-  self.runSeed = Warmup.seedFor()
+  -- invisible here and is the single longest item on the loading screen. If
+  -- there is a run to continue, that is the island to shape -- and if they
+  -- pick NEW RUN instead, the loading screen picks the work back up.
+  local saved = Save.read()
+  self.warmedSave = saved ~= nil
+  self.runSeed = (saved and saved.seed) or Warmup.seedFor()
   Warmup.start(self.runSeed)
 end
 
@@ -469,8 +478,11 @@ local function choose(self, id)
     self.leaving = true
     local continued = (id == "continue")
     Screen.transition(0.65, function()
+      -- NEW RUN with a save on disk means the warmed island is the wrong one;
+      -- hand over no seed and let the loading screen shape a fresh one.
+      local seed = (not continued) and (not self.warmedSave) and self.runSeed or nil
       Screen.switch(require("src.scenes.game"),
-                    { continueRun = continued, seed = self.runSeed })
+                    { continueRun = continued, seed = seed })
     end, "iris")
   end
 end

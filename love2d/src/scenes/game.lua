@@ -27,6 +27,7 @@ local Dialogue = Opt.require("src.game.dialogue")
 local Touch    = require("src.engine.touch")
 local Settings = require("src.game.settings")
 local Warmup   = require("src.game.warmup")
+local Save     = require("src.game.save")
 
 --- Config comes from the environment natively and from --flag=value arguments
 --- in the browser build, where there is no environment.
@@ -44,7 +45,13 @@ function Game:enter(opts)
   opts = opts or {}
   local w, h = love.graphics.getDimensions()
   self.camera = Camera.new(w, h)
-  self.seed = opts.seed or tonumber(cfg("BOTS_SEED") or "") or math.random(1, 999999)
+  -- A continued run has to warm the island it was saved on, so the seed comes
+  -- off the save before anything else gets a say.
+  -- BOTS_CONTINUE=1 resumes the saved run headlessly, which is the only way to
+  -- exercise the round trip without a menu.
+  self.saved = (opts.continueRun or cfg("BOTS_CONTINUE")) and Save.read() or nil
+  self.seed = (self.saved and self.saved.seed)
+           or opts.seed or tonumber(cfg("BOTS_SEED") or "") or math.random(1, 999999)
   self.load = { p = 0, label = Warmup.label(), t = 0, fade = 0 }
   Warmup.start(self.seed)
   self.builder = coroutine.wrap(function() self:buildRun(opts) end)
@@ -75,7 +82,8 @@ function Game:buildRun(opts)
   lap("warm[" .. Warmup.report() .. "]")
   step(0.82, "raising the island")
 
-  local wopts = { terrain = Warmup.claim(self.seed), noPrewarm = true }
+  local wopts = { terrain = Warmup.claim(self.seed), noPrewarm = true,
+                  restore = self.saved }
   for k, v in pairs(opts) do if wopts[k] == nil then wopts[k] = v end end
   self.world = World.new(self.seed, wopts)
   lap("world")
@@ -151,7 +159,8 @@ function Game:buildRun(opts)
   DayNight.set("day", 0)
   Music.setState("day")
   Warmup.mark("music")
-  if Story.begin then Story.begin(self.world, "prologue") end
+  -- you have met the mechanic already
+  if Story.begin and not self.saved then Story.begin(self.world, "prologue") end
 
   self:bindSignals()
   Warmup.mark("story")
@@ -227,6 +236,14 @@ end
 
 function Game:bindSignals()
   Signal.clearOwner(self)
+  -- Autosave, at the only moment the world is quiet enough to mean it. Not
+  -- during a headless capture: a balance trace has no business writing a run.
+  Signal.on("run:checkpoint", function(world)
+    if world.player and world.player.agent and not cfg("BOTS_SAVE") then return end
+    local ok = Save.write(world)
+    print(string.format("CHECKPOINT|cycle=%d trees=%d bots=%d ok=%s",
+                        world.cycle, world.treeCount, #world.bots, tostring(ok)))
+  end, self)
   -- The score listens for the finale itself: the rig landing, each cohort
   -- leaving, the two phase breaks and the fall. It is inert until this is
   -- called, and it owns its own bindings.
@@ -268,7 +285,11 @@ function Game:bindSignals()
     Timer.global:after(4.0, tell)
   end, self)
 
+  -- A run that is over is not a run to come back to. Both endings clear the
+  -- checkpoint, so CONTINUE never offers an island that has already fallen or
+  -- already been saved.
   Signal.on("world:failed", function()
+    Save.clear()
     Timer.global:after(1.6, function()
       Screen.transition(0.9, function()
         Screen.switch(require("src.scenes.defeat"), self.world)
@@ -276,6 +297,7 @@ function Game:bindSignals()
     end)
   end, self)
   Signal.on("boss:died", function()
+    Save.clear()
     Timer.global:after(1.4, function()
       Screen.transition(0.9, function()
         Screen.switch(require("src.scenes.ending"), self.world)

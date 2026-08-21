@@ -16,6 +16,7 @@ local UI       = require("src.engine.ui")
 local Input    = require("src.engine.input")
 local Screen   = require("src.engine.screen")
 local Settings = require("src.game.settings")
+local Save     = require("src.game.save")
 local TU       = require("src.game.tuning")
 local HUD      = require("src.game.hud")
 local Opt      = require("src.core.optional")
@@ -31,12 +32,22 @@ S.updateWhenCovered = true       -- the bokeh keeps drifting behind Options
 local PHASE_LABEL = { day = "DAY", dusk = "DUSK", night = "NIGHT", dawn = "DAWN",
                       extraction = "EXTRACTION", ending = "ENDING" }
 
-local MENU = {
-  { id = "resume",  label = "RESUME",         sub = "Back to the island." },
-  { id = "options", label = "OPTIONS" },
-  { id = "restart", label = "RESTART RUN",    danger = true },
-  { id = "quit",    label = "QUIT TO TITLE",  danger = true },
-}
+-- Rebuilt on enter: what QUIT means depends on whether there is a checkpoint
+-- to come back to, and a menu should never make the player guess.
+local MENU = {}
+
+local function rebuildMenu()
+  for i = #MENU, 1, -1 do MENU[i] = nil end
+  MENU[#MENU + 1] = { id = "resume", label = "RESUME", sub = "Back to the island." }
+  MENU[#MENU + 1] = { id = "options", label = "OPTIONS" }
+  local at = Save.read()
+  MENU[#MENU + 1] = { id = "quit", label = "EXIT TO MENU",
+                      sub = at and string.format("Come back at cycle %d, first light.", at.cycle or 1)
+                              or "This run has not reached a dawn yet.",
+                      danger = not at }
+  MENU[#MENU + 1] = { id = "abandon", label = "ABANDON RUN",
+                      sub = "Forget the island and everyone on it.", danger = true }
+end
 local PROMPTS = { { "confirm", "SELECT" }, { "pause", "RESUME" } }
 local BOPT = { size = UI.ts.h3 }
 
@@ -49,6 +60,7 @@ function S:enter(game)
   self.leaving = false
   self.ctx = UI.context({ accent = P.warn })
   self.ctx.focusId = "resume"
+  rebuildMenu()
   if Audio.play then Audio.play("ui_back", { volume = 0.7 }) end
   -- This scene does not set updateWhenCovered, so pausing stops Game:update and
   -- with it Audio.update -- and the rig's intake drone and the Siphons' bed are
@@ -71,21 +83,20 @@ local function act(self, id)
     Screen.pop()
   elseif id == "options" then
     Screen.push(require("src.scenes.options"))
-  elseif id == "restart" or id == "quit" then
-    -- one destructive press is never enough: the row asks again first
-    if self.confirm ~= id then
+  elseif id == "abandon" or id == "quit" then
+    -- One destructive press is never enough: the row asks again first. Leaving
+    -- with a checkpoint behind you is not destructive, so it does not ask.
+    local losesWork = (id == "abandon") or not Save.exists()
+    if losesWork and self.confirm ~= id then
       self.confirm = id
       return
     end
     self.leaving = true
     Settings.saveIfDirty()
+    if id == "abandon" then Save.clear() end
     Screen.transition(0.5, function()
       Screen.pop()
-      if id == "restart" then
-        Screen.switch(require("src.scenes.game"))
-      else
-        Screen.switch(require("src.scenes.title"))
-      end
+      Screen.switch(require("src.scenes.title"))
     end, "iris")
   end
 end

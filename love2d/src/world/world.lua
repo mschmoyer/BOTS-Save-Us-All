@@ -99,7 +99,11 @@ function World:init(seed, opts)
   self.centerX, self.centerY = TU.world.w / 2, TU.world.h / 2
 
   self:placeHome()
-  self:seedCobalt()
+  if opts.restore then
+    self:restore(opts.restore)
+  else
+    self:seedCobalt()
+  end
   Warmup.mark("home")
 
   Signal._world = self
@@ -335,6 +339,76 @@ end
 
 --- The plant chime climbs a pentatonic ladder with the forest. It has to be able
 --- to come back down, or a bad night leaves the sound lying about the world.
+--- Rebuild a saved run in place. Called from init, so nothing has ticked yet
+--- and no signal has a listener: this writes state, it does not play the run
+--- forward. See src/game/save.lua for what is stored and why so little of it.
+function World:restore(d)
+  local Tree_  = Tree
+  local trees  = d.trees or {}
+  for i = 1, #trees, 5 do
+    local x, y, seed, growth, elder = trees[i], trees[i + 1], trees[i + 2],
+                                      trees[i + 3], trees[i + 4]
+    local t = Tree_.new and Tree_.new(x, y, seed) or nil
+    if t then
+      t.world    = self
+      t.canElder = true
+      t.growth   = U.saturate(growth or 0)
+      if elder == 1 then t.elder = true end
+      if t.refreshMesh  then t:refreshMesh() end
+      if t.refreshStage then t:refreshStage(true) end
+      self:addEntity(self.trees, self.hTree, t)
+      self.treeCount = self.treeCount + 1
+    end
+  end
+
+  local chips = d.chips or {}
+  for i = 1, #chips do self.chips:add(chips[i]) end
+
+  local bots, types, names = d.bots or {}, d.botTypes or {}, d.botNames or {}
+  for i = 1, #bots, 4 do
+    local k = (i - 1) / 4 + 1
+    local botType = types[k]
+    if botType and TU.bots[botType] then
+      local b = Bot.new(bots[i], bots[i + 1], botType, self, self.rng)
+      b.maxHp  = b.maxHp + self.chips:get("botHp", 0)
+      b.hp     = math.min(bots[i + 2] or b.maxHp, b.maxHp)
+      b.serial = bots[i + 3] or b.serial
+      if names[k] and names[k] ~= "" then b.name = names[k] end
+      -- they were already standing when you left; do not boot them all again
+      b.state, b.stateT, b.bootT = "work", 0, 0
+      self:addEntity(self.bots, self.hBot, b)
+    end
+  end
+
+  local nodes = d.nodes or {}
+  for i = 1, #nodes, 3 do
+    local c = CobaltE.new(nodes[i], nodes[i + 1], self, self.rng, true)
+    c.left = nodes[i + 2] or c.left
+    self:addEntity(self.cobalts, self.hCobalt, c)
+  end
+  -- an island that was mined out still gets its refills
+  if #self.cobalts == 0 then self:seedCobalt() end
+
+  self.cycle  = math.max(1, math.floor(d.cycle or 1))
+  self.cobalt = math.max(0, math.floor(d.cobalt or 0))
+  self.time   = d.time or 0
+  self.o2     = d.o2 or 0
+  self.allLostNames = d.lost or {}
+  self.rallyX, self.rallyY = d.rallyX, d.rallyY
+
+  local st = d.stats or {}
+  self.stats.planted    = st[1] or 0
+  self.stats.lost       = st[2] or 0
+  self.stats.botsLost   = st[3] or 0
+  self.stats.botsBuilt  = st[4] or 0
+  self.stats.killed     = st[5] or 0
+  self.stats.cobaltMined = st[6] or 0
+  self.stats.rescued    = st[7] or 0
+
+  self.phaseDur = self:phaseLength("day", self.cycle)
+  self.restored = true
+end
+
 function World:updateForestChime()
   Audio.setForestProgress(U.saturate(self.treeCount / 620))
 end
@@ -625,6 +699,9 @@ function World:setPhase(phase)
       self:beginExtraction()
       return
     end
+    -- The one quiet moment in the loop: the draft is done, the field is clear,
+    -- the cycle has turned. Whoever is listening writes the run here.
+    Signal.emit("run:checkpoint", self)
   end
   self.phase = phase
   self.phaseT = 0
