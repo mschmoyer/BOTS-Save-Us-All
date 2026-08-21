@@ -834,10 +834,18 @@ function UI.card(w, h, opts)
   UI.vgrad(x + 1, y + 1, w - 2, h - 2, tint, P.black, (0.16 + 0.12 * k) * a, 0.0)
   UI.vgrad(x + 1, y + h * 0.55, w - 2, h * 0.45 - 1, P.black, tint, 0, 0.07 * a)
 
-  -- foil sheen: a diagonal band that travels when hovered
+  -- Foil sheen: a diagonal band that travels when hovered.
+  --
+  -- Masked to the card's own rounded rectangle, with a stencil rather than a
+  -- scissor. A scissor is in screen space and this primitive is drawn inside
+  -- whatever transform the caller pushed -- lifted, tilted, scaled, in flight
+  -- -- so the rect never lined up, and the default was the whole window: a
+  -- rare card threw a hard-cornered sheared slab of grey onto the background
+  -- beside it, every frame, at every width. The stencil is in local space and
+  -- follows the transform for free.
   if opts.foil and opts.foil > 0 then
-    local sx, sy, sw2, sh2 = lg.getScissor()
-    lg.setScissor(opts.sx or 0, opts.sy or 0, opts.sw or lg.getWidth(), opts.sh or lg.getHeight())
+    lg.stencil(function() Draw.roundRect("fill", x, y, w, h, r) end, "replace", 1)
+    lg.setStencilTest("greater", 0)
     local t = (opts.time or 0) * 0.45 + (opts.phase or 0)
     local p = ((t % 1) * 2 - 0.5) * w * 1.6
     lg.push()
@@ -850,7 +858,7 @@ function UI.card(w, h, opts)
     UI.hgrad(0, y, bw, h, P.white, tint, 0.16 * opts.foil * a, 0)
     lg.setBlendMode(bm, am)
     lg.pop()
-    if sx then lg.setScissor(sx, sy, sw2, sh2) else lg.setScissor() end
+    lg.setStencilTest()
   end
 
   -- frame

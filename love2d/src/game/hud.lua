@@ -85,6 +85,21 @@ local function xtos(n)
   return s
 end
 
+-- Seconds -> "1:30". Memoised for the same reason as itos: the cycle dial
+-- draws one of these every frame and it changes once a second.
+local CLOCK = {}
+local function clock(sec)
+  sec = floor(sec)
+  if sec < 0 then sec = 0 end
+  local s = CLOCK[sec]
+  if s == nil then
+    local m, r = floor(sec / 60), sec % 60
+    s = m .. ":" .. (r < 10 and "0" or "") .. r
+    if sec <= 3600 then CLOCK[sec] = s end
+  end
+  return s
+end
+
 local DEC1 = {}
 local function dec1(v)
   local k = floor(v * 10 + 0.5)
@@ -519,7 +534,7 @@ function HUD.init(world)
     if not w then return end
     local n = w.treeCount
     if n == 10 or n == 25 or n == 50 or n == 100 or n == 200 or n == 400 then
-      HUD.toast(itos(n) .. " TREES", P.accent, "THE FOREST REMEMBERS", 5)
+      HUD.toast(itos(n) .. " TREES STANDING", P.accent, "THE FOREST REMEMBERS", 5)
       Audio.play("o2_milestone", { volume = 0.6 })
     end
   end)
@@ -705,8 +720,37 @@ end
 --------------------------------------------------------------------- glyphs
 --- The bot vocabulary, drawn small. Shared with the build bar and the radial
 --- menu so a Sentry is the same silhouette everywhere in the game.
+
+-- What each silhouette's ink actually covers, top and bottom, in units of `r`
+-- and measured from the origin it is drawn about. Hand-read off the drawing
+-- code below; keep them in step if a shape changes.
+local BOT_INK = {
+  planter   = { -1.39, 0.60 },
+  builder   = { -0.62, 0.62 },
+  repulsor  = { -1.16, 0.72 },
+  sentry    = { -1.40, 0.88 },
+  harvester = { -0.34, 0.92 },
+  beacon    = { -0.86, 0.80 },
+}
+-- The box they are dealt into: a common ground line at +FOOT, and a ceiling at
+-- -HEAD that only the tall ones are scaled down to meet.
+local BOT_FOOT, BOT_HEAD = 0.62, 1.20
+
+--- One of the six, as a line drawing.
+---
+--- Every caller places this by a centre point and a radius and then puts a
+--- label under it, so the shapes have to agree about where their feet are. They
+--- did not: the Sentry drew 2.28 r of ink and the Harvester 1.26, hung off the
+--- same origin, so the build bar's diamond had its bottom vertex inside the T
+--- of SENTRY and the Beacon's legs crossed the A while the Builder floated. The
+--- silhouettes now stand on one ground line and none of them is taller than the
+--- box, which is what lets a caller reserve space for one.
 function HUD.botGlyph(botType, x, y, r, color, alpha)
   alpha = alpha or 1
+  local ink = BOT_INK[botType] or BOT_INK.beacon
+  local fit = min(1, (BOT_HEAD + BOT_FOOT) / (ink[2] - ink[1]))
+  y = y + (BOT_FOOT - ink[2] * fit) * r
+  r = r * fit
   local c = color or P.ramp.metal[3]
   lg.setLineWidth(max(1.4, r * 0.16))
   Draw.setColor(UI.c(c, alpha))
@@ -949,14 +993,21 @@ local function drawCycleDial(w, a)
               urgent and 3 or 0)
   end
 
-  -- seconds remaining, punched on each tick. During the extraction there is no
+  -- Time remaining, punched on each tick. During the extraction there is no
   -- countdown to show, so the dial reads the sky the rig is taking instead.
+  --
+  -- As a bare integer this was the one readout in the game that said something
+  -- untrue: "DAY" sits immediately to its left, and "DAY 46" is a date. A clock
+  -- cannot be read as anything but a clock, and it costs nothing -- the same
+  -- number, with a colon in it. maxWidth keeps 1:30 inside the ring at any
+  -- phase length rather than trusting four glyphs to fit a 62 px dial.
   local punch = U.ease.outQuad(HUD.tickPunch)
-  local secSize = UI.ts.h3 * (1 + punch * (urgent and 0.24 or 0.08))
-  local centre = left and itos(math.ceil(left)) or (itos(math.floor(w.o2 or 0)) .. "%")
+  local secSize = UI.ts.h3 * 0.9 * (1 + punch * (urgent and 0.24 or 0.08))
+  local centre = left and clock(math.ceil(left)) or (itos(math.floor(w.o2 or 0)) .. "%")
   if extracting then secSize = UI.ts.h4 end
+  UI.o.maxWidth = (R - 11) * 2
   UI.text(centre, cx, cy - secSize * 0.5 + 1, secSize,
-          UI.mix(P.ink, pc, urgent and 1 or 0.25), "center", a, 0.0)
+          UI.mix(P.ink, pc, urgent and 1 or 0.25), "center", a, 0.0, UI.o)
 
   -- phase name + cycle, to the left of the dial, right-aligned to it
   local tx = cx - R - 16
@@ -1041,40 +1092,54 @@ local function drawResources(w, a)
   local shake = HUD.cobShake > 0 and sin(HUD.cobShake * 46) * HUD.cobShake * 5 or 0
   local flash = U.ease.outQuad(HUD.cobFlash)
 
-  -- cobalt
+  -- Cobalt.
+  --
+  -- Display type is set from its cap line, so a numeral occupies y..y+size and
+  -- its stroke hangs half a line width below that again. Every caption in this
+  -- block used to be parked exactly on the numeral's baseline, which put the
+  -- top of COBALT inside the tail of the 7 above it -- at every width, in every
+  -- frame, on the readout the whole game is played off. The rhythm is written
+  -- out below: cap line, baseline, then CLEAR px of air before the label.
+  --   cobalt  numeral  y + 2  ..  y + 38      label  y + 46 .. y + 56
+  --   rule    y + 62
+  --   pair    numeral  ty + 0 ..  ty + 27     label  ty + 34 .. ty + 44
   cobaltGlyph(x + 11 + shake, y + 20, 11, a, flash)
   local cobColor = UI.mix(P.ramp.cobalt[4], P.white, flash * 0.7)
   if HUD.cobShake > 0.02 then cobColor = UI.mix(P.ramp.cobalt[4], P.danger, HUD.cobShake) end
-  UI.text(itos(HUD.cob.v), x + 30 + shake, y + 4, UI.ts.h2 * (1 + flash * 0.06),
+  UI.text(itos(HUD.cob.v), x + 30 + shake, y + 2, UI.ts.h2 * (1 + flash * 0.06),
           cobColor, "left", a, 0.02)
-  UI.caption("COBALT", x + 30 + shake, y + 40, UI.ts.micro,
+  UI.caption("COBALT", x + 30 + shake, y + 46, UI.ts.micro,
              UI.c(P.ink, 0.72 * a), "left", nil, 1)
 
   -- a hairline that ties the row above to the pair below
-  UI.rule(x, y + 56, 188, P.ink, 0.14 * a)
+  UI.rule(x, y + 62, 188, P.ink, 0.14 * a)
 
   -- forest | bots, one row, so the block stays three lines tall
-  local ty = y + 64
+  local ty = y + 70
   local tflash = U.ease.outQuad(HUD.treeFlash)
-  treeGlyph(x + 10, ty + 14, 10, a, tflash)
-  UI.text(itos(HUD.trees.v), x + 28, ty + 1, UI.ts.h3 * (1 + tflash * 0.06),
+  treeGlyph(x + 10, ty + 13, 10, a, tflash)
+  UI.text(itos(HUD.trees.v), x + 28, ty, UI.ts.h3 * (1 + tflash * 0.06),
           UI.mix(P.accent, P.white, tflash * 0.6), "left", a, 0.02)
-  UI.caption("FOREST", x + 28, ty + 30, UI.ts.micro,
+  -- FOREST is the forest that is standing right now, and it is the same number
+  -- under the same word wherever the game prints it: the milestone toast and
+  -- dawn's tally both say STANDING, and dawn's PLANTED sits under its own
+  -- THIS CYCLE header so the two can never be read as the same count.
+  UI.caption("FOREST", x + 28, ty + 34, UI.ts.micro,
              UI.c(P.ink, 0.72 * a), "left", nil, 1)
 
   local bx = x + 112
-  crewGlyph(bx + 10, ty + 14, 10, 0.9 * a)
+  crewGlyph(bx + 10, ty + 13, 10, 0.9 * a)
   -- The crew has a ceiling, so the readout is a fraction rather than a count:
   -- the question is what your workforce is made of, not how much of it there is.
   local cap = TU.bots.maxCrew or 0
   local full = cap > 0 and HUD.botCount >= cap
-  local nw = UI.text(itos(HUD.botCount), bx + 28, ty + 1, UI.ts.h3,
+  local nw = UI.text(itos(HUD.botCount), bx + 28, ty, UI.ts.h3,
                      UI.c(full and P.warn or P.ink, a), "left", a, 0.02)
   if cap > 0 then
-    UI.caption("/" .. itos(cap), bx + 28 + nw + 3, ty + 18, UI.ts.micro,
+    UI.caption("/" .. itos(cap), bx + 28 + nw + 3, ty + 17, UI.ts.micro,
                UI.c(full and P.warn or P.inkDim, 0.8 * a), "left", nil, 1)
   end
-  UI.caption("BOTS", bx + 28, ty + 30, UI.ts.micro,
+  UI.caption("BOTS", bx + 28, ty + 34, UI.ts.micro,
              UI.c(P.ink, 0.72 * a), "left", nil, 1)
 end
 
@@ -1172,6 +1237,10 @@ local function drawFeed(a)
 end
 
 --------------------------------------------------------- dusk telegraph & threat
+-- Where the telegraph's word sits: TELE_EDGE in from the edge it belongs to,
+-- and TELE_LABEL outboard of the chevron column on a horizontal edge.
+local TELE_EDGE, TELE_LABEL = 30, 66
+
 --- The Blight's approach vector, drawn on the screen edge it will arrive from.
 local function drawTelegraph(w, a)
   local k = HUD.duskK
@@ -1218,19 +1287,27 @@ local function drawTelegraph(w, a)
       Draw.chevron(px, py, 11, ang, 3, 0.8)
     end
   end
-  -- the word, set into the edge beside the left-hand cluster
-  local lx = cx + nx * 26 + tx * (abs(ny) > 0.5 and -spread or 0)
-  local ly = cy + ny * 26 + ty * (abs(ny) > 0.5 and -spread or 0)
+  -- The word, set into the edge band.
+  --
+  -- It used to be stacked between the chevron column and the screen edge, which
+  -- on the top edge is a thirty pixel gap: the cap line landed 14 px from the
+  -- top of the frame, tight against it, and the word read as something that had
+  -- been cut off rather than as a label. On a horizontal edge it now stands
+  -- beside the column instead of above it, at the same inset every other piece
+  -- of chrome respects; on a vertical one it keeps its rotated place, which was
+  -- never the cramped case.
   local label = w.phase == "dusk" and "BREACH" or "PRESSURE"
+  UI.o.shadow = 1                       -- one stroke wide, over a lit canopy
   if abs(nx) > 0.5 then
     lg.push()
-    lg.translate(lx, ly)
+    lg.translate(cx + nx * TELE_EDGE, cy)
     lg.rotate(nx > 0 and pi * 0.5 or -pi * 0.5)
-    UI.text(label, 0, -UI.ts.tiny * 0.5, UI.ts.tiny, UI.c(col, aa), "center", aa, 0.28)
+    UI.text(label, 0, -UI.ts.tiny * 0.5, UI.ts.tiny, UI.c(col, aa), "center", aa, 0.28, UI.o)
     lg.pop()
   else
-    UI.text(label, lx, ly - (ny > 0 and UI.ts.tiny or 0), UI.ts.tiny,
-            UI.c(col, aa), "center", aa, 0.28)
+    local lx = cx + tx * (spread + TELE_LABEL)
+    local ly = ny > 0 and TELE_EDGE or (sh - TELE_EDGE - UI.ts.tiny)
+    UI.text(label, lx, ly, UI.ts.tiny, UI.c(col, aa), "center", aa, 0.28, UI.o)
   end
 end
 
@@ -1547,7 +1624,11 @@ end
 
 --------------------------------------------------------------------- boss bar
 -- The most affecting readout in the game: during the rebellion this drops one
--- notch per bot, and the player can watch what each of them bought.
+-- cell per bot, and the player can watch what each of them bought.
+local BOSS_CELLS_DEF = 40    -- when the world has not said how many are walking
+local BOSS_CELLS_MAX = 60
+local BOSS_CELL_GAP  = 2     -- px of air between plates
+local BOSS_CELL_MIN  = 4     -- px: narrower than this and a plate is a hairline
 local bossShown = 0
 local function drawBossBar(w, a)
   local boss = w.boss
@@ -1573,24 +1654,42 @@ local function drawBossBar(w, a)
 
   Draw.setColor(P.black, 0.55 * aa)
   Draw.roundRect("fill", bx - 3, by - 3, bw + 6, bh + 6, 5)
-  Draw.setColor(P.ramp.rift[1], 0.9 * aa)
-  Draw.roundRect("fill", bx, by, bw, bh, 3)
 
-  -- the ghost tail lags the real value, so a burst of damage reads as a lurch
-  Draw.setColor(P.warn, 0.35 * aa)
-  Draw.roundRect("fill", bx, by, bw * HUD._bossFrac, bh, 3)
-  Draw.setColor(P.danger, 0.95 * aa)
-  Draw.roundRect("fill", bx, by, bw * frac, bh, 3)
-
-  -- one notch per bot: the rebellion is legible as a countdown, and each notch
-  -- that goes is one of them
-  if boss then
-    local notches = min(w.rebelCrew or 40, 60)
-    Draw.setColor(P.black, 0.35 * aa)
-    for i = 1, notches - 1 do
-      local x = bx + bw * (i / notches)
-      lg.rectangle("fill", x, by, 1, bh)
+  -- One cell per bot, and the cells are separate plates.
+  --
+  -- The idea was right and the drawing was not: a solid bar with 1 px dark
+  -- hairlines ruled across the whole of it, filled and empty alike, ~48 of them
+  -- at 13 px tall. That is graph paper, not a countdown -- and because the fill
+  -- was a single rectangle over the top of the ruling, it stopped wherever it
+  -- liked inside a cell, which broke the one idea the readout had. Now a cell
+  -- is a plate with air around it, it holds exactly one bot's share of the
+  -- hull, and it empties before the next one starts.
+  local cells = U.clamp(floor(w.rebelCrew or BOSS_CELLS_DEF), 1, BOSS_CELLS_MAX)
+  local gap = BOSS_CELL_GAP
+  local cw = (bw - gap * (cells - 1)) / cells
+  -- Below the point where a plate reads as a plate, the gaps are the loudest
+  -- thing on the bar. A plain bar tells the truth at any width; graph paper
+  -- does not, so the ruling never comes back.
+  if cw < BOSS_CELL_MIN then gap, cw = 0, bw / cells end
+  local ghost = HUD._bossFrac
+  for i = 1, cells do
+    local cellX = bx + (i - 1) * (cw + gap)
+    Draw.setColor(P.ramp.rift[1], 0.9 * aa)
+    lg.rectangle("fill", cellX, by, cw, bh)
+    -- the ghost tail lags the real value, so a burst of damage reads as a lurch
+    local gk = U.saturate(ghost * cells - (i - 1))
+    if gk > 0.002 then
+      Draw.setColor(P.warn, 0.35 * aa)
+      lg.rectangle("fill", cellX, by, cw * gk, bh)
     end
+    local lk = U.saturate(frac * cells - (i - 1))
+    if lk > 0.002 then
+      Draw.setColor(P.danger, 0.95 * aa)
+      lg.rectangle("fill", cellX, by, cw * lk, bh)
+    end
+  end
+
+  if boss then
     -- The plate line. Player damage stops here until the next cohort lands, so
     -- the bar stalling against a lit rule is the fight explaining itself: this
     -- is not yours to finish, and they are still walking.
@@ -1617,9 +1716,14 @@ local function drawBossBar(w, a)
     UI.text("ARMOUR HOLDING", bx + bw * 0.5, L.tm and (by + bh + 6) or (by - 21),
             UI.ts.micro, P.warn, "center", 0.9 * (boss.hullBlock or 0) * aa, 0.34)
   end
+  -- What the rig has left, said as a quantity of something. An unlabelled
+  -- four-figure number floating over the empty half of a bar is a number the
+  -- player has to guess the units of, and the guess ("bots left"?) is wrong.
   if boss then
-    UI.text(itos(math.ceil(boss.hp)), bx + bw, by - 21, UI.ts.label,
-            P.ink, "right", 0.8 * aa, 0.16)
+    local hw = UI.text(itos(math.ceil(boss.hp)), bx + bw, by - 21, UI.ts.label,
+                       P.ink, "right", 0.8 * aa, 0.16)
+    UI.caption("HULL", bx + bw - hw - 9, by - 14, UI.ts.micro,
+               UI.c(P.ink, 0.6 * aa), "right", nil, 1)
   end
 end
 

@@ -380,10 +380,23 @@ function Player:reboot()
 end
 
 ------------------------------------------------------------------------- render
-local function suitColor(t) return P.shade(P.ramp.metalW, t) end
+-- The suit is cool and dark on purpose. It used to be cut from the warm brass
+-- ramp, which put the last human at the same value and very nearly the same
+-- hue as sunlit grass: at play scale he was a tan capsule with a beige circle
+-- on top and he vanished into the ground the moment the forest got busy.
+-- Dark-and-cool separates by value *and* by hue, and it leaves the only bright
+-- marks on him -- visor, chest lamp, one hard rim -- reading as him.
+local function suit(t, a) return P.shade(P.ramp.suit, t, a) end
+local function bare(t, a) return P.shade(P.ramp.sand, t, a) end
 
 function Player:drawShadow()
-  Draw.softShadow(self.x, self.y + 4, self.radius * 1.15, self.radius * 0.52, 0.34)
+  -- Two shadows, not one. The wide soft one is the body occluding the sky; the
+  -- tight dark one under the boots is the contact patch, and it is the whole
+  -- difference between a man standing on the island and a decal hovering four
+  -- pixels above it.
+  local r = self.radius
+  Draw.softShadow(self.x, self.y + 5, r * 1.30, r * 0.56, 0.30)
+  Draw.softShadow(self.x, self.y + r * 0.98, r * 0.62, r * 0.24, 0.55)
 end
 
 function Player:draw()
@@ -420,22 +433,45 @@ function Player:draw()
 
   local ang = math.atan2(self.aimY, self.aimX)
   local r = self.radius
+  local sp = math.min(1, U.len(self.vx, self.vy) / 160)
+  local step = math.sin(self.walkPhase) * sp
 
-  -- legs: a simple two-beat cycle that reads at this size
-  local step = math.sin(self.walkPhase) * math.min(1, U.len(self.vx, self.vy) / 160)
-  Draw.setColor(suitColor(1.6), flicker)
-  Draw.capsule("fill", -r * 0.36, r * 0.35 + step * 3, -r * 0.36, r * 0.78 + step * 3, r * 0.2)
-  Draw.capsule("fill",  r * 0.36, r * 0.35 - step * 3,  r * 0.36, r * 0.78 - step * 3, r * 0.2)
+  -- legs and boots. The boots are the darkest thing he owns and they sit
+  -- exactly where the contact shadow is, which is what sells the weight.
+  for i = -1, 1, 2 do
+    local k = step * i * 3.4
+    Draw.setColor(suit(1.7), flicker)
+    Draw.capsule("fill", i * r * 0.30, r * 0.36, i * r * 0.30, r * 0.96 + k, r * 0.185)
+    Draw.setColor(P.darken(suit(1), 0.3), flicker)
+    Draw.capsule("fill", i * r * 0.30 - r * 0.10, r * 1.00 + k,
+                        i * r * 0.30 + r * 0.16, r * 1.00 + k, r * 0.19)
+  end
 
-  -- backpack
-  Draw.setColor(suitColor(1.4), flicker)
-  Draw.roundRect("fill", -r * 0.62, -r * 0.1, r * 1.24, r * 0.92, r * 0.3)
+  -- the rig on his back: a wider, darker mass, so the torso in front of it has
+  -- an edge to be read against instead of fading into the grass
+  Draw.setColor(suit(1.5), flicker)
+  Draw.roundRect("fill", -r * 0.62, -r * 0.80, r * 1.24, r * 1.18, r * 0.34)
+  Draw.setColor(P.accent, 0.5 * flicker)
+  Draw.roundRect("fill", -r * 0.40, -r * 0.62, r * 0.80, r * 0.10, r * 0.05)
 
-  -- torso
-  Draw.setColor(suitColor(self.suit and 2.5 or 2.1), flicker)
-  Draw.roundRect("fill", -r * 0.56, -r * 0.55, r * 1.12, r * 1.24, r * 0.42)
-  Draw.setColor(suitColor(3.2), flicker * 0.9)
-  Draw.roundRect("fill", -r * 0.44, -r * 0.5, r * 0.88, r * 0.42, r * 0.22)
+  -- arms swing against the legs: two beats, opposite phase, and it is the
+  -- motion rather than the shape that reads at thirty pixels
+  Draw.setColor(suit(1.9), flicker)
+  for i = -1, 1, 2 do
+    local k = -step * i * 3.0
+    Draw.capsule("fill", i * r * 0.50, -r * 0.44, i * r * 0.56, r * 0.28 + k, r * 0.155)
+  end
+
+  -- torso, narrower than the rig, with the two chest bars the dialogue portrait
+  -- wears -- so the man in the frame and the man on the island are one person
+  Draw.setColor(suit(2.3), flicker)
+  Draw.roundRect("fill", -r * 0.46, -r * 0.76, r * 0.92, r * 1.30, r * 0.36)
+  Draw.setColor(suit(3.0), flicker * 0.95)
+  Draw.roundRect("fill", -r * 0.36, -r * 0.70, r * 0.72, r * 0.44, r * 0.22)
+  Draw.setColor(P.accent, 0.9 * flicker)
+  Draw.roundRect("fill", -r * 0.26, -r * 0.16, r * 0.30, r * 0.10, r * 0.05)
+  Draw.roundRect("fill", -r * 0.26, r * 0.04, r * 0.46, r * 0.10, r * 0.05)
+  Draw.glow(-r * 0.05, r * 0.04, r * 0.7, P.accent, 0.22 * flicker, 2)
 
   -- shove arm sweep
   if self.shoveAnim > 0 then
@@ -444,20 +480,37 @@ function Player:draw()
     Draw.capsule("fill", 0, 0, math.cos(sweep) * r * 2.1, math.sin(sweep) * r * 2.1, r * 0.24)
   end
 
-  -- helmet, with a cool rim on the light side so the silhouette separates
-  Draw.setColor(suitColor(self.suit and 3.0 or 2.2), flicker)
-  love.graphics.circle("fill", 0, -r * 0.72, r * 0.62)
-  Draw.setColor(P.accentCool, 0.5 * flicker)
-  love.graphics.setLineWidth(1.6)
-  love.graphics.arc("line", "open", 0, -r * 0.72, r * 0.62, math.pi * 0.85, math.pi * 1.75)
-  love.graphics.setLineWidth(1)
+  -- neck and helmet. He is a head taller than he was; the extra height is all
+  -- above the shoulders, which is what makes a silhouette read as a person
+  -- rather than as a bollard.
+  Draw.setColor(suit(1.4), flicker)
+  Draw.roundRect("fill", -r * 0.15, -r * 1.06, r * 0.30, r * 0.34, r * 0.10)
+  Draw.setColor(self.suit and suit(2.5) or bare(2.4), flicker)
+  g.circle("fill", 0, -r * 1.32, r * 0.53)
+
+  -- the rim. One light, upper-left, on the helmet and down the near edge of the
+  -- torso. Hard and bright: a 40% rim is a rim you cannot see at play scale.
+  Draw.setColor(P.accentCool, 0.95 * flicker)
+  g.setLineWidth(r * 0.12)
+  g.arc("line", "open", 0, -r * 1.32, r * 0.53, math.pi * 0.80, math.pi * 1.66)
+  g.setLineWidth(1)
+  Draw.capsule("fill", -r * 0.42, -r * 0.46, -r * 0.42, r * 0.30, r * 0.055)
+
   if self.suit then
-    -- visor faces the aim direction
-    Draw.setColor(P.accentCool, 0.9 * flicker)
-    local vx, vy = math.cos(ang) * r * 0.2, math.sin(ang) * r * 0.2 - r * 0.72
-    Draw.blob(vx, vy, r * 0.34, 7, 12, 0.12, 0.7)
-    Draw.setColor(P.ink, 0.5 * flicker)
-    love.graphics.circle("fill", vx + r * 0.1, vy - r * 0.08, r * 0.09)
+    -- visor: bright, glowing, and it turns to whatever he is aiming at, so the
+    -- brightest mark on him also tells you which way he is facing
+    local vx = math.cos(ang) * r * 0.16
+    local vy = math.sin(ang) * r * 0.12 - r * 1.34
+    -- the glass sits in a dark recess, exactly the way a bot's eye plate does:
+    -- the same device on both faces, which is most of the reason the crew are
+    -- allowed to read as people
+    Draw.setColor(suit(1.0), flicker)
+    Draw.blob(vx * 0.55, vy + r * 0.01, r * 0.44, 9, 12, 0.07, 0.72)
+    Draw.glow(vx, vy, r * 0.95, P.accentCool, 0.28 * flicker, 2)
+    Draw.setColor(P.accentCool, flicker)
+    Draw.blob(vx, vy, r * 0.31, 9, 12, 0.10, 0.66)
+    Draw.setColor(P.white, 0.85 * flicker)
+    g.circle("fill", vx - r * 0.10, vy - r * 0.09, r * 0.068)
   end
 
   g.pop()
@@ -484,9 +537,13 @@ end
 function Player:drawDown()
   local g = love.graphics
   local r = self.radius
-  Draw.setColor(suitColor(1.5), 0.9)
   g.push() g.translate(self.x, self.y) g.rotate(1.2)
+  Draw.setColor(suit(1.8), 0.95)
   Draw.roundRect("fill", -r * 0.6, -r * 0.5, r * 1.2, r * 1.1, r * 0.4)
+  Draw.setColor(suit(2.4), 0.95)
+  g.circle("fill", r * 0.62, -r * 0.1, r * 0.5)
+  Draw.setColor(P.accentCool, 0.35)
+  Draw.capsule("fill", -r * 0.5, -r * 0.42, r * 0.5, -r * 0.42, r * 0.06)
   g.pop()
   local p = 1 - self.downTimer / T.reboot
   Draw.ring(self.x, self.y, r * 2.2, 3, -math.pi / 2, -math.pi / 2 + p * U.TAU, P.danger, 0.5)

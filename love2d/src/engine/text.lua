@@ -32,6 +32,12 @@ Text.defaults = {
   align    = "left",
 }
 
+-- Where a drop shadow stops being an edge and starts being a shadow. See the
+-- note in Text.display.
+local SOFT_MIN    = 22      -- px: type at or above this gets a soft shadow
+local SOFT_BLUR   = 0.11   -- spread, in cap heights
+local SOFT_LAYERS = 4       -- widening strokes the spread is dealt over
+
 --- The pairs that actually need it. Values are in cap heights and negative
 --- (they pull the pair together). Kerning a stroke face is mostly about
 --- diagonals meeting flats and about punctuation tucking under an overhang.
@@ -277,10 +283,21 @@ function Text.display(str, x, y, size, opts)
     lg.setBlendMode(bm, am)
   end
 
-  -- drop shadow
+  -- Drop shadow.
+  --
+  -- Two shadows live under this one option, and the size of the type decides
+  -- which. A caption is one stroke wide and needs a *hard* 1 px edge under it
+  -- or it vanishes over a sunlit canopy -- that is the whole reason HUD
+  -- captions pass a shadow at all. Display type at heading size and up needs
+  -- the opposite: an un-blurred black copy of a 108 px logo is a second logo
+  -- sitting behind the first, and it is the first thing anyone sees on the
+  -- title. Above SOFT_MIN the shadow is spread over a few widening strokes,
+  -- which is as close to a blur as a stroked face gets without a canvas: the
+  -- outermost pass carries a third of the density and the core carries all of
+  -- it. `shadow.blur` overrides the spread in pixels; 0 forces the hard edge.
   local sh = opts and opts.shadow
   if sh then
-    local dx, dy, sc, sa
+    local dx, dy, sc, sa, blur
     if type(sh) == "number" then
       dx, dy, sc, sa = sh, sh, P.black, 0.55
     else
@@ -288,12 +305,27 @@ function Text.display(str, x, y, size, opts)
       dy = sh.dy or sh[2] or size * 0.06
       sc = sh.color or P.black
       sa = sh.alpha or 0.55
+      blur = sh.blur
     end
-    lg.setColor(sc[1], sc[2], sc[3], (sc[4] or 1) * sa * alpha)
-    lg.setLineWidth(e.lw)
+    if blur == nil then blur = size >= SOFT_MIN and size * SOFT_BLUR or 0 end
     lg.push()
     lg.translate(dx, dy)
-    strokeEntry(e, e.lw)
+    if blur > 0.5 then
+      -- Per-layer alpha solved so the layers stack back to `sa` in the core
+      -- rather than to a black slab: 1 - (1 - sa)^(1/n).
+      local n = SOFT_LAYERS
+      local la = 1 - (1 - U.clamp(sa, 0, 0.99)) ^ (1 / n)
+      for i = n, 1, -1 do
+        local wdt = e.lw + blur * 2 * (i / n)
+        lg.setColor(sc[1], sc[2], sc[3], (sc[4] or 1) * la * alpha)
+        lg.setLineWidth(wdt)
+        strokeEntry(e, wdt)
+      end
+    else
+      lg.setColor(sc[1], sc[2], sc[3], (sc[4] or 1) * sa * alpha)
+      lg.setLineWidth(e.lw)
+      strokeEntry(e, e.lw)
+    end
     lg.pop()
   end
 

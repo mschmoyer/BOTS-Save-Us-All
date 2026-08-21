@@ -39,6 +39,14 @@ P.ramp = {
   leafHi = { hex "#204527", hex "#428f45", hex "#77cf58", hex "#a9e95f" },
   metal  = { hex "#1d262e", hex "#4c5f6c", hex "#96abb7", hex "#e2eef4" },
   metalW = { hex "#2b2119", hex "#67543c", hex "#a98c66", hex "#e6d7b4" }, -- warm/brass bots
+  -- The last human's pressure suit. It used to be cut from `metalW`, and a warm
+  -- tan is *exactly* the value and the chroma of sunlit grass -- at play scale
+  -- the one character in the game you must never lose track of dissolved into
+  -- the ground he was standing on. This ramp is deliberately the darkest and
+  -- coolest thing that walks on the island, so he separates from the sward by
+  -- value and by hue at once and the only bright marks on him -- the visor, the
+  -- chest lamp, one hard rim -- are read as *him* and not as scenery.
+  suit   = { hex "#0b1119", hex "#22303d", hex "#3f5b6b", hex "#a8d8f0" },
   -- The blight is a *bruise*, not a sweet. The wide-area stops are near-neutral
   -- so a scar reads by value and texture; only the last stop is allowed to be
   -- hot, and it is only ever used on hairline veins.
@@ -64,6 +72,15 @@ P.black      = hex "#05070b"
 P.white      = hex "#ffffff"
 P.eye        = hex "#ffc46b"
 P.eyeDown    = hex "#ff6a4d"
+-- The crew's own light, and it is not `eye`. An amber that hot is orange
+-- (hue 33 degrees); bloom it, run it through the extraction's cool grade and it
+-- lands a short walk from `danger` (349) and the Blight's own bar, so your
+-- friends end up glowing like the thing eating them. This is the *yellow* the
+-- dialogue portraits promised -- hue 51, sixty degrees further from red, with a
+-- red channel that is no longer dominant, so no grade in the game can rotate it
+-- into the danger family. `eye` stays exactly where it belongs: on a Beacon's
+-- lantern, which is a lamp and ought to be warm.
+P.botEye     = hex "#ffe45c"
 P.love       = hex "#ff7ba8"
 P.acid       = hex "#b6ff3d"
 P.o2         = hex "#6fe4ff"

@@ -155,13 +155,45 @@ function M.draw(world, cam, alpha)
     end
   end
 
-  -- the standing order
+  -- The standing order.
+  --
+  -- This used to be TU.rally.radius of flat accent fill at 0.22 -- 620 world
+  -- units on a 3400-wide island, so a teal disc over 45% of the plate, cut off
+  -- by nothing and with no mark at its centre. It read as a render fault, not
+  -- as an order. What it has to say is "the flag is *here*, and it reaches
+  -- about this far": so the reach is a dashed hairline ring, and the flag is a
+  -- flag, planted at the point, drawn over its own shadow so it survives the
+  -- canopy underneath it.
   if world.rallyX then
     local rx, ry = px(world.rallyX, world.rallyY)
-    g.setColor(P.accent[1], P.accent[2], P.accent[3], 0.22 * a)
-    g.circle("fill", rx, ry, 620 * s)
-    g.setColor(P.accent[1], P.accent[2], P.accent[3], 0.9 * a)
-    g.circle("fill", rx, ry, 2.4 * scale)
+    local ac = P.accent
+    -- Clipped to the plate: the reach ring is wider than the island in one
+    -- direction more often than not, and a ring that leaves the map and carries
+    -- on over the world is the same "is this broken?" the disc was. Nothing
+    -- else drawn here can leave the plate, so the scissor is only around this.
+    local px0, py0, pw0, ph0 = g.getScissor()
+    g.setScissor(cx, cy, w, h)
+    g.setColor(ac[1], ac[2], ac[3], 0.42 * a)
+    if Draw.dashedCircle then
+      Draw.dashedCircle(rx, ry, TU.rally.radius * s, 5, 6, (world.time or 0) * 6, 1)
+    else
+      g.setLineWidth(1)
+      g.circle("line", rx, ry, TU.rally.radius * s)
+    end
+    -- the flag: a mast on the point, a pennant off the top of it
+    local fh = 11 * scale                  -- mast height
+    local fw = 7 * scale                   -- pennant reach
+    g.setLineWidth(math.max(1, 1.4 * scale))
+    for pass = 1, 2 do
+      local c = pass == 1 and P.black or ac
+      local o = pass == 1 and 1 or 0       -- the shadow pass, one pixel down
+      g.setColor(c[1], c[2], c[3], (pass == 1 and 0.55 or 0.95) * a)
+      g.line(rx, ry + o, rx, ry - fh + o)
+      g.polygon("fill", rx, ry - fh + o, rx + fw, ry - fh + fw * 0.42 + o,
+                rx, ry - fh + fw * 0.84 + o)
+      g.circle("fill", rx, ry + o, 1.6 * scale)
+    end
+    if px0 then g.setScissor(px0, py0, pw0, ph0) else g.setScissor() end
   end
 
   -- home rig

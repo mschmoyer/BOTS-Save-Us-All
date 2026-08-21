@@ -99,12 +99,26 @@ function S:enter(world, report)
   self.nameSpoken = 0
 end
 
---- The HUD is the day's instrument panel; dawn is not the day. It dims out of
---- the way rather than being switched off, so the feed the card flies into is
---- still faintly there to fly into.
+--- The HUD is the day's instrument panel, and dawn is not the day: it leaves
+--- entirely while this screen is up and comes back with the phase that needs
+--- it. See the note on the fade in `update`.
 function S:leave()
   HUD.alpha = 1
   BuildMenu.barAlpha = 1
+end
+
+--- Take the gameplay layer off the screen.
+---
+--- It used to be dimmed to 0.10 and left there, which on a dark dawn wash is
+--- not "gone", it is "faint": the build bar, the whole resource stack, SIPHONS
+--- FEEDING under the oxygen arc and two DID NOT COME BACK toasts were all still
+--- readable *underneath the tally*, and those toasts name the same bots this
+--- screen sets in the display face a few hundred pixels to the right of them.
+--- The prologue already takes the chrome away like this; the draft never did.
+local CHROME_FADE = 9        -- 1/s
+local function chromeOut(v, dt)
+  v = U.damp(v, 0, CHROME_FADE, dt)
+  return v < 0.02 and 0 or v
 end
 
 local function confirm(self, i)
@@ -121,8 +135,8 @@ end
 function S:update(dt, realDt)
   realDt = realDt or dt
   self.t = self.t + realDt
-  HUD.alpha = U.damp(HUD.alpha, 0.10, 6, realDt)
-  BuildMenu.barAlpha = U.damp(BuildMenu.barAlpha, 0.10, 6, realDt)
+  HUD.alpha = chromeOut(HUD.alpha, realDt)
+  BuildMenu.barAlpha = chromeOut(BuildMenu.barAlpha, realDt)
   if Screen.current() ~= self then return end
 
   -- a chime per name, one after another: the tally reads itself out loud
@@ -188,21 +202,34 @@ function S:drawTally(x, y, w, a)
   UI.caption("CYCLE " .. tostring(r.cycle or 1) .. " SURVIVED", x, y + head + 12,
              UI.ts.micro, UI.c(P.ramp.ember[4], 0.95 * a * hk), "left")
 
-  -- the four numbers, one cell each, all left-aligned on the same grid so the
-  -- numerals stack in a column the eye can run down
+  -- The numbers, one cell each, all left-aligned on the same grid so the
+  -- numerals stack in a column the eye can run down -- but under two rules,
+  -- because PLANTED and FOREST are not the same kind of number and printing
+  -- them side by side, unexplained, with different values, was this screen
+  -- asking the player to work out which of the two the HUD had been counting
+  -- at them all night. Left: what this cycle did. Right: what is standing now,
+  -- which is FOREST, which is the number in the corner of the HUD.
   local sy = y + head + 44
-  UI.rule(x, sy, w, P.ink, 0.14 * a, P.ramp.ember[4])
+  local cellW = floor(w / 5 / UI.u) * UI.u
+  UI.rule(x, sy, cellW * 3 - UI.u * 2, P.ink, 0.14 * a, P.ramp.ember[4])
+  UI.rule(x + cellW * 3, sy, w - cellW * 3, P.ink, 0.14 * a, P.accent)
+  local gk = UI.stagger(t, 1, SEQ.stats, 0, 0.42)
+  UI.caption("THIS CYCLE", x, sy + 8, UI.ts.micro,
+             UI.c(P.ramp.ember[4], 0.85 * a * gk), "left")
+  UI.caption("STANDING NOW", x + cellW * 3, sy + 8, UI.ts.micro,
+             UI.c(P.accent, 0.85 * a * gk), "left")
+
   local cells = {
     { "PLANTED", tostring(floor(r.planted or 0)) },
     { "LOST",    tostring(floor(r.lost or 0)) },
     { "BLIGHT",  tostring(floor(r.killed or 0)) },
     { "FOREST",  tostring(floor(r.trees or 0)) },
   }
-  local cellW = floor(w / 5 / UI.u) * UI.u
+  local cellY = sy + 32
   for i = 1, 4 do
     local k = UI.stagger(t, i, SEQ.stats, SEQ.statStep, 0.42)
     local key, val = cells[i][1], cells[i][2]
-    UI.stat(x + (i - 1) * cellW, sy + 20 + (1 - k) * 8, key, val, stat,
+    UI.stat(x + (i - 1) * cellW, cellY + (1 - k) * 8, key, val, stat,
             statColor(key, tonumber(val) or 0), "left", a * k)
   end
 
@@ -210,7 +237,7 @@ function S:drawTally(x, y, w, a)
   local k5 = UI.stagger(t, 5, SEQ.stats, SEQ.statStep, 0.42)
   local d = r.o2Delta or 0
   local sign = d >= 0 and "+" or "-"
-  UI.stat(x + 4 * cellW, sy + 20 + (1 - k5) * 8, "OXYGEN",
+  UI.stat(x + 4 * cellW, cellY + (1 - k5) * 8, "OXYGEN",
           Text.format(r.o2 or 0, { decimals = 1, suffix = "%" }), stat,
           P.o2, "left", a * k5,
           sign .. Text.format(abs(d), { decimals = 1 }),
