@@ -1,0 +1,149 @@
+<title>__TITLE__</title>
+<style>
+  :root{
+    --ink:#e8f2ef; --bg0:#05070b; --bg1:#0b1119; --accent:#4fe3a8; --accent2:#7ba9ff;
+    --muted:#7d8f99;
+  }
+  :root[data-theme="light"]{ --ink:#e8f2ef; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg0);color:var(--ink);
+       font-family:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+       overflow:hidden;height:100dvh}
+  #stage{position:fixed;inset:0;display:grid;place-items:center;background:
+      radial-gradient(120% 90% at 50% 0%, #10202b 0%, var(--bg1) 45%, var(--bg0) 100%)}
+  canvas#canvas{display:block;width:100%;height:100%;image-rendering:auto;outline:none;
+      background:#05070b;touch-action:none}
+  #loader{position:fixed;inset:0;display:grid;place-items:center;z-index:20;
+      background:radial-gradient(120% 90% at 50% 10%, #12242f 0%, #0a1017 50%, #05070b 100%);
+      transition:opacity .7s cubic-bezier(.4,0,.2,1)}
+  #loader.gone{opacity:0;pointer-events:none}
+  .lwrap{text-align:center;width:min(560px,86vw)}
+  .logo{font-weight:800;letter-spacing:.42em;font-size:clamp(20px,4.4vw,34px);
+      color:var(--ink);text-indent:.42em}
+  .logo span{color:var(--accent)}
+  .sub{margin-top:.65rem;font-size:clamp(11px,1.9vw,13px);letter-spacing:.34em;
+      text-transform:uppercase;color:var(--muted)}
+  .bar{margin-top:2.4rem;height:3px;border-radius:99px;background:#1b2a33;overflow:hidden}
+  .fill{height:100%;width:0%;border-radius:99px;
+      background:linear-gradient(90deg,var(--accent2),var(--accent));
+      transition:width .35s cubic-bezier(.4,0,.2,1);box-shadow:0 0 18px 0 var(--accent)}
+  .status{margin-top:.9rem;font-size:11px;letter-spacing:.2em;color:var(--muted);
+      text-transform:uppercase;min-height:1.2em}
+  .hint{margin-top:2.6rem;font-size:12px;color:#5d6f79;line-height:1.7}
+  .hint b{color:var(--accent);font-weight:600}
+  #start{margin-top:1.6rem;padding:.85rem 2.2rem;border:1px solid #2b3f4a;border-radius:99px;
+      background:#0e1a22;color:var(--ink);font:inherit;font-size:13px;letter-spacing:.24em;
+      text-transform:uppercase;cursor:pointer;display:none;transition:.25s}
+  #start:hover{border-color:var(--accent);color:var(--accent);box-shadow:0 0 26px -6px var(--accent)}
+  #fsbtn{position:fixed;right:14px;bottom:12px;z-index:15;opacity:.28;border:0;background:none;
+      color:var(--ink);font:inherit;font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+      cursor:pointer;transition:.2s}
+  #fsbtn:hover{opacity:1;color:var(--accent)}
+  @media (pointer:coarse){#fsbtn{display:none}}
+</style>
+
+<div id="stage"><canvas id="canvas" tabindex="1" oncontextmenu="event.preventDefault()"></canvas></div>
+<button id="fsbtn" onclick="goFullScreen()">Fullscreen</button>
+
+<div id="loader"><div class="lwrap">
+  <div class="logo">BOTS<span>:</span> SAVE US ALL</div>
+  <div class="sub">Reforest</div>
+  <div class="bar"><div class="fill" id="fill"></div></div>
+  <div class="status" id="status">Waking the engine</div>
+  <div class="hint">
+    <b>WASD</b> move &nbsp;·&nbsp; <b>Space</b> dash &nbsp;·&nbsp; <b>E</b> shove &nbsp;·&nbsp;
+    <b>Tab</b> build<br>Gamepads and touch are detected automatically.
+  </div>
+  <button id="start">Begin</button>
+</div></div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function b64(s) {
+    var bin = atob(s), n = bin.length, u = new Uint8Array(n);
+    for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
+    return u;
+  }
+  var progress = 0;
+  function setProgress(p, msg) {
+    progress = Math.max(progress, p);
+    $('fill').style.width = (progress * 100).toFixed(1) + '%';
+    if (msg) $('status').textContent = msg;
+  }
+  setProgress(0.08, 'Decoding runtime');
+
+  window.__LOVE_WASM__ = b64('/*__WASM_B64__*/');
+  setProgress(0.45, 'Decoding world data');
+  window.__LOVE_DATA__ = b64('/*__DATA_B64__*/');
+  setProgress(0.62, 'Preparing');
+
+  var canvas = $('canvas');
+  canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); }, false);
+
+  window.goFullScreen = function () {
+    var el = $('stage');
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    (el.requestFullscreen || el.webkitRequestFullscreen || function () {}).call(el);
+  };
+
+  // Keep the drawing buffer matched to the CSS box and device pixel ratio.
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = Math.floor(canvas.clientWidth * dpr), h = Math.floor(canvas.clientHeight * dpr);
+    if (w && h && (canvas.width !== w || canvas.height !== h)) { canvas.width = w; canvas.height = h; }
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', function () { setTimeout(resize, 120); });
+
+  // Stop the page scrolling / zooming out from under the game.
+  window.addEventListener('keydown', function (e) {
+    if ([32, 37, 38, 39, 40, 9].indexOf(e.keyCode) > -1) e.preventDefault();
+  }, false);
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+
+  var Module = {
+    arguments: ['./game.love'],
+    INITIAL_MEMORY: 402653184,
+    wasmBinary: window.__LOVE_WASM__.buffer,
+    printErr: console.error.bind(console),
+    print: console.log.bind(console),
+    canvas: canvas,
+    totalDependencies: 0,
+    remainingDependencies: 0,
+    setStatus: function (t) {
+      if (t) { setProgress(Math.min(0.92, progress + 0.02), t.replace(/\.\.\.$/, '')); }
+    },
+    monitorRunDependencies: function (left) {
+      this.remainingDependencies = left;
+      this.totalDependencies = Math.max(this.totalDependencies, left);
+      if (left === 0) { setProgress(1, 'Ready'); ready(); }
+    }
+  };
+  window.Module = Module;
+
+  var started = false;
+  function ready() {
+    if (started) return;
+    started = true;
+    resize();
+    setTimeout(function () {
+      $('loader').classList.add('gone');
+      canvas.focus();
+      setTimeout(function () { $('loader').style.display = 'none'; resize(); }, 750);
+    }, 260);
+  }
+
+  window.addEventListener('error', function (e) {
+    $('status').textContent = 'Error — see console';
+    console.error(e);
+  });
+
+  window.__loveBoot = function () {
+    try { Love(Module); } catch (err) { console.error(err); $('status').textContent = 'Boot failed'; }
+  };
+})();
+</script>
+<script>/*__GAME_JS__*/</script>
+<script>/*__LOVE_JS__*/</script>
+<script>window.__loveBoot();</script>

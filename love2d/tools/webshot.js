@@ -1,0 +1,21 @@
+// Loads a single-file HTML build in headless Chromium and screenshots it.
+// Usage: node webshot.js <html> <outPng> [waitMs] [w] [h]
+const { chromium } = require('playwright');
+const path = require('path');
+(async () => {
+  const [,, html, out, waitMs = '9000', W = '1280', H = '720'] = process.argv;
+  const browser = await chromium.launch({
+    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+    args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+           '--ignore-gpu-blocklist', '--enable-webgl', '--no-sandbox']
+  });
+  const page = await browser.newPage({ viewport: { width: +W, height: +H }, deviceScaleFactor: 1 });
+  const logs = [];
+  page.on('console', m => logs.push(`[${m.type()}] ${m.text()}`));
+  page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
+  await page.goto('file://' + path.resolve(html));
+  await page.waitForTimeout(+waitMs);
+  await page.screenshot({ path: out });
+  console.log(logs.slice(-40).join('\n'));
+  await browser.close();
+})();
