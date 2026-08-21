@@ -83,9 +83,9 @@ local TUNE = {
   hitDecay      = 4.4,
   hitScale      = 0.34,
 
-  sunContrast   = 0.72,   -- how hard the sun shades the blob "normals"
+  sunContrast   = 0.66,   -- how hard the sun shades the blob "normals"
   rimPower      = 1.00,
-  rimAlpha      = 0.42,
+  rimAlpha      = 0.10,
   rimElder      = 1.55,   -- elders take a golden rim
   shadowAlpha   = 0.60,
   shadowSquash  = 0.34,   -- vertical flattening of the projected canopy
@@ -107,7 +107,7 @@ local TUNE = {
   leafDrift     = 54,
   leafSize      = 3.1,
   ambientLeaf   = 0.055,  -- chance/sec of an idle leaf on a mature tree
-  ambientMote   = 5.5,    -- seconds between pollen/firefly puffs, per tree
+  ambientMote   = 11.0,   -- seconds between pollen/firefly puffs, per tree
   gustLeaf      = 2.6,    -- ... scaled by gust strength
   chewLeaf      = 9.0,
 
@@ -177,7 +177,7 @@ local SPECIES = {
     lenTaper = 0.73, widTaper = 0.70, at = { 0.40, 0.98 },
     leafFrom = 4, clusters = 3, blobR = 0.72, blobSpread = 0.76, crown = 0.46,
     blobSq = 0.92,
-    ramp = P.ramp.leafHi, hue = { 1.12, 0.96, 0.74 },
+    ramp = P.ramp.leafHi, hue = { 1.07, 0.99, 0.82 },
     bark = P.ramp.bark, barkShade = 1.35,
     flex = 0.55, o2 = 1.45,
     growSpread = 0.72, growSpan = 0.34, growJitter = 0.07,
@@ -243,8 +243,12 @@ vec4 position(mat4 tpm, vec4 vp) {
   vp.xy -= BlobOff * loss;                          // chewed foliage folds away
   float nl = length(BlobOff);
   float l = nl > 0.00001 ? dot(BlobOff / nl, uSun.xy) : 0.0;
-  vShade = vec3(1.0 + l * uSun.z);
-  vRim = smoothstep(0.30, 0.98, l) * TreeData.w * uSun.w;
+  // Asymmetric, like the baked ramp walk: the sun darkens the away-facing side
+  // hard and lifts the facing side only a little. A symmetric term drives the
+  // brightest ramp stop well past 1.0, and everything above 1.0 is form thrown
+  // away -- a blown canopy is a flat disc.
+  vShade = vec3(1.0 + (l > 0.0 ? l * uSun.z * 0.30 : l * uSun.z));
+  vRim = smoothstep(0.58, 0.995, l) * TreeData.w * uSun.w;
   return tpm * vp;
 }
 #endif
@@ -257,6 +261,15 @@ vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
   // forest of 900 identical greens has no near and no far and reads as carpet.
   // Depth desaturates toward the atmosphere and lifts the darks, exactly as air
   // does, so the far canopy sits behind the near one.
+  // Soft shoulder. Between the ramp walk, the sun term, the per-tree tint and
+  // the rim, a lit crown can land well past 1.0 -- and a clipped canopy is a
+  // flat white paper cut-out with no form in it at all. Compress instead of
+  // clipping, uniformly across the channels so the hue survives.
+  float m = max(c.r, max(c.g, c.b));
+  c *= 1.0 / (1.0 + max(m - 0.90, 0.0) * 0.9);
+
+  // Aerial perspective. uT.w is this tree's depth up the screen; without it a
+  // forest of 900 identical greens has no near and no far and reads as carpet.
   float air = uT.w * uAir.a;
   float gl = dot(c, vec3(0.2126, 0.7152, 0.0722));
   c = mix(c, uAir.rgb * (0.45 + 1.10 * gl), air);
@@ -543,7 +556,11 @@ local function emitBlob(V, I, cx, cy, r, blob, invY, segs, cr, cg, cb, alpha, la
     local oy = sin(a) * rr * blob.sq
     local vr, vg, vb
     if ramp then
-      local rt, gt, bt = rampAt(ramp, tone - oy * invR * 0.95)
+      -- Asymmetric: the underside of a canopy mass goes a long way down the
+      -- ramp, the top only a little way up. Symmetric walks push the crown past
+      -- the brightest stop, and a clipped canopy is a white disc with no form.
+      local d = -oy * invR
+      local rt, gt, bt = rampAt(ramp, tone + (d > 0 and d * 0.30 or d * 1.20))
       vr, vg, vb = rt * hue[1], gt * hue[2], bt * hue[3]
     else
       local k = 0.90 - oy * invR * 0.15
@@ -581,9 +598,9 @@ local LAYER_LAG   = { 0.62, 0.80, 1.00 }
 -- A wider tonal spread between the back, middle and front canopy layers is what
 -- gives a crown depth. At 1.05/2.10/2.92 the three layers were near enough in
 -- value that the canopy read as one mass.
-local LAYER_SHADE = { 0.80, 2.05, 3.15 }
+local LAYER_SHADE = { 0.85, 1.92, 2.48 }
 local LAYER_ALPHA = { 1.00, 1.00, 1.00 }
-local LAYER_RIM   = { 0.12, 0.62, 1.15 }
+local LAYER_RIM   = { 0.06, 0.28, 0.55 }
 local LAYER_PUSH  = { -0.14, 0.0, 0.09 }   -- parallax: back layer up, front layer down
 
 --- Lay the skeleton out at growth `g` and bake it into a mesh.
@@ -825,10 +842,12 @@ function Tree.setViewFromCamera(cam)
   local DN = DayNight
   if DN then
     Tree.setAir(DN.fogColor, TUNE.airDepth * (0.55 + 0.90 * (DN.fogStrength or 0)))
-    -- the dimmer the key, the more work the rim has to do to keep edges in the
-    -- canopy: at midnight it is most of what separates one tree from the next
+    -- The rim is *additive*, so a fixed amount of it counts for far more in a
+    -- dark frame than a bright one: pushed up at night it frosts every canopy
+    -- white and the forest reads as snow. Cool the colour toward the key light,
+    -- but take the strength down as the ambient falls.
     local dark = U.saturate(1 - (DN.ambientStrength or 1))
-    Tree.setKeyRim(DN.sunColor, 0.42 + dark * 0.36, 1 + dark * 1.05)
+    Tree.setKeyRim(DN.sunColor, 0.26 + dark * 0.22, 1 - dark * 0.55)
   end
   -- If nobody set an explicit focus this frame, fall back to what the camera is
   -- looking at: it tracks the player with a little lookahead, so a generous
@@ -908,10 +927,10 @@ function Tree:init(x, y, seed, opts)
   -- axes -- a warm/cool hue rotation and a plain value offset -- are what turn a
   -- carpet back into a canopy of individuals.
   local hj = r:gauss()                 -- + warm ochre  /  - cool blue-green
-  local br = U.clamp(1 + r:gauss() * 0.115, 0.78, 1.20)   -- some trees are darker
-  self.tintR = U.clamp((1 + hj * 0.20) * br, 0.64, 1.32)
-  self.tintG = U.clamp((1 + hj * 0.045 + r:gauss() * 0.035) * br, 0.76, 1.24)
-  self.tintB = U.clamp((1 - hj * 0.20 + r:gauss() * 0.05) * br, 0.58, 1.32)
+  local br = U.clamp(1 + r:gauss() * 0.105, 0.76, 1.12)   -- some trees are darker
+  self.tintR = U.clamp((1 + hj * 0.20) * br, 0.62, 1.20)
+  self.tintG = U.clamp((1 + hj * 0.045 + r:gauss() * 0.035) * br, 0.74, 1.14)
+  self.tintB = U.clamp((1 - hj * 0.20 + r:gauss() * 0.05) * br, 0.56, 1.22)
 
   self.growth   = opts.startGrown and 1 or (opts.growth or 0)
   self.growthMul = 1
@@ -1376,7 +1395,7 @@ function Tree:draw(sunDirX, sunDirY)
       local e = eld / 8
       local rc = e > 0.05 and RIM_GOLD or RIM_KEY
       uRimC[1], uRimC[2], uRimC[3] = rc[1], rc[2], rc[3]
-      uRimC[4] = (TUNE.rimAlpha + e * 0.34) * rimGain
+      uRimC[4] = (TUNE.rimAlpha + e * 0.14) * rimGain
       shTree:send("uRim", uRimC)
     end
     local dk = floor(self.death * 16)

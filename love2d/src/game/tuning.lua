@@ -42,11 +42,12 @@ T.player = {
 
 ------------------------------------------------------------------------ economy
 T.cobalt = {
-  nodeYield      = 4,          -- chunks per deposit
+  nodeYield      = 7,          -- chunks per deposit
   nodeRespawn    = 26,         -- seconds
   nodesAtStart   = 26,
   nodeMax        = 34,
   nodeFloor      = 14,          -- the island always has this many out there
+  chunkValue     = 2,          -- cobalt banked per chunk
   driftSpeed     = 460,        -- fly-to-player speed
   magnetRange    = 90,
   startingCobalt = 30,
@@ -90,7 +91,7 @@ T.bots = {
 
   -- Each bot of a type you already own makes the next one dearer. This is what
   -- stops a runaway workforce, and it is why the cost-cutting chips matter.
-  costGrowth   = 0.2,
+  costGrowth   = 0.14,
   costGrowthMax = 6.0,         -- never more than 4x the base price
 
   downedTime   = 20,           -- seconds a bot survives at 0 hp before expiring
@@ -109,7 +110,7 @@ T.tree = {
   frontierMax    = 4,          -- neighbours within that radius before it stops
   spreadRange   = { 70, 190 },
   spreadReject  = 46,          -- min distance to another tree
-  chewTime      = 5.0,         -- seconds a chomper needs to fell a tree
+  chewTime      = 6.0,         -- seconds a chomper needs to fell a tree
   chewTelegraph = 1.4,         -- warning bite before the timer starts
   o2Sapling     = 0.35,
   o2Mature      = 1.0,
@@ -124,7 +125,13 @@ T.tree = {
 -- falls. That is what makes defending trees legible.
 T.o2 = {
   target      = 100,            -- percent
-  fullForest  = 950,            -- tree-points that read as a fully restored sky
+  -- The sky is full when the island is. Islands vary a lot by seed, so this is
+  -- derived from plantable land rather than being a constant that some seeds
+  -- could never reach: trees-worth of area, clamped so extremes stay sane.
+  fullForest    = 950,          -- fallback when there is no terrain
+  forestPerArea = 1 / 3900,     -- tree-points per square world unit of land
+  forestMin     = 520,
+  forestMax     = 1250,            -- tree-points that read as a fully restored sky
   rise        = 0.42,           -- how fast the reading climbs toward the forest
   fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
   weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 1.5 },
@@ -144,7 +151,7 @@ T.cycle = {
   holdBudget = 1.45,
   nightLen   = { 52, 62, 70, 78, 86, 94, 104 },
   budget     = { 26, 46, 74, 108, 150, 200, 262 },   -- floor for the night's spend
-  budgetPerTree = 0.42,        -- ...plus this much for every tree you have grown
+  budgetPerTree = 0.28,        -- ...plus this much for every tree you have grown
   maxAlive   = { 14, 20, 26, 32, 38, 44, 52 },
   maxAlivePerTree = 0.016,
 }
@@ -170,7 +177,7 @@ T.boss = {
   -- The size of your workforce is the difficulty of the fight, exactly as in the
   -- 2019 original - but the bots only carry about three quarters of it, so the
   -- last stretch is always yours.
-  hpPerBot     = 2.6,
+  hpPerBot     = 2.0,
   hpFloor      = 60,
   rebelCohort  = 8,            -- bots charge in waves, so the sacrifice has rhythm
   rebelEvery   = 2.5,
@@ -180,7 +187,11 @@ T.boss = {
   phase2At     = 0.66,
   phase3At     = 0.33,
   rebelDelay   = 5.0,
-  o2Drain      = 0.42,         -- % of sky the rig takes every second it lives
+  -- The rig always takes the same *share* of whatever sky it found, so a run
+  -- that reached the deadline at 30% still gets a real fight instead of an
+  -- automatic loss.
+  extractWindow = 200,         -- seconds from arrival to an empty sky
+  extractFloor  = 45,          -- the sky it pretends to find, if you had less
   beamCharge   = 1.5,
   beamSweep    = 3.2,
   slamEvery    = 6.0,

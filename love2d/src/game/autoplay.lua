@@ -28,11 +28,16 @@ function A:decide(p, dt)
 
   -- the rig outranks everything: it is draining the sky while we stand here
   local threat = (w.boss and w.boss.alive) and w.boss or w:nearestEnemy(p.x, p.y, 420)
+  -- stand off big things rather than walking into them; the shove out-ranges
+  -- their body, and standing inside the rig is how you get flattened
+  local standOff = threat and (threat.radius or 12) > 40 and 118 or 26
   if threat then
     local d = U.dist(p.x, p.y, threat.x, threat.y)
     self.gx, self.gy = threat.x, threat.y
-    if d < TU.player.shove.range * 0.85 + (threat.radius or 12) then act.shove = true end
+    if d < TU.player.shove.range + (threat.radius or 12) then act.shove = true end
     if d > 240 and self.rng:chance(dt * 1.5) then act.dash = true end
+    -- spend on the pulse when it can reach several things, or the rig
+    if w.cobalt > 20 and d < TU.player.pulse.radius * 0.8 then act.pulse = true end
   else
     -- economy: walk deposits down, shoving to knock chunks loose
     if not self.goal or not self.goal.alive or self.goalT <= 0 then
@@ -58,7 +63,8 @@ function A:decide(p, dt)
   local mx, my = 0, 0
   if self.gx then
     local dx, dy, d = U.norm(self.gx - p.x, self.gy - p.y)
-    if d > 24 then mx, my = dx, dy end
+    if d > standOff then mx, my = dx, dy
+    elseif d < standOff * 0.7 then mx, my = -dx, -dy end
   end
   return mx, my, act
 end

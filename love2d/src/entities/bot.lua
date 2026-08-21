@@ -283,7 +283,7 @@ function Bot:update_harvester(dt)
       tx, ty = w.homeX, w.homeY
     end
     if U.dist(self.x, self.y, tx, ty) < self.def.depositRange then
-      self.world:addCobalt(self.cargo, self.x, self.y)
+      self.world:addCobalt(self.cargo * TU.cobalt.chunkValue, self.x, self.y)
       self.cargo = 0
       Audio.play("deposit_pop", { x = self.x, y = self.y })
       VFX.emit("deposit_pop", self.x, self.y)
@@ -297,7 +297,8 @@ function Bot:update_harvester(dt)
   if node then
     if self:moveToward(node.x, node.y, dt) or U.dist(self.x, self.y, node.x, node.y) < 26 then
       if self.world:consumeCobaltNear(self.x, self.y, 30) then
-        self.cargo = self.cargo + 1 + (self.world.chips and self.world.chips:get("harvestBonus", 0) or 0)
+        self.cargo = self.cargo + 1
+                     + (self.world.chips and self.world.chips:get("harvestBonus", 0) or 0)
         VFX.emit("cobalt_pickup", self.x, self.y)
       end
     end

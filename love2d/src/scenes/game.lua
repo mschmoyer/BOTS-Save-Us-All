@@ -215,14 +215,18 @@ function Game:telemetry(dt)
   local w = self.world
   if not self.telemetryHeader then
     self.telemetryHeader = true
-    print("TRACE,t,cycle,phase,pt,pd,trees,mature,elders,bots,blight,o2,cobalt,nodes,cut,planted,lost,botsLost")
+    print("TRACE,t,cycle,phase,pt,pd,trees,mature,elders,bots,blight,o2,cobalt,nodes,boss,planted,lost,botsLost")
   end
   local nodes = 0
   for i = 1, #w.cobalts do if w.cobalts[i].node then nodes = nodes + 1 end end
   print(string.format("TRACE,%.0f,%d,%s,%.0f,%.0f,%d,%d,%d,%d,%d,%.2f,%d,%d,%s,%d,%d,%d",
     w.time, w.cycle, w.phase, w.phaseT, w.phaseDur, w.treeCount, w.matureTrees or 0,
     w.elderTrees or 0, w:botCount(), #w.enemies, w.o2, w.cobalt, nodes,
-    tostring(w.cutscene), w.stats.planted, w.stats.lost, w.stats.botsLost))
+    w.boss and string.format("%d/%d r%d/%s", w.boss.hp, w.boss.maxHp,
+      (function() local n = 0 for i = 1, #w.bots do
+         if w.bots[i].state == "rebel" then n = n + 1 end end return n end)(),
+      tostring(w.botsRebelled)) or "-",
+    w.stats.planted, w.stats.lost, w.stats.botsLost))
 end
 
 --- Map the world's phase clock onto the visual day/night cycle.
@@ -249,12 +253,8 @@ function Game:draw()
   local world = self.world
   local cam = self.camera
 
-  if Post.setGrade then
-    Post.setGrade(DayNight.skyTint, DayNight.exposure, DayNight.contrast,
-                  DayNight.saturation, DayNight.lift)
-    Post.setBloom(DayNight.bloom)
-    Post.setFog(DayNight.fogColor, DayNight.fogStrength)
-  end
+  -- one call so no part of the grade (split-tone in particular) can be forgotten
+  if DayNight.apply then DayNight.apply(Post, Lighting) end
 
   if Post.beginScene then Post.beginScene() end
 
@@ -272,9 +272,12 @@ function Game:draw()
     Lighting.finish()
   end
 
+  -- Weather sits inside the scene so the grade applies to it; drawn over the
+  -- finished frame it was a flat black rectangle that bypassed the whole chain.
+  require("src.world.weather").drawOverlay()
+
   if Post.endScene then Post.endScene() end
   if Post.render then Post.render() end
-  require("src.world.weather").drawOverlay()
 
   if self.photoHide and self.photoHide > 0 then
     self.photoHide = self.photoHide - 1

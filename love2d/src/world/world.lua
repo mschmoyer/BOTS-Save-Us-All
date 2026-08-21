@@ -78,6 +78,13 @@ function World:init(seed, opts)
   if Tree.prewarm then pcall(Tree.prewarm) end
   if Water.load then pcall(Water.load) end
 
+  -- how much forest this particular island can hold, which is what 100% means
+  self.fullForest = TU.o2.fullForest
+  if self.terrain and self.terrain.landArea then
+    self.fullForest = U.clamp(self.terrain.landArea * TU.o2.forestPerArea,
+                              TU.o2.forestMin, TU.o2.forestMax)
+  end
+
   self.centerX, self.centerY = TU.world.w / 2, TU.world.h / 2
   self:placeHome()
   self:seedCobalt()
@@ -641,6 +648,30 @@ function World:buildDawnReport()
   return r
 end
 
+--- The procession. Cohorts leave on world time so the sacrifice has a rhythm the
+--- player can feel, and every bot gets to make its run.
+function World:updateRebellion(dt)
+  if not self.boss or not self.boss.alive then return end
+  if not self.rebelT then return end
+  self.rebelT = self.rebelT - dt
+  if self.rebelT > 0 then return end
+  self.rebelT = TU.boss.rebelEvery
+
+  if not self.botsRebelled then
+    self.botsRebelled = true
+    Signal.emit("bots:rebel")
+  end
+  local sent = 0
+  for i = 1, #self.bots do
+    local b = self.bots[i]
+    if (b.state == "work" or b.mood == "confused") and sent < TU.boss.rebelCohort then
+      b:rebel(self.boss)
+      sent = sent + 1
+    end
+  end
+  if sent > 0 then Signal.emit("bots:cohort", sent) end
+end
+
 --- The rig finished what it came for.
 function World:fail()
   self.failed = true
@@ -655,41 +686,38 @@ function World:beginExtraction()
   self.phaseT = 0
   self.extractionStage = "arrive"
   Music.setState("boss")
+  -- The ground troops withdraw when the rig lands: this fight is between the
+  -- workforce and the thing that came for the air, and nothing else.
+  for i = 1, #self.enemies do self.enemies[i]:flee() end
+
   local x, y = self.homeX + self.rng:range(-500, 500), self.homeY + self.rng:range(-500, 500)
   if self.terrain and self.terrain.nearestLand then
     local lx, ly = self.terrain:nearestLand(x, y)
     if lx then x, y = lx, ly end
   end
+  -- the fight's clock, scaled so it is always the same length
+  self.bossDrainRate = math.max(TU.boss.extractFloor, self.o2) / TU.boss.extractWindow
   self.boss = Boss.new(x, y, self, self:botCount())
   -- the boss lives in the enemy hash so shoves, pulses and sentry darts find it
   self.hEnemy:insert(self.boss)
   for i = 1, #self.bots do
     local b = self.bots[i]
-    if b.state == "work" then b.mood = "confused" end
+    -- everyone gets up for this, including the ones still on the ground
+    if b.state == "down" then b:revive() end
+    if b.state == "work" then
+      b.mood = "confused"
+      -- nothing gets to take them from you before they choose it themselves
+      b.invuln = 9999
+    end
   end
   Audio.play("rift_open")
   J.shake(1)
   Signal.emit("phase:extraction", self.boss)
 
-  Timer.global:after(TU.boss.rebelDelay, function()
-    if not self.boss or not self.boss.alive then return end
-    self.botsRebelled = true
-    Signal.emit("bots:rebel")
-    -- in cohorts, so the sacrifice is a drumbeat you have time to feel rather
-    -- than a health bar emptying in one frame
-    Timer.global:every(TU.boss.rebelEvery, function()
-      if not self.boss or not self.boss.alive then return end
-      local sent = 0
-      for i = 1, #self.bots do
-        local b = self.bots[i]
-        if (b.state == "work" or b.mood == "confused") and sent < TU.boss.rebelCohort then
-          b:rebel(self.boss)
-          sent = sent + 1
-        end
-      end
-      if sent > 0 then Signal.emit("bots:cohort", sent) end
-    end)
-  end)
+  -- The rebellion runs on world time (World:updateRebellion), not on the global
+  -- real-time timer: the headless harness runs the simulation fast, and a
+  -- procession measured in wall-clock seconds would be left behind by it.
+  self.rebelT = TU.boss.rebelDelay
 end
 
 ------------------------------------------------------------------------ update
@@ -706,6 +734,7 @@ function World:update(dt)
   end
 
   if self.phase == "night" then self.director:update(dt) end
+  if self.phase == "extraction" then self:updateRebellion(dt) end
 
   self:updateOxygen(dt)
 
@@ -806,16 +835,16 @@ end
 --- said the forest is worth, and run the win/lose checks.
 function World:applyOxygen(dt)
   local points = self.forestPoints or 0
-  local raw = TU.o2.target * U.saturate(points / TU.o2.fullForest)
+  local raw = TU.o2.target * U.saturate(points / (self.fullForest or TU.o2.fullForest))
   -- Siphon debt is capped relative to the reading, so a bad night is a real bite
   -- out of your progress but can never erase the whole run's work.
-  self.o2DebtCap = math.min(TU.o2.debtCap, math.max(6, raw * 0.4))
+  self.o2DebtCap = math.min(TU.o2.debtCap, math.max(6, raw * 0.28))
   self.o2Debt = math.min(self.o2DebtCap,
                          math.max(0, (self.o2Debt or 0) - TU.o2.debtRecover * dt))
 
   if self.phase == "extraction" and self.boss and self.boss.alive then
     self.extractionT = (self.extractionT or 0) + dt
-    self.bossDrain = (self.bossDrain or 0) + TU.boss.o2Drain * dt
+    self.bossDrain = (self.bossDrain or 0) + (self.bossDrainRate or 0.4) * dt
   end
   local ideal = raw - self.o2Debt - (self.bossDrain or 0)
   ideal = U.clamp(ideal, 0, TU.o2.target)
@@ -927,6 +956,12 @@ function World:draw(camera)
   local g = love.graphics
 
   if Tree.setViewFromCamera then Tree.setViewFromCamera(camera) end
+  -- exact x-ray target: canopies clear around the player, not the camera
+  if Tree.setFocus and self.player then Tree.setFocus(self.player.x, self.player.y) end
+  if VFX.setViewport then
+    local vx, vy, vw, vh = camera:viewRect(0)
+    VFX.setViewport(vx, vy, vw, vh, 120)
+  end
 
   -- sea first, then the island on top of it, then the foam that laps the shore
   if Water.draw and self.terrain then
@@ -984,6 +1019,16 @@ function World:draw(camera)
     local e = dl[i]
     if e.isTree then e:draw(sx, sy) else e:draw() end
   end
+  if Tree.endPass then Tree.endPass() end
+
+  -- additive canopy rim/backlight, over the trees and under the air particles
+  local prevB = love.graphics.getBlendMode()
+  love.graphics.setBlendMode("add", "alphamultiply")
+  for i = 1, #dl do
+    local e = dl[i]
+    if e.isTree and e.drawCanopyLight then e:drawCanopyLight() end
+  end
+  love.graphics.setBlendMode(prevB)
   if Tree.endPass then Tree.endPass() end
 
   if VFX.draw then VFX.draw("world") end

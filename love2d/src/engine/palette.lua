@@ -22,15 +22,15 @@ P.hex = hex
 -- cool blue-green counterweight, and the two leaf ramps straddle them, so a
 -- forest built from all four never collapses into one olive mass.
 P.ramp = {
-  grass  = { hex "#143a26", hex "#357d42", hex "#66b64f", hex "#b0e768" },
-  moss   = { hex "#0d2b23", hex "#1b5340", hex "#2f8659", hex "#61bd85" },
+  grass  = { hex "#143a26", hex "#357d42", hex "#66b64f", hex "#9ade5c" },
+  moss   = { hex "#0d2b23", hex "#1b5340", hex "#2f8659", hex "#57c48c" },
   soil   = { hex "#261a12", hex "#452e1d", hex "#6b4c2d", hex "#957044" },
   sand   = { hex "#5e4527", hex "#a08049", hex "#d6b374", hex "#f6e2ad" },
-  rock   = { hex "#171f2b", hex "#2e3f55", hex "#54677e", hex "#8a9db2" },
+  rock   = { hex "#161d27", hex "#2b3a4b", hex "#4a5a6b", hex "#7a8b9b" },
   water  = { hex "#031321", hex "#093c5b", hex "#0f86a3", hex "#a9f0f2" },
   bark   = { hex "#26170f", hex "#412b1a", hex "#634427", hex "#8c6339" },
-  leaf   = { hex "#0f3a2a", hex "#1d7047", hex "#37a95a", hex "#7ee06d" },
-  leafHi = { hex "#204527", hex "#428f45", hex "#77cf58", hex "#c8f584" },
+  leaf   = { hex "#0f3a2a", hex "#1d7047", hex "#37a95a", hex "#6ed861" },
+  leafHi = { hex "#204527", hex "#428f45", hex "#77cf58", hex "#a9e95f" },
   metal  = { hex "#1d262e", hex "#4c5f6c", hex "#96abb7", hex "#e2eef4" },
   metalW = { hex "#2b2119", hex "#67543c", hex "#a98c66", hex "#e6d7b4" }, -- warm/brass bots
   -- The blight is a *bruise*, not a sweet. The wide-area stops are near-neutral

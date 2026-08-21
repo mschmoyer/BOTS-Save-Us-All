@@ -19,7 +19,7 @@ function Cobalt:init(x, y, world, rng, isNode)
   self.rng    = rng or U.rng(math.floor(x * 7 + y * 3))
   self.node   = isNode ~= false
   self.radius = self.node and 20 or 9
-  self.left   = self.node and T.nodeYield or 1
+  self.left   = self.node and T.nodeYield or T.chunkValue
   self.shards = {}
   local n = self.node and 5 or 3
   for i = 1, n do

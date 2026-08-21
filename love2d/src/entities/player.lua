@@ -160,7 +160,9 @@ function Player:update(dt, camera)
   end
 
   ------------------------------------------------------------------ pulse
-  if canAct and Input.down("pulse") and self:cobalt() >= self:pulseCost() then
+  local wantPulse = self.agent and (auto and auto.pulse)
+                    or ((not self.agent) and Input.down("pulse"))
+  if canAct and wantPulse and self:cobalt() >= self:pulseCost() then
     if not self.charging then
       self.charging = true
       self.chargeT = 0
