@@ -138,6 +138,19 @@ function Game:bindSignals()
       Screen.push(require("src.scenes.draft"), self.world, report)
     end)
   end, self)
+  -- The standing order has no tutorial step of its own; it is introduced the
+  -- first time the player owns something that could take an order.
+  Signal.on("bot:built", function(b)
+    if self.rallyTold or not b or b.type ~= "planter" then return end
+    self.rallyTold = true
+    Timer.global:after(3.0, function()
+      if HUD.toast then
+        HUD.toast(Input.glyph("rally") .. "   SEND THEM SOMEWHERE",
+                  nil, "plant a flag; they will work toward it", 7)
+      end
+    end)
+  end, self)
+
   Signal.on("world:failed", function()
     Timer.global:after(1.6, function()
       Screen.transition(0.9, function()
