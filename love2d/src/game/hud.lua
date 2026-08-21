@@ -311,7 +311,9 @@ function HUD.init(world)
   -- class -- the world file itself is untouched -- turns every call into a
   -- queue push that this file renders in screen space, after post, knowing
   -- where every readout is.
-  local Wo = Opt.require("src.world.world")
+  -- package.loaded, not require: the UI demos hand this module a stub world and
+  -- must not drag the whole simulation in behind it just to install a hook.
+  local Wo = package.loaded["src.world.world"]
   if Wo and rawget(Wo, "_hudSpeech") == nil then
     Wo._hudSpeech = true
     Wo.drawBubble = function(_, x, y, text, a) HUD.queueSpeech(x, y, text, a) end

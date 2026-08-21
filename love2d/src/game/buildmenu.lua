@@ -104,7 +104,7 @@ local function layout()
   if BAR.sw == sw and BAR.sh == sh then return end
   BAR.sw, BAR.sh = sw, sh
   BAR.slotW = (sw < 1180) and 78 or 92
-  BAR.h     = (sh < 700) and 58 or 66
+  BAR.h     = (sh < 700) and 56 or 66
   BAR.w = N * BAR.slotW + (N - 1) * BAR.gap
   BAR.x = floor((sw - BAR.w) * 0.5)
   BAR.y = sh - UI.pad - BAR.h
@@ -263,14 +263,24 @@ local function drawSlot(i, x, y, w, h, world, a)
             "center", a, 0.04)
   end
 
+  -- The slot's rhythm is measured up from its own bottom edge, not down from
+  -- the top: the cost used to be laid out at a fixed offset and sat on top of
+  -- the underline, and on a short viewport it ran off the plate entirely.
+  local compact = h < 62                    -- phone landscape: the name goes
+  local costTop  = y + h - 22
+  local labelTop = y + h - 34
+  local glyphCy  = y + ((compact and (h - 22) or (h - 34)) * 0.5) + 3
+
   -- silhouette
-  HUD.botGlyph(id, x + w * 0.5, y + 27, 13,
+  HUD.botGlyph(id, x + w * 0.5, glyphCy, compact and 12 or 13,
                afford and P.ramp.metal[3] or P.inkFaint, (afford and 1 or 0.45) * a)
 
   -- name
-  UI.caption(def.label, x + w * 0.5, y + h - 24, UI.ts.micro,
-             UI.c(afford and P.ink or P.inkFaint, (afford and 0.92 or 0.5) * a),
-             "center", nil, 1)
+  if not compact then
+    UI.caption(def.label, x + w * 0.5, labelTop, UI.ts.micro,
+               UI.c(afford and P.ink or P.inkFaint, (afford and 0.92 or 0.5) * a),
+               "center", nil, 1)
+  end
 
   -- Cost, and how close you are to it when you are not there yet. Deliberately
   -- *not* red: six red numerals along the bottom of the screen the moment you
@@ -281,8 +291,8 @@ local function drawSlot(i, x, y, w, h, world, a)
   local cw = Text.measure(itos(cost), UI.ts.small, nil)
   local cxx = x + w * 0.5 - (cw + 13) * 0.5
   Draw.setColor(UI.c(afford and P.ramp.cobalt[3] or P.inkFaint, (afford and 1 or 0.6) * a))
-  Draw.diamond(cxx + 4, y + h - 8, 3.2, 4.2, "fill")
-  UI.text(itos(cost), cxx + 12, y + h - 14, UI.ts.small,
+  Draw.diamond(cxx + 4, costTop + 8, 3.2, 4.2, "fill")
+  UI.text(itos(cost), cxx + 12, costTop, UI.ts.small,
           UI.c(costCol, (afford and 1 or 0.7) * a), "left", a, 0.02)
 
   -- the bottom edge: an accent underline when you can build it, a cobalt

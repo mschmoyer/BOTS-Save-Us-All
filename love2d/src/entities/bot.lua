@@ -88,7 +88,7 @@ end
 
 function Bot:say(phase)
   if not self.world or not self.world.speak then return end
-  self.world:speak(self, Names.line(phase, self.rng, self.world.treeCount or 0))
+  self.world:speak(self, Names.line(phase, self.rng, self.world.treeCount or 0, self.trait))
 end
 
 function Bot:lookAt(x, y)

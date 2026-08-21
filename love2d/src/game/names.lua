@@ -118,9 +118,24 @@ function N.trait(rng)
   return rng and rng:pick(N.traits) or N.traits[math.random(#N.traits)]
 end
 
-function N.line(phase, rng, count)
+--- A line from `phase`'s pool. `trait` biases *which half* of the pool a bot
+--- draws from, so an ANXIOUS one and a PROUD one sound like different machines
+--- reading the same script - which is what the traits were for.
+function N.line(phase, rng, count, trait)
   local pool = N.chatter[phase] or N.chatter.day
-  local s = rng and rng:pick(pool) or pool[math.random(#pool)]
+  local n = #pool
+  local s
+  if trait and n >= 6 then
+    -- each trait gets a stable window over the pool, wide enough to overlap its
+    -- neighbours so nobody sounds like a single stuck sentence
+    local idx = 0
+    for i = 1, #N.traits do if N.traits[i].id == trait.id then idx = i break end end
+    local span = math.max(4, math.floor(n * 0.55))
+    local base = math.floor((idx - 1) / math.max(1, #N.traits) * (n - span))
+    local pick = rng and rng:int(1, span) or math.random(span)
+    s = pool[math.min(n, base + pick)]
+  end
+  s = s or (rng and rng:pick(pool) or pool[math.random(n)])
   if s:find("%%d") then s = s:format(count or 0) end
   return s
 end

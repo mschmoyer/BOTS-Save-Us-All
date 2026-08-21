@@ -167,20 +167,30 @@ local function statColor(key, v)
   return P.ink
 end
 
+--- Two type scales: the full one, and a compressed one for a phone-landscape
+--- viewport, where a 74 px heading and 36 px numerals leave no room at all for
+--- the three cards that are the point of the screen.
+function S:sizes()
+  local h = lg.getHeight()
+  if h < 680 then return UI.ts.h1, UI.ts.h3, UI.ts.h3, 38, 80 end
+  return UI.ts.mega, UI.ts.h2, UI.ts.h2, 50, 98
+end
+
 function S:drawTally(x, y, w, a)
   local r = self.report
   local t = self.t
+  local head, stat = self:sizes()
 
   -- heading
   local hk = UI.stagger(t, 1, SEQ.head, 0, 0.55, U.ease.outExpo)
-  UI.text("DAWN", x + (1 - hk) * -16, y, UI.ts.mega, UI.c(P.ink, a * hk), "left",
+  UI.text("DAWN", x + (1 - hk) * -16, y, head, UI.c(P.ink, a * hk), "left",
           a * hk, U.lerp(0.34, 0.04, hk))
-  UI.caption("CYCLE " .. tostring(r.cycle or 1) .. " SURVIVED", x, y + UI.ts.mega + 12,
+  UI.caption("CYCLE " .. tostring(r.cycle or 1) .. " SURVIVED", x, y + head + 12,
              UI.ts.micro, UI.c(P.ramp.ember[4], 0.95 * a * hk), "left")
 
   -- the four numbers, one cell each, all left-aligned on the same grid so the
   -- numerals stack in a column the eye can run down
-  local sy = y + UI.ts.mega + 44
+  local sy = y + head + 44
   UI.rule(x, sy, w, P.ink, 0.14 * a, P.ramp.ember[4])
   local cells = {
     { "PLANTED", tostring(floor(r.planted or 0)) },
@@ -192,7 +202,7 @@ function S:drawTally(x, y, w, a)
   for i = 1, 4 do
     local k = UI.stagger(t, i, SEQ.stats, SEQ.statStep, 0.42)
     local key, val = cells[i][1], cells[i][2]
-    UI.stat(x + (i - 1) * cellW, sy + 20 + (1 - k) * 8, key, val, UI.ts.h2,
+    UI.stat(x + (i - 1) * cellW, sy + 20 + (1 - k) * 8, key, val, stat,
             statColor(key, tonumber(val) or 0), "left", a * k)
   end
 
@@ -201,7 +211,7 @@ function S:drawTally(x, y, w, a)
   local d = r.o2Delta or 0
   local sign = d >= 0 and "+" or "-"
   UI.stat(x + 4 * cellW, sy + 20 + (1 - k5) * 8, "OXYGEN",
-          Text.format(r.o2 or 0, { decimals = 1, suffix = "%" }), UI.ts.h2,
+          Text.format(r.o2 or 0, { decimals = 1, suffix = "%" }), stat,
           P.o2, "left", a * k5,
           sign .. Text.format(abs(d), { decimals = 1 }),
           d >= 0 and P.accent or P.danger)
@@ -228,7 +238,7 @@ function S:drawNames(x, y, w, a)
   UI.caption("DID NOT COME BACK", x + w, y, UI.ts.micro,
              UI.c(P.danger, 0.95 * a * k0), "right")
   local shown = min(n, 5)
-  local size, step = UI.ts.h2, 50
+  local _, _, size, step = self:sizes()
   for i = 1, shown do
     local k = UI.stagger(t, i, SEQ.names, SEQ.nameStep, 0.5, U.ease.outExpo)
     if k > 0.002 then
@@ -336,10 +346,11 @@ function S:draw()
   -- frame and ran into the tally on a phone-landscape one; this fills the first
   -- and fits the second.
   local n = #self.offers
-  local topY = headY + UI.ts.mega + 44 + 84
+  local head, _, _, _, statBlock = self:sizes()
+  local topY = headY + head + 44 + statBlock
   local botY = h - UI.pad - 64
   local gap = 40
-  local fit = U.clamp((botY - topY) / CARD_H, 0.68, 1.18)
+  local fit = U.clamp((botY - topY) / CARD_H, 0.52, 1.18)
   fit = min(fit, (w - fx * 2) / (n * CARD_W + (n - 1) * gap))
   gap = gap * fit
   local cw2 = CARD_W * fit

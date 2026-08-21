@@ -541,6 +541,8 @@ end
 
 local SPEECH_MAX = 3
 function World:speak(who, line)
+  -- one rule, everywhere: nobody talks over a cutscene
+  if self.cutscene then return end
   -- A forest of forty bots all talking is noise. Keep a few, prefer the ones
   -- nearest the player, and never let the same bot double up.
   for i = #self.speeches, 1, -1 do
@@ -853,7 +855,11 @@ end
 --- said the forest is worth, and run the win/lose checks.
 function World:applyOxygen(dt)
   local points = self.forestPoints or 0
-  local raw = TU.o2.target * U.saturate(points / (self.fullForest or TU.o2.fullForest))
+  -- Eased, not linear: a linear reading sits at 3% ninety seconds in, which
+  -- tells a new player they are in for a fifty-minute grind. The curve pays the
+  -- first saplings visibly and makes the last stretch the hard one.
+  local frac = U.saturate(points / (self.fullForest or TU.o2.fullForest))
+  local raw = TU.o2.target * frac ^ 0.78
   -- Siphon debt is capped relative to the reading, so a bad night is a real bite
   -- out of your progress but can never erase the whole run's work.
   self.o2DebtCap = math.min(TU.o2.debtCap, math.max(6, raw * 0.28))

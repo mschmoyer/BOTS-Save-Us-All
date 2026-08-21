@@ -91,7 +91,7 @@ local TUNE = {
   shadowSquash  = 0.34,   -- vertical flattening of the projected canopy
   airDepth      = 0.34,   -- peak aerial-perspective blend at the top of the view
   xrayRadius    = 96,     -- world units around the focus a canopy must clear
-  xrayAlpha     = 0.55,   -- how much alpha an occluding canopy gives up
+  xrayAlpha     = 0.88,   -- how much alpha an occluding canopy gives up
   xrayRate      = 8.0,    -- fade in/out speed, 1/seconds
 
   chewSag       = 0.13,   -- radians of lean a fully chewed tree droops

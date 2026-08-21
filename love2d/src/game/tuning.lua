@@ -11,7 +11,7 @@ T.world = {
 
 ------------------------------------------------------------------------ player
 T.player = {
-  radius        = 15,
+  radius        = 17,
   accel         = 2600,
   maxSpeed      = 300,
   friction      = 12,          -- per-second damping rate
