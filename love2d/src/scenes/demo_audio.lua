@@ -166,6 +166,7 @@ local function renderMusic(state, secs, opts)
   local realPlay = Audio.playMusic
   local clock = 0
   Audio.playMusic = function(inst, st, o)
+    local semis = st
     local entry = Audio.music[inst]
     if not entry then return nil end
     local nv = #entry.data
@@ -180,7 +181,7 @@ local function renderMusic(state, secs, opts)
     end
     events[#events + 1] = { inst = inst, vi = vi, ratio = ratio * ((o and o.pitch) or 1),
                             t = clock, vol = (o and o.volume or 1) * (entry.def.gain or 0.7),
-                            pan = (o and o.pan) or 0 }
+                            pan = (o and o.pan) or 0, step = Music.M.curStep, semis = semis }
     return { dead = false }
   end
 
@@ -215,7 +216,41 @@ local function renderMusic(state, secs, opts)
   end
   out:dcBlock()
   local pk = out:peak()
-  print(string.format("music '%s' notes=%d peak(pre)=%.3f", state, #events, pk))
+
+  -- Per-instrument contribution, in dB relative to the whole mix. A score is a
+  -- balance, not a pile: this is the only way to see whether the tune is
+  -- actually audible over the bass and the drums or merely present in the data.
+  local byInst, order = {}, {}
+  for i = 1, #events do
+    local e = events[i]
+    if not byInst[e.inst] then byInst[e.inst] = 0 order[#order + 1] = e.inst end
+    byInst[e.inst] = byInst[e.inst] + e.vol * e.vol
+  end
+  table.sort(order, function(a, b) return byInst[a] > byInst[b] end)
+  local total = 0
+  for _, k in pairs(byInst) do total = total + k end
+  local mixLine = {}
+  for i = 1, #order do
+    mixLine[#mixLine + 1] = string.format("%s %+.1f", order[i]:sub(1, 4),
+      10 * math.log(byInst[order[i]] / max(1e-9, total)) / math.log(10))
+  end
+
+  -- Theme determinism: the tune must land on the same steps with the same
+  -- pitches every four-bar phrase. This is the check the 2019 sequencer would
+  -- have failed -- its melody was three coin tosses a bar.
+  local phrase, ok, seen = {}, true, 0
+  for i = 1, #events do
+    local e = events[i]
+    if e.inst == "bell" and e.step then
+      local key = e.step % Music.phraseSteps
+      if phrase[key] == nil then phrase[key] = e.semis
+      else seen = seen + 1 if phrase[key] ~= e.semis then ok = false end end
+    end
+  end
+
+  print(string.format("music '%s' notes=%d peak=%.3f | mix %s | theme repeats=%d %s",
+        state, #events, pk, table.concat(mixLine, " "), seen,
+        seen == 0 and "(single phrase)" or (ok and "IDENTICAL" or "DRIFTED")))
   if pk > 0.98 then out:gain(0.98 / pk) end
   return out
 end

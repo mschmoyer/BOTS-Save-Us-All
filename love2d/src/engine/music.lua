@@ -58,13 +58,13 @@ local STATES = {
     -- is *busier* than the day rather than merely lower.
     mode = "aeolian", root = 2, bpm = 96, barsPerChord = 1,
     prog = { 1, 6, 7, 5 },
-    layers = { pad = 0.7, bass = 0.75, arp = 0.6, bell = 0.55, perc = 0.85, choir = 0 },
+    layers = { pad = 0.7, bass = 0.75, arp = 0.6, bell = 0.75, perc = 0.75, choir = 0 },
     density = 0.95,
   },
   boss = {
     mode = "phrygianDominant", root = 1, bpm = 104, barsPerChord = 1,
     prog = { 1, 2, 1, 7 },      -- the b2 leaning on the tonic: threat, not menace-by-volume
-    layers = { pad = 0.6, bass = 0.8, arp = 0.8, bell = 0.55, perc = 0.8, choir = 0.85 },
+    layers = { pad = 0.6, bass = 0.75, arp = 0.8, bell = 0.6, perc = 0.7, choir = 1.0 },
     density = 1.0,
   },
   draft = {
@@ -133,7 +133,7 @@ end
 -- Per-layer output trim. The score used to run 12 dB louder at the boss than in
 -- the day purely because the bass and kick were sub-heavy; these keep the states
 -- inside a range one music-bus fader can serve.
-local TRIM = { pad = 1.05, bass = 0.55, arp = 1.0, bell = 1.2, perc = 0.62, choir = 0.95 }
+local TRIM = { pad = 1.05, bass = 0.55, arp = 1.0, bell = 1.2, perc = 0.58, choir = 1.15 }
 
 --------------------------------------------------------------------- state
 local M = {
@@ -145,6 +145,7 @@ local M = {
   playing = false,
 
   clock = 0,          -- seconds since start
+  curStep = 0, phraseStep = 0,
   beat = 0,           -- fractional beats
   step = 0,           -- 16th index since start
   bar = 0, beatInBar = 0, stepInBar = 0,
@@ -292,6 +293,7 @@ end
 local function stepTick(step)
   local sib = step % 16                     -- step in bar
   local sip = step % PHRASE                 -- step in the four-bar phrase
+  M.curStep, M.phraseStep = step, sip       -- exposed for the debug view
   local barInPhrase = floor(sip / 16)       -- 0..3
   local g = M.gains
   local d = M.def
@@ -321,8 +323,8 @@ local function stepTick(step)
   if live("choir") and sib == 0 then
     if boss then
       if barInPhrase >= 2 then
-        note("choir", tones[2] + 12, { volume = g.choir * TRIM.choir * 0.8, pan = -0.25 })
-        note("choir", tones[1], { volume = g.choir * TRIM.choir * 0.7, pan = 0.3 })
+        note("choir", tones[2] + 12, { volume = g.choir * TRIM.choir * 0.9, pan = -0.25 })
+        note("choir", tones[1] + 12, { volume = g.choir * TRIM.choir * 0.8, pan = 0.3 })
       end
     else
       note("choir", tones[2] + 12, { volume = g.choir * TRIM.choir * 0.8, pan = -0.25 })
@@ -334,7 +336,7 @@ local function stepTick(step)
     local t = THEME[idx]
     if t and t[4] > 0.8 then
       note("choir", M.root + semisOf(t[2]) + 12,
-           { volume = g.choir * TRIM.choir * 0.5 * t[4], pan = 0.15 })
+           { volume = g.choir * TRIM.choir * 0.75 * t[4], pan = 0.15 })
     end
   end
 
@@ -496,9 +498,12 @@ function Music.debug()
     gains = M.gains, targets = M.targets, layers = LAYERS,
     intensity = M.intensity, o2 = M.o2, cycle = M.cycle,
     playing = M.playing, notes = M.lastNotes, pending = M.pending,
+    phraseStep = M.phraseStep, theme = THEME, phrase = PHRASE,
   }
 end
 
+Music.theme = THEME
+Music.phraseSteps = PHRASE
 Music.layerNames = LAYERS
 Music.stateNames = { "title", "day", "dusk", "night", "boss", "draft", "ending" }
 

@@ -139,7 +139,7 @@ function Player:update(dt, camera)
   self.mineT = (self.mineT or 0) - dt
   if self.world and self.mineT <= 0 then
     if self.world:consumeCobaltNear(self.x, self.y, self.radius + T.carry.pickupRange, true) then
-      self.mineT = 0.42
+      self.mineT = T.mineEvery
       self.squash = 0.94
     end
   end

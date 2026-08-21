@@ -427,17 +427,9 @@ function World:coneShove(x, y, angle, half, range, force, damage, stun)
     end
     if moved then hits = hits + 1 end
   end)
-  -- shoving also knocks cobalt loose from deposits: the verb does double duty
-  self.hCobalt:each(x, y, range, function(c)
-    if c.alive and c.node and U.inCone(c.x, c.y, x, y, angle, half, range + c.radius) then
-      if c:mine() then
-        local loose = CobaltE.new(c.x, c.y, self, self.rng, false)
-        loose:push(c.x - x, c.y - y, 180)
-        self:addEntity(self.cobalts, self.hCobalt, loose)
-        hits = hits + 1
-      end
-    end
-  end)
+  -- The shove used to mine deposits too, which made "hold E" the right answer to
+  -- every situation in the game. Mining is standing on a deposit now: stationary,
+  -- committed, and a job a Harvester can do for you while you fight.
   if hits > 0 and self.chips:has("recoil") then self:addCobalt(1, x, y) end
   return hits
 end

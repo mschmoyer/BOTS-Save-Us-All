@@ -36,7 +36,8 @@ T.player = {
   },
   plant  = { cost = 3, cooldown = 2.4 },
   carry  = { speedMul = 0.66, pickupRange = 34 },
-  lamp   = { radius = 190, warm = 0.85 },
+  mineEvery = 0.55,            -- seconds per chunk while standing on a deposit
+  lamp   = { radius = 310, warm = 1.0 },   -- the pool you actually work inside at night
 }
 
 ------------------------------------------------------------------------ economy

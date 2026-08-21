@@ -29,7 +29,7 @@ local Audio  = Opt.require("src.engine.audio")
 
 local lg = love.graphics
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
-local cos, sin, pi = math.cos, math.sin, math.pi
+local cos, sin, pi, atan2 = math.cos, math.sin, math.pi, math.atan2
 local TAU = U.TAU
 
 local HUD = {}
@@ -763,6 +763,62 @@ function HUD.speechBubble(x, y, text, alpha)
 end
 
 ----------------------------------------------------------------------- draw
+------------------------------------------------------------------- player pip
+-- Drawn in screen space, after everything in the world, so a canopy can never
+-- hide you from yourself. It fades up only when there is something to hide
+-- behind, so open ground stays clean.
+local pipFade = 0
+local function drawPlayerPip(w, cam, a)
+  local p = w.player
+  if not p or not cam then return end
+  local cover = 0
+  if w.hTree then
+    w.hTree:each(p.x, p.y - 30, 70, function(t)
+      if t.alive and t.y > p.y - 90 then cover = cover + 1 end
+    end)
+  end
+  local want = (p.state == "down") and 1 or min(1, cover / 3)
+  pipFade = U.damp(pipFade, want, 7, love.timer.getDelta())
+  if pipFade < 0.02 then return end
+
+  local sx, sy = cam:toScreen(p.x, p.y - p.radius * 2.6)
+  local bob = sin(HUD.time * 3.2) * 3
+  local col = p.state == "down" and P.danger or P.accent
+  Draw.setColor(P.black, 0.35 * pipFade * a)
+  Draw.chevron(sx, sy + bob + 1.5, 11, pi * 0.5, 4, 0.8)
+  Draw.setColor(col, 0.9 * pipFade * a)
+  Draw.chevron(sx, sy + bob, 11, pi * 0.5, 3, 0.8)
+end
+
+------------------------------------------------------------------ off-screen threats
+-- A tree being eaten off the edge of the screen was previously only visible on
+-- the minimap. These point at it.
+local function drawChewMarkers(w, cam, a)
+  if not cam or w.phase == "day" and (w.enemies == nil or #w.enemies == 0) then return end
+  local sw, sh = lg.getDimensions()
+  local cx, cy = sw * 0.5, sh * 0.5
+  local m = min(sw, sh) * 0.5 - 54
+  local shown = 0
+  for i = 1, #w.enemies do
+    local e = w.enemies[i]
+    if shown >= 4 then break end
+    local urgent = e.alive and not e.fleeing and (e.chewT and e.chewT > 0 or e.type == "maw")
+    if urgent and not cam:visible(e.x, e.y, -40) then
+      local sx, sy = cam:toScreen(e.x, e.y)
+      local dx, dy = sx - cx, sy - cy
+      local len = max(1, (dx * dx + dy * dy) ^ 0.5)
+      local ex, ey = cx + dx / len * m, cy + dy / len * m
+      local ang = atan2(dy, dx)
+      local puls = 0.55 + 0.45 * sin(HUD.time * 6 + i)
+      Draw.setColor(P.danger, 0.75 * puls * a)
+      Draw.chevron(ex, ey, 13, ang, 3, 0.85)
+      Draw.setColor(P.danger, 0.2 * puls * a)
+      lg.circle("fill", ex, ey, 17)
+      shown = shown + 1
+    end
+  end
+end
+
 --------------------------------------------------------------------- boss bar
 -- The most affecting readout in the game: during the rebellion this drops one
 -- notch per bot, and the player can watch what each of them bought.
@@ -833,6 +889,8 @@ function HUD.draw(w, cam)
   drawCycleDial(w, a)
   drawHearts(w, a)
   drawRoster(w, a)
+  drawPlayerPip(w, cam, a)
+  drawChewMarkers(w, cam, a)
   drawBossBar(w, a)
   drawFeed(a)
 

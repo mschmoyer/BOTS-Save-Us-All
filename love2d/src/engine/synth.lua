@@ -665,14 +665,20 @@ function Buf:limit(ceiling, lookSec)
     while dq[head] < i do head = head + 1 end
     g[i] = need[dq[head]]
   end
+  -- The smoother has to *finish* inside the look-ahead window, otherwise the
+  -- gain is still on its way down when the peak arrives and the ceiling leaks:
+  -- four time constants per window, and a hard floor at the instantaneous
+  -- requirement so the ceiling is a guarantee rather than an aspiration.
   local cur = 1
-  local atk = 1 - exp(-1 / max(1, look))
+  local atk = 1 - exp(-4.6 / max(1, look))
   local rel = 1 - exp(-1 / max(1, look * 8))
   for i = 1, n do
     local t = g[i]
     cur = cur + (t - cur) * ((t < cur) and atk or rel)
-    L[i] = L[i] * cur
-    if R then R[i] = R[i] * cur end
+    local a = cur
+    if need[i] < a then a = need[i] end
+    L[i] = L[i] * a
+    if R then R[i] = R[i] * a end
   end
   return self
 end
