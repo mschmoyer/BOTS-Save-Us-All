@@ -150,11 +150,17 @@ function Stub:update(dt)
   end
 end
 
-local function depth(e) return (e.sortKey and e:sortKey()) or (e.y + (e.z or 0)) end
+local function depth(e)
+  if e.sortKey then return e:sortKey() end
+  local z = e.z
+  return e.y + (type(z) == "number" and z or 0)
+end
 
 function Stub:draw(cam)
   self.camera = cam
-  local vx, vy, vw, vh = cam:viewRect(120)
+  -- the cutscene camera works in offsets, which viewRect does not know about
+  local vx, vy, vw, vh = cam:viewRect(260)
+  vx, vy = vx - (cam.offX or 0), vy - (cam.offY or 0)
 
   Draw.setColor(P.shade(P.ramp.grass, 1.85))
   lg.rectangle("fill", vx, vy, vw, vh)
@@ -240,6 +246,7 @@ end
 ------------------------------------------------------------------------- scene
 function D:enter()
   local w, h = lg.getDimensions()
+  if VFX.init then VFX.init() end
   self.world = Stub.new()
   self.camera = Camera.new(w, h)
   self.camera:snapTo(self.world.player.x, self.world.player.y - 20)
@@ -294,6 +301,9 @@ function D:selfTest()
   queued = #Story.pending
   Dialogue.abort()
   Story.reset()
+  for i = #w.speeches, 1, -1 do w.speeches[i] = nil end
+  w.flags = {}
+  w.cutscene = false
   self.testLine = string.format("director: prologue %s, queue %d, tutorial %d steps",
                                 fired and "fired" or "STALLED", queued, #Story.tutorialSteps)
   print(self.testLine)
@@ -318,6 +328,19 @@ function D:goTo(i)
   if s.kind == "beat" then
     Story.world = w
     Story.force(s.id, ctxFor(w, s.id))
+    self:runUpToFirstLine()
+  end
+end
+
+--- Slots are short. Run the camera moves and the silences off-screen so the
+--- capture always lands on a spoken line.
+function D:runUpToFirstLine()
+  for _ = 1, 600 do
+    local h = Dialogue.current()
+    if not h or h.done then return end
+    local st = h.step
+    if st and st.kind == "line" and (h.lineText or "") ~= "" then return end
+    Dialogue.update(1 / 60, 1 / 60)
   end
 end
 
@@ -398,8 +421,8 @@ function D:drawLabel()
   UI.text(s.title, x + 14, y + 28, 19, P.accent, "left", 1, 0.1)
 
   local prog = U.saturate(self.slotT / self.slice)
-  Draw.setColor(P.accent, 0.5)
-  lg.rectangle("fill", x, y + 60, 340 * prog, 2)
+  Draw.setColor(P.accent, 0.45)
+  lg.rectangle("fill", x + 1, y + 58, (340 - 2) * prog, 2)
 
   if self.testLine then
     UI.caption(self.testLine, x, h - 26, 10, P.inkFaint, "left", 0.7)

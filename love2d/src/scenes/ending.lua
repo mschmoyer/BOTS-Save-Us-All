@@ -131,6 +131,7 @@ function S:enter(world)
   if world then world.camera = self.camera end
   if self.camera.setBounds then self.camera:setBounds(0, 0, TU.world.w, TU.world.h) end
 
+  if VFX.init then VFX.init() end
   if Post.init then Post.init(w, h) end
   if Lighting.init then Lighting.init(w, h) end
 

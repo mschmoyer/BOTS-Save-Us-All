@@ -201,6 +201,7 @@ function Game:draw()
 
   if Post.endScene then Post.endScene() end
   if Post.render then Post.render() end
+  require("src.world.weather").drawOverlay()
 
   if HUD.draw then HUD.draw(world, cam) end
   if BuildMenu.draw then BuildMenu.draw(cam) end

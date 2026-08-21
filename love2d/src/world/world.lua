@@ -18,6 +18,7 @@ local Enemy      = require("src.entities.enemy")
 local CobaltE    = require("src.entities.cobalt")
 local Projectile = require("src.entities.projectile")
 local Boss       = require("src.entities.boss")
+local HomeRig    = require("src.entities.homerig")
 
 local Terrain  = Opt.require("src.world.terrain")
 local Tree     = Opt.require("src.entities.tree")
@@ -30,6 +31,7 @@ local Draw     = Opt.require("src.engine.draw")
 local DayNight = Opt.require("src.engine.daynight")
 local Lighting = Opt.require("src.engine.lighting")
 local Water    = Opt.require("src.world.water")
+local Weather  = require("src.world.weather")
 
 local World = Class("World")
 
@@ -89,7 +91,8 @@ function World:placeHome()
     if hx then x, y = hx, hy end
   end
   self.homeX, self.homeY = x, y
-  self.player = Player.new(x, y + 20, self)
+  self.rig = HomeRig.new(x, y, self)
+  self.player = Player.new(x, y + 64, self)
 end
 
 function World:seedCobalt()
@@ -564,6 +567,8 @@ end
 function World:update(dt)
   self.time = self.time + dt
   if Wind.update then Wind.update(dt) end
+  Weather.update(dt, self)
+  self.raining = Weather.isRaining()
   if self.terrain and self.terrain.update then self.terrain:update(dt) end
 
   if self.phase ~= "extraction" and self.phase ~= "ending" and not self.cutscene then
@@ -575,6 +580,7 @@ function World:update(dt)
 
   self:updateOxygen(dt)
 
+  if self.rig then self.rig:update(dt) end
   if self.player then self.player:update(dt, self.camera) end
   sweep(self.trees, self.hTree, dt)
   sweep(self.bots, self.hBot, dt)
@@ -654,7 +660,7 @@ function World:updateSpread(dt)
   local budget = math.min(n, 48)
   local i = self.spreadCursor or 1
   local rng = self.rng
-  local rainMul = self.raining and (self.chips:has("rainMemory") and 2 or 1.5) or 1
+  local rainMul = Weather.growthBonus(self.chips:has("rainMemory"))
   local chipMul = self.chips:get("spreadRate", 1)
   local growMul = self.chips:get("growRate", 1)
 
@@ -743,6 +749,7 @@ function World:draw(camera)
       if e.alive and e.drawShadow and camera:visible(e.x, e.y, 120) then e:drawShadow() end
     end
   end
+  if self.rig then self.rig:drawShadow() end
   if self.player then self.player:drawShadow() end
   if self.boss and self.boss.alive then self.boss:drawShadow() end
 
@@ -762,6 +769,7 @@ function World:draw(camera)
       if e.alive and camera:visible(e.x, e.y, 140) then addDraw(dl, e) end
     end
   end
+  if self.rig then addDraw(dl, self.rig) end
   if self.player then addDraw(dl, self.player) end
   if self.boss and self.boss.alive then addDraw(dl, self.boss) end
   table.sort(dl, bySortKey)
@@ -824,6 +832,7 @@ end
 --- Register every light in the world with the lighting system.
 function World:emitLights(Light)
   if self.player and self.player.emitLight then self.player:emitLight(Light) end
+  if self.rig then self.rig:emitLight(Light) end
   local cam = self.camera
   local lists = { self.bots, self.enemies, self.cobalts }
   for l = 1, #lists do

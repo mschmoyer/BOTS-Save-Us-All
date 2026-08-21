@@ -96,11 +96,11 @@ function Cobalt:draw()
     if self.node and i > math.max(1, self.left) then break end
     local x, y = math.cos(s.a) * s.d, math.sin(s.a) * s.d * 0.6
     Draw.setColor(P.shade(P.ramp.cobalt, 1.6))
-    Draw.diamond(x, y + s.s * 0.35, s.s * 0.95, s.s * 0.6, s.rot)
+    Draw.diamond(x, y + s.s * 0.35, s.s * 0.95, s.s * 0.6, "fill")
     Draw.setColor(P.shade(P.ramp.cobalt, 2.6 + shimmer * 0.6))
-    Draw.diamond(x, y, s.s, s.s * 1.5, s.rot)
+    Draw.diamond(x, y, s.s, s.s * 1.5, "fill")
     Draw.setColor(P.shade(P.ramp.cobalt, 4), 0.55 + shimmer * 0.45)
-    Draw.diamond(x - s.s * 0.16, y - s.s * 0.3, s.s * 0.34, s.s * 0.6, s.rot)
+    Draw.diamond(x - s.s * 0.16, y - s.s * 0.3, s.s * 0.34, s.s * 0.6, "fill")
   end
   g.pop()
   Draw.glow(self.x, self.y, self.radius * (1.7 + shimmer * 0.4), P.ramp.cobalt[3], 0.28)

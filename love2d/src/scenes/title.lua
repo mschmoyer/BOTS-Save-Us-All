@@ -130,9 +130,9 @@ local function build(w, h)
   -- a silhouette, and each sits low enough that the land is three readable
   -- bands rather than one black slab.
   local specs = {
-    { base = BG.horizon + h * 0.030, amp = h * 0.105, shade = 0.42, tilt = -h * 0.030 },
-    { base = BG.horizon + h * 0.110, amp = h * 0.130, shade = 0.64, tilt =  h * 0.045 },
-    { base = BG.horizon + h * 0.235, amp = h * 0.150, shade = 0.84, tilt = -h * 0.055 },
+    { base = BG.horizon + h * 0.045, amp = h * 0.090, shade = 0.34, tilt = -h * 0.030 },
+    { base = BG.horizon + h * 0.135, amp = h * 0.115, shade = 0.56, tilt =  h * 0.045 },
+    { base = BG.horizon + h * 0.250, amp = h * 0.140, shade = 0.78, tilt = -h * 0.055 },
   }
   for i = 1, 3 do
     local sp = specs[i]
@@ -166,6 +166,9 @@ local function drawSky(t, a)
   UI.vgrad(0, 0, w, hz * 0.52, P.ramp.rift[1], P.tod.night.fog, a, a)
   UI.vgrad(0, hz * 0.52, w, hz * 0.30, P.tod.night.fog, P.tod.dusk.fog, a, a * 0.92)
   UI.vgrad(0, hz * 0.82, w, hz * 0.18 + 2, P.tod.dusk.fog, P.ramp.ember[3], a * 0.92, a)
+  -- the ground plane the ridges stand on. Nothing may ever show the clear
+  -- colour between the horizon and the first crest.
+  UI.vgrad(0, hz, w, h - hz, P.ramp.ember[3], P.tod.dusk.fog, a, a * 0.75)
 end
 
 local function drawStars(t, a)
@@ -260,7 +263,7 @@ local function drawRidge(r, t, a, k)
   UI.vgrad(0, r.base - h * 0.10 + drop0, BG.w, h * 0.115,
            P.tod.dusk.fog, P.ramp.ember[3], 0, 0.20 * a * (1 - r.shade))
   local top = UI.mix(P.tod.dusk.fog, P.black, r.shade)
-  local bot = UI.mix(P.tod.dusk.fog, P.black, min(1, r.shade + 0.26))
+  local bot = UI.mix(P.tod.dusk.fog, P.black, min(1, r.shade + 0.16))
   local t1, t2, t3 = top[1], top[2], top[3]
   local b1, b2, b3 = bot[1], bot[2], bot[3]
   local drop = drop0
@@ -339,12 +342,12 @@ local function drawShafts(t, a)
   lg.setBlendMode("add", "alphamultiply")
   local x, y = BG.sunX, BG.sunY
   for i = 1, 5 do
-    local ang = pi * 0.5 + (i - 3) * 0.14 + sin(t * 0.11 + i) * 0.02
-    local len = BG.h * 0.7
-    local wdt = 22 + i * 7
+    local ang = pi * 0.5 + (i - 3) * 0.10 + sin(t * 0.11 + i) * 0.02
+    local len = BG.h * 0.34
+    local wdt = 14 + i * 5
     local ex, ey = x + cos(ang) * len, y + sin(ang) * len
     local nx, ny = -sin(ang), cos(ang)
-    local k = (0.10 - math.abs(i - 3) * 0.022) * a
+    local k = (0.055 - math.abs(i - 3) * 0.013) * a
     Draw.quad(x - nx * 8, y - ny * 8, x + nx * 8, y + ny * 8,
               ex + nx * wdt, ey + ny * wdt, ex - nx * wdt, ey - ny * wdt,
               UI.c(P.ramp.ember[4], k), UI.c(P.ramp.ember[4], k),
@@ -526,8 +529,11 @@ function S:drawBackdrop()
   end
   if VFX.drawAll then VFX.drawAll() end
 
-  -- the type column needs a floor to sit on
-  UI.hgrad(0, 0, w * 0.52, h, P.black, P.black, 0.58 * skyK, 0)
+  -- The type column needs a floor to sit on: a broad wash from the left edge,
+  -- plus a second, tighter one weighted to the rows themselves so the menu
+  -- plates never sit half on sky and half on shadow.
+  UI.hgrad(0, 0, w * 0.55, h, P.black, P.black, 0.60 * skyK, 0)
+  UI.hgrad(0, h * 0.18, w * 0.46, h * 0.72, P.black, P.black, 0.34 * skyK, 0)
   UI.vignette(0.5 * skyK)
 end
 

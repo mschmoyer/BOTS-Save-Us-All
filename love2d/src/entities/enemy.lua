@@ -302,7 +302,7 @@ function Enemy:draw()
 
   if self.stun > 0 then
     Draw.setColor(P.warn, 0.5 * math.min(1, self.stun))
-    Draw.dashedCircle(self.x, self.y - r * 1.6, r * 0.6, 8, self.age * 4)
+    Draw.dashedCircle(self.x, self.y - r * 1.6, r * 0.6, 5, 4, self.age * 40, 1.5)
   end
   if self.flash > 0 then
     Draw.setColor(P.white, self.flash * 0.9)
