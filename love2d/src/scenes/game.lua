@@ -26,6 +26,7 @@ local Minimap  = require("src.game.minimap")
 local Dialogue = Opt.require("src.game.dialogue")
 local Touch    = require("src.engine.touch")
 local Settings = require("src.game.settings")
+local Warmup   = require("src.game.warmup")
 
 --- Config comes from the environment natively and from --flag=value arguments
 --- in the browser build, where there is no environment.
@@ -36,22 +37,60 @@ end
 
 local Game = {}
 
+--- `enter` must return in a frame. Everything expensive happens in `build`,
+--- which is a coroutine the loading screen pumps -- see src/game/warmup.lua for
+--- why this is not optional.
 function Game:enter(opts)
   opts = opts or {}
   local w, h = love.graphics.getDimensions()
   self.camera = Camera.new(w, h)
-  local envSeed = tonumber(cfg("BOTS_SEED") or "")
-  self.world = World.new(opts.seed or envSeed or math.random(1, 999999), opts)
+  self.seed = opts.seed or tonumber(cfg("BOTS_SEED") or "") or math.random(1, 999999)
+  self.load = { p = 0, label = Warmup.label(), t = 0, fade = 0 }
+  Warmup.start(self.seed)
+  self.builder = coroutine.wrap(function() self:buildRun(opts) end)
+
+  -- Headless captures and the balance traces want the world to exist the
+  -- instant the scene does: a loading screen that eats forty frames moves
+  -- every timestamped row in the CSV.
+  if cfg("BOTS_AUTOPLAY") or cfg("BOTS_SYNCLOAD") then
+    while self.builder do
+      if self.builder() == nil then self.builder = nil end
+    end
+    self.load = nil
+  end
+end
+
+function Game:buildRun(opts)
+  local w, h = love.graphics.getDimensions()
+  local step = function(p, label) coroutine.yield(p, label) end
+
+  local clock = love.timer.getTime()
+  local t0, marks = clock, {}
+  local lap = function(n) marks[#marks + 1] = string.format("%s=%.0f", n,
+    (love.timer.getTime() - clock) * 1000); clock = love.timer.getTime() end
+
+  -- most of the wait, and usually already finished by the title screen
+  while Warmup.pump(0.020) < 1 do step(Warmup.p * 0.82, Warmup.label()) end
+  lap("warm[" .. Warmup.report() .. "]")
+  step(0.82, "raising the island")
+
+  local wopts = { terrain = Warmup.claim(self.seed), noPrewarm = true }
+  for k, v in pairs(opts) do if wopts[k] == nil then wopts[k] = v end end
+  self.world = World.new(self.seed, wopts)
+  lap("world")
   self.world.camera = self.camera
   self.world.post = Post
   self:setCameraBounds()
   self.camera:snapTo(self.world.player.x, self.world.player.y)
+  step(0.90, "waking the crew")
 
   if Post.init then Post.init(w, h) end
   if Lighting.init then Lighting.init(w, h) end
+  step(0.94, "lighting the sky")
   if HUD.init then HUD.init(self.world) end
   Minimap.build(self.world)
   if BuildMenu.init then BuildMenu.init(self.world) end
+  step(0.97, "checking the manifest")
 
   self.buildSel = 1
   self.showPerf = cfg("BOTS_PERF") ~= nil
@@ -109,6 +148,10 @@ function Game:enter(opts)
   if Story.begin then Story.begin(self.world, "prologue") end
 
   self:bindSignals()
+  lap("scene")
+  print(string.format("LOAD|%s|total=%.0f", table.concat(marks, " "),
+                      (love.timer.getTime() - t0) * 1000))
+  step(1.0, "ready")
 end
 
 --- Fence the camera in around the island rather than around the world.
@@ -244,8 +287,14 @@ end
 
 ------------------------------------------------------------------------ update
 function Game:update(dt, realDt)
+  if self.builder then return self:updateLoading(realDt or dt) end
   local world = self.world
   dt = dt * (self.speed or 1)
+
+  if self.load and self.load.fade > 0 then
+    self.load.fade = self.load.fade - (realDt or dt) * 2.2
+    if self.load.fade <= 0 then self.load = nil end
+  end
 
   if Input.pressed("pause") and not Screen.busy() then
     Screen.push(require("src.scenes.pause"), self)
@@ -369,6 +418,7 @@ end
 
 -------------------------------------------------------------------------- draw
 function Game:draw()
+  if self.builder then return self:drawLoading() end
   local world = self.world
   local cam = self.camera
 
@@ -414,6 +464,104 @@ function Game:draw()
   if Touch.active then Touch.draw() end
 
   if self.showPerf then self:drawPerf() end
+  if self.load and self.load.fade > 0 then
+    self:drawLoading(U.ease.inQuad(self.load.fade))
+  end
+end
+
+------------------------------------------------------------------- the loading
+--- Pump the build. The budget is generous on purpose: the bar is the only
+--- thing on screen, so almost the whole frame can go to work, and a browser
+--- that spends twenty seconds here should spend as few of them as possible.
+--- The 26 ms floor still leaves the sweep and the counter moving.
+function Game:updateLoading(dt)
+  local L = self.load
+  L.t = L.t + dt
+  local t0 = love.timer.getTime()
+  repeat
+    local p, label = self.builder()
+    if p == nil then
+      self.builder = nil
+      L.p, L.fade = 1, 1
+      return
+    end
+    if p > L.p then L.p = p end
+    L.label = label or L.label
+  until love.timer.getTime() - t0 >= 0.026
+end
+
+--- The island, drawn as the survey it is: a scan sweeping a contour band while
+--- the fields it is reading are actually being computed underneath.
+function Game:drawLoading(alpha)
+  alpha = alpha or 1
+  local lg = love.graphics
+  local w, h = lg.getDimensions()
+  local L = self.load or { p = 0, t = 0, label = "" }
+  local cx, cy = w * 0.5, h * 0.5
+
+  local deep, near = P.ramp.water[1], P.black
+  lg.clear(near[1], near[2], near[3], 1)
+  local mesh = self._loadBG
+  if not mesh then
+    mesh = lg.newMesh({
+      { 0, 0, 0, 0, deep[1], deep[2], deep[3], 1 },
+      { 1, 0, 1, 0, deep[1], deep[2], deep[3], 1 },
+      { 1, 1, 1, 1, near[1], near[2], near[3], 1 },
+      { 0, 1, 0, 1, near[1], near[2], near[3], 1 },
+    }, "fan", "static")
+    self._loadBG = mesh
+  end
+  lg.setColor(1, 1, 1, alpha)
+  lg.draw(mesh, 0, 0, 0, w, h)
+
+  -- contour rings: a topographic read-out of a shape not yet resolved
+  local R = math.min(w, h) * 0.28
+  lg.setLineStyle("smooth")
+  for i = 1, 7 do
+    local f = i / 7
+    local ring = R * (0.28 + f * 0.86)
+    local wob = 1 + 0.05 * math.sin(L.t * 0.5 + i * 1.7)
+    local band = U.saturate(1 - math.abs((L.t * 0.32 + f) % 1 - 0.5) * 3)
+    local c = P.ramp.cobalt[2]
+    lg.setLineWidth(1 + band * 1.4)
+    lg.setColor(c[1], c[2], c[3], (0.10 + band * 0.30) * alpha)
+    lg.circle("line", cx, cy - R * 0.06, ring * wob, 48)
+  end
+
+  -- the island resolving inside them, one arc per percent
+  local seg = math.max(1, math.floor(L.p * 64))
+  local acc = P.accent
+  lg.setLineWidth(2)
+  for i = 0, seg - 1 do
+    local a0 = i / 64 * math.pi * 2 - math.pi * 0.5
+    local rr = R * (0.62 + 0.16 * math.sin(a0 * 3 + self.seed % 17))
+    lg.setColor(acc[1], acc[2], acc[3], 0.55 * alpha)
+    lg.arc("line", "open", cx, cy - R * 0.06, rr, a0, a0 + math.pi * 2 / 72, 6)
+  end
+
+  -- the bar
+  local bw = math.min(360, w * 0.46)
+  local bx, by = cx - bw * 0.5, cy + R * 1.06
+  local f = P.inkFaint
+  lg.setColor(f[1], f[2], f[3], 0.22 * alpha)
+  lg.rectangle("fill", bx, by, bw, 2)
+  lg.setColor(acc[1], acc[2], acc[3], 0.92 * alpha)
+  lg.rectangle("fill", bx, by, bw * L.p, 2)
+  local sweep = (L.t * 0.55) % 1
+  lg.setColor(P.white[1], P.white[2], P.white[3], 0.16 * alpha)
+  lg.rectangle("fill", bx + bw * sweep - 30, by, 30, 2)
+
+  if Text.display then
+    Text.display("PREPARING THE ISLAND", cx, by - 46, 15,
+      { align = "center", color = P.inkDim, tracking = 0.34, alpha = 0.85 * alpha })
+    Text.display(string.format("%d%%", math.floor(L.p * 100)), cx, by + 16, 13,
+      { align = "center", color = P.accent, tracking = 0.20, alpha = 0.75 * alpha })
+  end
+  if Text.body then
+    Text.body(L.label or "", cx, by + 38, 13,
+      { align = "center", color = P.inkFaint, alpha = 0.8 * alpha })
+  end
+  lg.setColor(1, 1, 1, 1)
 end
 
 --- Photo mode. Hides every overlay for one frame and writes a clean capture to

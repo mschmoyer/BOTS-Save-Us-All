@@ -805,6 +805,24 @@ function Tree.prewarm()
   return t1 - t0, libCount
 end
 
+--- Same work as prewarm(), a slice at a time. The whole library is ~400 ms of
+--- mesh building under LuaJIT and several seconds in the browser build, which
+--- is long enough that it has to happen behind a progress bar rather than
+--- inside one frozen frame. Returns progress 0..1; call until it returns 1.
+local warmI, warmN = 0, nil
+function Tree.prewarmStep(budget)
+  warmN = warmN or (#SPECIES * TUNE.variants * TUNE.buckets)
+  if warmI >= warmN then return 1 end
+  local t0 = love.timer.getTime()
+  repeat
+    local spi = floor(warmI / (TUNE.variants * TUNE.buckets)) + 1
+    local rem = warmI % (TUNE.variants * TUNE.buckets)
+    ensure(spi, floor(rem / TUNE.buckets), rem % TUNE.buckets)
+    warmI = warmI + 1
+  until warmI >= warmN or love.timer.getTime() - t0 >= (budget or 0.008)
+  return warmI / warmN
+end
+
 function Tree.libraryStats()
   local verts = 0
   for _, m in pairs(LIB.full) do if m then verts = verts + m:getVertexCount() end end

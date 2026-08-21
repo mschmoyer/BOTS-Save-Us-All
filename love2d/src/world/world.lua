@@ -43,8 +43,13 @@ function World:init(seed, opts)
   self.time = 0
   self.opts = opts
 
-  self.terrain = Terrain.new and Terrain.new(self.seed) or nil
-  if self.terrain and self.terrain.bake then self.terrain:bake() end
+  -- The loading screen bakes the terrain itself, a slice at a time, and hands
+  -- the finished object in. Without one (headless captures, demo scenes) we
+  -- still build it here, synchronously.
+  self.terrain = opts.terrain or (Terrain.new and Terrain.new(self.seed) or nil)
+  if self.terrain and self.terrain.bake and not self.terrain.baked then
+    self.terrain:bake()
+  end
   if Decals.init then Decals.init(TU.world.w, TU.world.h) end
   self.decals = Decals
 
@@ -75,7 +80,7 @@ function World:init(seed, opts)
   self.allLostNames = {}       -- never cleared: the ending reads the whole run
   self.dawnReport  = nil
 
-  if Tree.prewarm then pcall(Tree.prewarm) end
+  if Tree.prewarm and not opts.noPrewarm then pcall(Tree.prewarm) end
   if Water.load then pcall(Water.load) end
 
   -- how much forest this particular island can hold, which is what 100% means

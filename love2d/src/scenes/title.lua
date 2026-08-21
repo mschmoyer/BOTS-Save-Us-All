@@ -12,12 +12,15 @@
 -- assembling out of wide tracking, then the rule, then the menu rows, then the
 -- footer. Nothing on this screen arrives at the same time as anything else.
 --
--- Self-contained: no terrain, no tree module, no world. Only Draw, VFX and the
--- palette.
+-- Self-contained as *art*: no terrain, no tree module, no world on screen. It
+-- does quietly warm the next run's island in the background, though -- see
+-- src/game/warmup.lua. A player reading the menu is the cheapest loading bar
+-- there is.
 local U        = require("src.core.util")
 local P        = require("src.engine.palette")
 local Draw     = require("src.engine.draw")
 local Text     = require("src.engine.text")
+local Warmup   = require("src.game.warmup")
 local UI       = require("src.engine.ui")
 local Input    = require("src.engine.input")
 local Screen   = require("src.engine.screen")
@@ -439,6 +442,11 @@ function S:enter()
   build(lg.getDimensions())
   if VFX.init then VFX.init() end
   if Music.setState then Music.setState("title") end
+
+  -- Start baking the island the player is about to land on. 4 ms a frame is
+  -- invisible here and is most or all of the wait later.
+  self.runSeed = Warmup.seedFor()
+  Warmup.start(self.runSeed)
 end
 
 function S:resume()
@@ -461,7 +469,8 @@ local function choose(self, id)
     self.leaving = true
     local continued = (id == "continue")
     Screen.transition(0.65, function()
-      Screen.switch(require("src.scenes.game"), { continueRun = continued })
+      Screen.switch(require("src.scenes.game"),
+                    { continueRun = continued, seed = self.runSeed })
     end, "iris")
   end
 end
@@ -473,6 +482,7 @@ function S:update(dt, realDt)
   realDt = realDt or dt
   self.t = self.t + realDt
   build(lg.getDimensions())
+  if self.runSeed then Warmup.pump(0.004) end
   if VFX.update then VFX.update(realDt) end
   if Music.update then Music.update(realDt) end
 
