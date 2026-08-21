@@ -385,12 +385,20 @@ T.enemy = {
   -- What the Blight puts back into the lighting buffer after dusk. Night is
   -- the game, and until these existed the thing attacking you was a dark shape
   -- on dark ground.
+  -- Turned up twice. The first pass lit the *ground* around a Blight and left
+  -- the Blight itself a dark shape standing in it, which is not the same thing
+  -- as seeing it: the body is dark-valued and the eyeshine that reads it was
+  -- being drawn at a fifth of the strength of the lamp underneath.
   light = {
-    radius   = 5.6,   -- multiples of the enemy's own radius
-    gain     = 0.86,  -- at full dark; scaled down toward dusk
-    core     = 1.5,   -- a tight hot centre so the body reads as lit
-    coreGain = 0.55,
+    radius   = 7.6,   -- multiples of the enemy's own radius
+    gain     = 1.45,  -- at full dark; scaled down toward dusk
+    core     = 2.0,   -- a tight hot centre so the body reads as lit
+    coreGain = 1.05,
     rooted   = 2.1,   -- Maws and Scars are landmarks: visible from across the island
+    -- the glow drawn *on* the thing, as opposed to the light it casts. Without
+    -- this a lit patch of grass is all you get.
+    eyeGain  = 0.85,
+    eyeSize  = 1.9,
   },
 }
 
@@ -446,6 +454,26 @@ T.boss = {
   rebelCohort  = 1,
   rebelEvery   = 6.5,
   rebelDelay   = 8.5,
+
+  -- REINFORCEMENTS. The crew you brought is finite, and once it is spent the
+  -- rest of the hull was the player's problem alone: measured, the rebellion
+  -- takes the bar to about a third and the last third was a damage race a
+  -- player cannot win against a rig that is draining the sky the whole time.
+  --
+  -- So the island answers. From phase two, a bot a second walks in off the map
+  -- edge and makes for the rig. They are not your crew -- they cost nothing,
+  -- they do not count against the cap, they are not in the ending's ledger --
+  -- they are every machine still working somewhere on the island, arriving
+  -- because the rebellion started.
+  reinforce = {
+    fromPhase = 2,
+    -- Paced by arrival rate rather than by a weaker hit: they land the same
+    -- blow one of yours does, and the throttle is that they have to walk in
+    -- from the treeline. Tuned from the measured length of the fight.
+    every     = 1.0,      -- seconds between arrivals
+    maxAlive  = 26,       -- in flight at once, so the walk-in never becomes a mob
+    edgePad   = 70,       -- how far outside the land they step in from
+  },
 
   -- The hull will not go below this fraction of maximum from player damage
   -- alone. The plates come off when the bots arrive, not when you hit hard

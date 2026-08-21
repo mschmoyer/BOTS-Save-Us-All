@@ -227,11 +227,14 @@ function World:nearestCobalt(x, y, r)
 end
 
 function World:enemyCount() return #self.enemies end
+--- The crew. Extraction reinforcements are deliberately not in it: they are
+--- not yours, they do not count against the cap, and the HUD's "n of 48" would
+--- otherwise climb past its own maximum while you watched.
 function World:botCount()
   local n = 0
   for i = 1, #self.bots do
     local b = self.bots[i]
-    if b.alive and b.state ~= "dead" then n = n + 1 end
+    if b.alive and b.state ~= "dead" and not b.reinforcement then n = n + 1 end
   end
   return n
 end
@@ -448,12 +451,15 @@ function World:botCost(botType)
   return math.ceil(def.cost * mul * self.chips:get("botCost", 1))
 end
 
-function World:spawnBot(x, y, botType, free)
+--- `offRoster` is for the extraction's reinforcements: they arrive after the
+--- rig has landed, when nothing may be built, and they are not part of the
+--- crew -- so they skip the extraction block, the crew cap and the ledger.
+function World:spawnBot(x, y, botType, free, offRoster)
   local def = TU.bots[botType]
   if not def then return false end
   -- Once the rig arrives there is no more building. The workforce you have is
   -- the workforce that decides the fight, which is the whole point of it.
-  if self.phase == "extraction" and not free then
+  if self.phase == "extraction" and not free and not offRoster then
     Audio.play("ui_back")
     Signal.emit("ui:denied", "extraction")
     return false
@@ -466,7 +472,7 @@ function World:spawnBot(x, y, botType, free)
   end
   -- The Rig can only run so many of them. This is checked before the price so
   -- a full crew never silently takes the player's cobalt.
-  if self:botCount() >= (TU.bots.maxCrew or 999) then
+  if not offRoster and self:botCount() >= (TU.bots.maxCrew or 999) then
     if not free then
       Audio.play("ui_back")
       Signal.emit("ui:denied", "crew")
@@ -485,7 +491,7 @@ function World:spawnBot(x, y, botType, free)
   b.maxHp = b.maxHp + self.chips:get("botHp", 0)
   b.hp = b.maxHp
   self:addEntity(self.bots, self.hBot, b)
-  self.stats.botsBuilt = self.stats.botsBuilt + 1
+  if not offRoster then self.stats.botsBuilt = self.stats.botsBuilt + 1 end
   if self.phase == "extraction" and self.boss and self.boss.alive and self.botsRebelled then
     b:rebel(self.boss)
   end
@@ -829,6 +835,7 @@ end
 function World:updateRebellion(dt)
   if not self.boss or not self.boss.alive then return end
   if not self.rebelT then return end
+  self:updateReinforcements(dt)
   self.rebelT = self.rebelT - dt
   if self.rebelT > 0 then return end
   self.rebelT = TU.boss.rebelEvery
@@ -863,6 +870,62 @@ function World:updateRebellion(dt)
     -- of four is a chord rather than four copies of the same chirp
     if Audio.rebelCohort then Audio.rebelCohort(sent) end
   end
+end
+
+--- The island answers.
+---
+--- The crew you brought is finite. Once it is spent the rest of the hull was
+--- the player's alone, and measured, that is the last third of a bar against a
+--- rig draining the sky -- a race a player does not win. From phase two a bot
+--- a second walks in off the map edge and makes for the rig.
+---
+--- They are deliberately not crew: free, outside the cap, and not counted in
+--- the ending's ledger, because the names in that ledger are the ones you
+--- built and lost. These are every machine still working somewhere on the
+--- island, arriving because the rebellion started.
+function World:updateReinforcements(dt)
+  local R = TU.boss.reinforce
+  if not R or not self.boss or not self.boss.alive then return end
+  if (self.boss.phase or 1) < R.fromPhase then return end
+  if self.boss.hp <= 0 then return end
+
+  self.reinforceT = (self.reinforceT or R.every) - dt
+  if self.reinforceT > 0 then return end
+  self.reinforceT = R.every
+
+  -- recount rather than decrement: they die inside Bot:updateRebel, which has
+  -- no idea this counter exists, and a decrement that never runs is a cap that
+  -- silently closes.
+  local live = 0
+  for i = 1, #self.bots do
+    local b = self.bots[i]
+    if b.reinforcement and b.alive and b.state ~= "dead" then live = live + 1 end
+  end
+  if live >= R.maxAlive then return end
+
+  -- step in from whichever edge of the *land* is nearest a random bearing, so
+  -- they arrive out of the dark at the treeline rather than out of the sea
+  local a = self.rng:angle()
+  local cx, cy = self.centerX, self.centerY
+  local far = math.max(TU.world.w, TU.world.h)
+  local x, y = cx + math.cos(a) * far, cy + math.sin(a) * far
+  if self.terrain and self.terrain.nearestLand then
+    local lx, ly = self.terrain:nearestLand(x, y)
+    if lx then
+      x, y = lx + math.cos(a) * R.edgePad, ly + math.sin(a) * R.edgePad
+      local nx, ny = self.terrain:nearestLand(x, y)
+      if nx then x, y = nx, ny end
+    end
+  end
+
+  local order = TU.bots.order
+  local kind = order[self.rng:int(1, #order)]
+  local b = self:spawnBot(x, y, kind, true, true)
+  if not b then return end
+  b.reinforcement = true
+  b.state, b.stateT, b.bootT = "work", 0, 0
+  b:rebel(self.boss)
+  Signal.emit("bots:reinforce", b)
 end
 
 --- The rig finished what it came for.

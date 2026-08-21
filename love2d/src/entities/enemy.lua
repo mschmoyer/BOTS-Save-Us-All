@@ -820,10 +820,17 @@ function Enemy:draw()
   -- its own eyeshine, once the sun is off the island
   local dark = U.saturate(1 - (DayNight.ambientStrength or 1))
   if dark > 0.2 and not self.fleeing then
-    local c = EYE[self.type] or EYE.chomper
+    -- Hostile red, matching the light it casts, and bright enough to read as
+    -- the thing itself rather than as a smudge over it. Two passes: a wide
+    -- soft one so it carries at distance, and a tight hot one on the body so
+    -- there is something to aim at when it is on top of you.
+    local c = P.lightHostile
     local oy = self.def.float and -22 or -r * 0.25
-    Draw.glow(self.x, self.y + oy, r * (1.0 + dark * 0.5),
-              c, (0.20 + 0.30 * dark) * a * (0.85 + 0.15 * math.sin(self.age * 3.1)), 2)
+    local puls = 0.85 + 0.15 * math.sin(self.age * 3.1)
+    Draw.glow(self.x, self.y + oy, r * (LIGHT.eyeSize + dark * 0.9),
+              c, LIGHT.eyeGain * (0.45 + 0.55 * dark) * a * puls, 2)
+    Draw.glow(self.x, self.y + oy, r * 0.62,
+              c, LIGHT.eyeGain * 1.15 * (0.5 + 0.5 * dark) * a * puls, 2)
   end
 
   if self.stun > 0 then
