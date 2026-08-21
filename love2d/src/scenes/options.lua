@@ -7,6 +7,11 @@
 -- One row is described at a time, in the strip at the foot of the panel, so the
 -- list itself stays a list rather than becoming a wall of explanatory text.
 --
+-- The accent is mint, the same green the shell, the title and the game itself
+-- use. It was cobalt: "one accent per screen" followed to the letter, and the
+-- result was that Options looked like a different product from the menu that
+-- opened it.
+--
 -- Navigation: up/down moves between rows, left/right adjusts the focused row,
 -- and the tab strip is simply the row above the first one -- so a stick, a
 -- d-pad, arrow keys and a mouse all reach every control with no special cases.
@@ -151,7 +156,7 @@ function S:enter(opts)
   self.t = 0
   -- BOTS_OPT_TAB lets tools/shot.sh photograph a page other than the first
   self.tab = U.clamp(tonumber(os.getenv("BOTS_OPT_TAB") or "") or 1, 1, #TABS)
-  self.ctx = UI.context({ accent = P.accentCool })
+  self.ctx = UI.context({ accent = P.accent })
   self.ctx.wrap = false
   self.opts = opts
   self.dirtyFlash = 0
@@ -268,15 +273,15 @@ function S:draw()
   -- the panel, rising the last few pixels into place
   local rise = (1 - U.ease.outCubic(U.saturate(t * 3.2))) * 18
   local px, py = L.px, py0 + rise
-  UI.panel(px, py, L.pw, ph, 0.80 * a, 10, P.accentCool, 0.16 * a)
-  Draw.setColor(UI.c(P.accentCool, 0.55 * a))
+  UI.panel(px, py, L.pw, ph, 0.80 * a, 10, P.accent, 0.16 * a)
+  Draw.setColor(UI.c(P.accent, 0.55 * a))
   Draw.roundRect("fill", px + 8, py + 30, 3, 44, 1.5)
 
   -- header
   UI.text("OPTIONS", L.cx, py + 32, UI.ts.h2, UI.c(P.ink, a), "left", a, 0.10)
   UI.caption("SAVED AS YOU CHANGE THEM", L.cx + L.cw, py + 36, UI.ts.micro,
              UI.c(P.inkFaint, 0.6 * a), "right")
-  -- the device name is information, not an accent: accentCool on this screen
+  -- the device name is information, not an accent: the accent on this screen
   -- means "the thing you are pointing at", and nothing else may borrow it
   UI.caption(Input.schemeName():upper(), L.cx + L.cw, py + 54, UI.ts.micro,
              UI.c(P.inkDim, 0.7 * a), "right")
@@ -297,10 +302,10 @@ function S:draw()
 
   -- the description strip: one row explained, never twenty
   local dy = py + ph - DESC_H - FOOT_H
-  UI.rule(L.cx, dy, L.cw, P.ink, 0.10 * a, focusedRow and P.accentCool or nil)
+  UI.rule(L.cx, dy, L.cw, P.ink, 0.10 * a, focusedRow and P.accent or nil)
   if focusedRow then
     UI.caption(focusedRow.label, L.cx, dy + 16, UI.ts.micro,
-               UI.c(P.accentCool, 0.9 * a), "left")
+               UI.c(P.accent, 0.9 * a), "left")
     UI.body(focusedRow.desc, L.cx, dy + 34, UI.bs.base,
             UI.c(P.inkDim, 0.92 * a), L.cw)
   else
