@@ -1008,13 +1008,24 @@ function World:beginExtraction()
 end
 
 ------------------------------------------------------------------------ update
-function World:update(dt)
+--- `realDt` is wall time; `dt` is *simulation* time and may be zero.
+---
+--- A cutscene freezes the simulation and nothing else. It used to freeze
+--- nothing at all: the world went on running under the dialogue box, so a
+--- conversation you could not skip was a window in which Chompers ate you and
+--- your crew while you read. Passing zero to the whole update would fix that
+--- and produce a photograph -- no rain, no embers, no wind in the canopy,
+--- which reads as a hang rather than as a pause. So the two are separated:
+--- entities, the director, the phase clock and the oxygen take `dt`; weather,
+--- wind, particles and decals take `realDt` and keep breathing.
+function World:update(dt, realDt)
+  realDt = realDt or dt
   self.time = self.time + dt
   if (self.rallyCd or 0) > 0 then self.rallyCd = self.rallyCd - dt end
-  if Wind.update then Wind.update(dt) end
-  Weather.update(dt, self)
+  if Wind.update then Wind.update(realDt) end
+  Weather.update(realDt, self)
   self.raining = Weather.isRaining()
-  if self.terrain and self.terrain.update then self.terrain:update(dt) end
+  if self.terrain and self.terrain.update then self.terrain:update(realDt) end
 
   if self.phase ~= "extraction" and self.phase ~= "ending" and not self.cutscene then
     self.phaseT = self.phaseT + dt
@@ -1049,7 +1060,7 @@ function World:update(dt)
   -- speech bubbles
   for i = #self.speeches, 1, -1 do
     local s = self.speeches[i]
-    s.t = s.t + dt
+    s.t = s.t + realDt
     if s.t >= s.dur or not s.who.alive then table.remove(self.speeches, i) end
   end
 
@@ -1070,8 +1081,8 @@ function World:update(dt)
     end
   end
 
-  if Decals.update then Decals.update(dt) end
-  if VFX.update then VFX.update(dt) end
+  if Decals.update then Decals.update(realDt) end
+  if VFX.update then VFX.update(realDt) end
   if Music.setIntensity then Music.setIntensity(self:threat()) end
   if Music.setO2 then Music.setO2(self.o2 / TU.o2.target) end
 end
@@ -1459,7 +1470,7 @@ function World:emitLights(Light)
   if self.player and self.player.emitLight then self.player:emitLight(Light) end
   if self.rig then self.rig:emitLight(Light) end
   local cam = self.camera
-  local lists = { self.bots, self.enemies, self.cobalts }
+  local lists = { self.bots, self.enemies, self.cobalts, self.projectiles }
   for l = 1, #lists do
     local list = lists[l]
     for i = 1, #list do

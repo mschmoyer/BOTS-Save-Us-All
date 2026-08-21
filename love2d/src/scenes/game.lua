@@ -345,7 +345,18 @@ function Game:update(dt, realDt)
   if BuildMenu.update then BuildMenu.update(dt, self.camera) end
   Minimap.update(realDt)
 
-  world:update(dt)
+  -- Hold the simulation while somebody is talking. The dialogue is not
+  -- skippable on its first read and the world used to run underneath it, so a
+  -- cutscene was a window in which the Blight ate your crew while you read.
+  -- Only the simulation stops: weather, particles and the camera carry on
+  -- inside World:update, so it reads as a held breath rather than a hang.
+  -- Dialogue.isActive only, deliberately: `world.cutscene` is set from five
+  -- places and cleared from seven, and it used to gate nothing heavier than
+  -- the phase clock. Hanging the whole simulation on it means one missed clear
+  -- is a game frozen forever, which is a worse bug than the one being fixed.
+  -- The dialogue system owns its own flag and clears it on the way out.
+  local talking = Dialogue.isActive and Dialogue.isActive()
+  world:update(talking and 0 or dt, realDt or dt)
 
   local p = world.player
   self.camera:follow(p.x, p.y, p.vx, p.vy, realDt)

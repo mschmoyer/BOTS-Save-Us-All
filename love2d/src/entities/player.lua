@@ -239,6 +239,7 @@ function Player:shove()
   self.shoveCd = T.shove.cooldown
   self.shoveAnim = 1
   local ang = math.atan2(self.aimY, self.aimX)
+  self.shoveAngle = ang          -- emitLight lays the blade's light along it
   local arc = T.shove.arc * (self.world and self.world.chips and self.world.chips:get("shoveArc", 1) or 1)
   local range = T.shove.range * (self.world and self.world.chips and self.world.chips:get("shoveRange", 1) or 1)
   Audio.play("shove_swing")
@@ -630,6 +631,23 @@ function Player:emitLight(Lighting)
   Lighting.addLight(self.x, self.y, T.lamp.radius, warm, T.lamp.warm, { flicker = 0.05 })
   if self.charging then
     Lighting.addLight(self.x, self.y, 120 * (0.4 + self.chargeT), P.accent, 1.2)
+  end
+
+  -- The blade. The swing threw an arc of particles and lit nothing, so at
+  -- night the one thing in your hands that kills was invisible in the frame it
+  -- mattered. Three lights along the cut, hot at the wrist and falling off at
+  -- the tip, for as long as the swing animates -- a moving light rather than a
+  -- flash, so you can see what it reached.
+  local sa = self.shoveAnim or 0
+  if sa > 0.02 then
+    local ang = self.shoveAngle or math.atan2(self.aimY or 0, self.aimX or 1)
+    local L = T.shove.light
+    for i = 1, 3 do
+      local d = T.shove.range * (i / 3) * (0.55 + 0.45 * sa)
+      local k = (1.15 - i * 0.22) * sa
+      Lighting.addLight(self.x + math.cos(ang) * d, self.y + math.sin(ang) * d,
+                        L.radius * (1.1 - i * 0.12), P.lightPlayer, L.gain * k, nil)
+    end
   end
 end
 

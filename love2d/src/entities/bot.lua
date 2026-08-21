@@ -406,8 +406,14 @@ function Bot:updateRebel(dt)
   if self.rng:chance(dt * 6) then VFX.emit("love_heart", self.x, self.y - 16, { power = 0.4 }) end
   if d < t.radius + self.radius then
     t:damage(self.world and self.world.rebelDamage or 1, self.x, self.y, { source = "bot" })
-    VFX.emit("bot_death", self.x, self.y, { power = 1.2 })
-    VFX.emit("love_heart", self.x, self.y, { power = 1.5 })
+    -- On the hull, not inside it, and thrown back the way it came: the blast is
+    -- emitted a body-length short of the plate with the outward normal, so the
+    -- jet and the brass spray off the rig instead of ballooning out of its
+    -- middle. `bot_death` used to do this job at 1.2 power -- the same generic
+    -- puff a wreck makes burning out alone in a field.
+    local bx, by = t.x - dx * (t.radius - 4), t.y - dy * (t.radius - 4)
+    VFX.emit("bot_detonate", bx, by, { dx = -dx, dy = -dy, power = 1 })
+    VFX.emit("love_heart", bx, by - 12, { power = 1.2 })
     -- Not bot_down at a higher pitch: that cue tells the player a Chomper
     -- popped, and it ducks the music 0.28 for 1.1s -- forty of those land
     -- during the finale, holding the score down for the whole of it.
@@ -445,7 +451,10 @@ function Bot:onDeath()
   self.reviveT = 0
   self.vx, self.vy = 0, 0
   Audio.play("bot_down", { x = self.x, y = self.y })
-  VFX.emit("bot_spark", self.x, self.y, { power = 1.4 })
+  -- The worst thing that happens to you on a bad night used to be four sparks.
+  -- It buckles now -- see `bot_felled` -- and the plating it sheds lies beside
+  -- the body for the whole of the rescue window.
+  VFX.emit("bot_felled", self.x, self.y, { power = 1 })
   J.shake(0.12)
   Signal.emit("bot:downed", self)
 end
@@ -922,8 +931,14 @@ function Bot:emitLight(Lighting)
                         P.lightFriend, self.def.lightGain * br * k, { flicker = 0.04 })
       return
     end
-    Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * 4.8 * k, P.lightFriend,
-                      (self.state == "down" and 0.26 or 0.48) * k, { flicker = 0.03 })
+    local L = T.light
+    local g = (self.state == "down" and L.downGain or L.gain) * k
+    Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * L.radius * k,
+                      P.lightFriend, g, { flicker = 0.03 })
+    -- and a tight core, so what you see is a lit machine rather than a lit
+    -- patch of grass with something dark standing on it
+    Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * L.core * k,
+                      P.lightFriend, L.coreGain * k, nil)
   end
 end
 

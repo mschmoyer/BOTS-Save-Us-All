@@ -79,13 +79,34 @@ function Projectile:drawShadow()
   end
 end
 
+--- Who fired it, in the night's colour language: yellow is the player, blue is
+--- the crew, red is the Blight. A dart was leaf-green whoever threw it, which
+--- says nothing at a glance about whether the thing flying past you is help.
+function Projectile:lightColor()
+  if self.type ~= "dart" then return P.lightHostile end
+  local o = self.owner
+  if o and o.kind == "player" then return P.lightPlayer end
+  return P.lightFriend
+end
+
+--- Shots carry their own light. Nothing in flight lit anything before, so a
+--- night firefight was muzzle flashes and impacts with nothing in between.
+function Projectile:emitLight(Lighting)
+  if not self.alive then return end
+  local c = self:lightColor()
+  local y = self.y - (self.h or 0)
+  Lighting.addLight(self.x, y, self.type == "dart" and 96 or 120, c,
+                    self.type == "dart" and 0.85 or 0.7, nil)
+end
+
 function Projectile:draw()
   if self.type == "dart" then
-    Draw.setColor(P.shade(P.ramp.leaf, 3.6))
+    local c = self:lightColor()
+    Draw.setColor(c, 0.95)
     Draw.capsule("fill", self.trailX, self.trailY, self.x, self.y, 2.4)
-    Draw.setColor(P.shade(P.ramp.leaf, 4), 0.8)
+    Draw.setColor(P.lighten(c, 0.55), 0.9)
     love.graphics.circle("fill", self.x, self.y, 2.6)
-    Draw.glow(self.x, self.y, 16, P.shade(P.ramp.leaf, 4), 0.35)
+    Draw.glow(self.x, self.y, 22, c, 0.45)
   else
     local y = self.y - self.h
     Draw.setColor(P.acid, 0.9)

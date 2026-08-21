@@ -55,6 +55,7 @@ local Class = require("src.core.class")
 local Wind  = require("src.world.wind")
 local DayNight = require("src.engine.daynight")
 local VFX   = require("src.core.optional").require("src.engine.vfx")
+local J     = require("src.core.optional").require("src.engine.juice")
 -- demos and the title screen own their own atmosphere; they can switch this off
 local T     = require("src.game.tuning").tree
 
@@ -1176,6 +1177,10 @@ function Tree:update(dt)
   if self.toppling then
     self.toppleT = self.toppleT + dt
     self.death = min(1, self.death + dt * 1.6)
+    if not self.landed and self.toppleT >= TUNE.toppleTime then
+      self.landed = true
+      self:crash()
+    end
     if self.toppleT > TUNE.toppleTime then
       self.stage = "dead"
       self.deadT = self.deadT + dt
@@ -1263,10 +1268,41 @@ function Tree:kill(cause)
   self.cause = cause or "unknown"
   self.toppling = true
   self.toppleT = 0
+  self.landed = false
   self.chewers = 0
   self.o2 = 0
   self.stage = "dying"
   self:shed(TUNE.leafPool, 1.6)
+  -- The trunk giving way. Scaled off the tree: a sapling snapping and an elder
+  -- coming down were the same fourteen leaves, which is most of why the forest
+  -- could be taken apart in front of you without any of it landing.
+  if self.onScreen and self.growth > 0.2 then
+    local k = 0.4 + self.size / 150
+    VFX.emit("tree_snap", self.x, self.y, { scale = k, power = k })
+  end
+end
+
+--- The crown hitting the ground, one topple later and out where it actually
+--- lands. The fall was silent from the moment the trunk let go: the canopy
+--- swung through ninety degrees, arrived, and nothing happened -- so a tree
+--- coming down had no weight at the one instant weight is the whole point.
+---
+--- The impact point is the crown's own position after the topple rotation, so
+--- a big tree throws its dust a long way from its stump and a young one drops
+--- it at its feet.
+function Tree:crash()
+  if not self.onScreen or self.growth < 0.2 then return end
+  local rot = self.lean + self.toppleDir * TUNE.toppleAngle
+  local h = self.height * 0.88
+  local cx = self.x + sin(rot) * h
+  local cy = self.y - cos(rot) * h
+  local k = 0.35 + self.size / 155
+  -- The fall direction is the base-to-crown vector itself; `rot` already
+  -- carries `toppleDir`, and multiplying by it a second time sprayed every
+  -- left-falling tree's debris out to the right.
+  VFX.emit("tree_crash", cx, cy, { scale = k, power = k,
+                                   dx = sin(rot), dy = -cos(rot) })
+  if J.shake then J.shake(0.05 + min(0.10, self.size / 900)) end
 end
 
 --- Cut without the fall - used when a tree is replaced or the level unloads.

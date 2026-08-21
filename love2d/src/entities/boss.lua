@@ -246,11 +246,29 @@ function Boss:damage(n, sx, sy, opts)
   return Boss.super.damage(self, n, sx, sy, opts)
 end
 
-function Boss:onDamage(n, sx, sy)
+function Boss:onDamage(n, sx, sy, opts)
   Audio.play("boss_hurt", { x = self.x, y = self.y })
-  VFX.emit("impact", self.x + (sx and (sx - self.x) * 0.6 or 0),
-                     self.y + (sy and (sy - self.y) * 0.6 or 0), { power = 1.2 })
-  J.shake(0.14)
+  if opts and opts.source == "bot" then
+    -- One of the crew just went off against the plate. The blast itself belongs
+    -- to the bot and is thrown from `Bot:updateRebel` in the crew's own blue;
+    -- what happens *here* is the rig losing a piece of itself -- cold steel,
+    -- spat back along the impact and left lying at its feet. `impact` is the
+    -- player's ember-coloured hit and has no business narrating this.
+    --
+    -- And it comes off the *plate*: the generic hit point below sits 60% of the
+    -- way in from the source, which on a body this size is deep inside the hull.
+    -- The shake is the bot's, not the rig's -- `updateRebel` already fires it,
+    -- and twenty of these land in a row.
+    local nx, ny = U.norm((sx or self.x + 1) - self.x, (sy or self.y) - self.y)
+    if nx == 0 and ny == 0 then nx, ny = 1, 0 end
+    VFX.emit("hull_spall", self.x + nx * self.radius * 0.92,
+                           self.y + ny * self.radius * 0.92,
+                           { dx = nx, dy = ny, power = 1.1 })
+  else
+    VFX.emit("impact", self.x + (sx and (sx - self.x) * 0.6 or 0),
+                       self.y + (sy and (sy - self.y) * 0.6 or 0), { power = 1.2 })
+    J.shake(0.14)
+  end
   Signal.emit("boss:hurt", self.hp, self.maxHp)
 end
 

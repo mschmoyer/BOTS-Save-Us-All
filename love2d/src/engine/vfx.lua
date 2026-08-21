@@ -461,17 +461,22 @@ DEFS.hurt_spray = {
 -- aid cross is not a shape this world contains anywhere else.
 
 ------------------------------------------------------------------- combat
+-- Both stops opened on pure white, additively, on the verb the player presses
+-- most -- and during the extraction the player is standing on the rig, so every
+-- shove put a white crescent the size of the hull across the one thing the
+-- whole scene is about. The cool accent is what the player's pressure already
+-- is everywhere else in this file.
 DEFS.shove_arc = {
   { layer = "air", blend = "add", shape = "arc",
     count = 1, life = 0.3, emit = "point",
     arcR0 = 34, arcR1 = 88, arcW = 26, arcSpan = 1.75, arcHead = 0.42, arcTail = 0.3,
-    alphaCurve = "smoothOut",
-    colors = { c(W, 0.95), c(P.accentCool, 0.8), c(P.accentCool, 0) } },
+    alphaCurve = "smoothOut", alpha = 0.85,
+    colors = { lt(P.o2, 0.25, 0.9), c(P.accentCool, 0.75), c(P.accentCool, 0) } },
   { layer = "air", blend = "add", shape = "streak",
     count = { 7, 10 }, life = { 0.14, 0.26 }, emit = "ring", radius = { 40, 72 },
     speed = { 130, 300 }, spread = 1.7, drag = 8, align = true, stretch = 0.015,
     size = { 6, 12 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
-    colors = { c(W, 1), c(P.o2, 0.7), c(P.accentCool, 0) } },
+    colors = { lt(P.o2, 0.3, 0.95), c(P.o2, 0.7), c(P.accentCool, 0) } },
 }
 
 -- Three of the five stops here opened on pure white, additive, on the one
@@ -636,15 +641,15 @@ DEFS.plant_burst = {
 -- being worked on and tells you, from across a clearing, which one is next.
 DEFS.chew_debris = {
   { layer = "world", blend = "alpha", shape = "shard",
-    count = { 3, 4 }, life = { 1.0, 1.9 }, emit = "disc", radius = { 0, 5 },
-    speed = { 110, 270 }, spread = 1.6, drag = 5.5, grav = 480, settle = 0.5,
-    size = { 4, 9 }, sizeCurve = "hold", alphaCurve = "lateOut",
-    spin = { -16, 16 }, tumble = 10,
-    colors = { c(R.bark[4]), c(R.bark[3]), c(R.bark[2]), c(R.bark[1], 0) } },
+    count = { 4, 5 }, life = { 1.1, 2.1 }, emit = "disc", radius = { 0, 5 },
+    speed = { 130, 300 }, spread = 1.6, drag = 5.5, grav = 480, settle = 0.5,
+    size = { 7, 14 }, sizeCurve = "hold", alphaCurve = "lateOut",
+    spin = { -16, 16 }, tumble = 6,
+    colors = { lt(R.bark[4], 0.3), c(R.bark[4]), c(R.bark[3]), c(R.bark[2], 0) } },
   { layer = "ground", blend = "alpha", shape = "smoke",
-    count = { 1, 2 }, life = { 0.3, 0.55 }, emit = "disc", radius = { 0, 6 },
-    speed = { 30, 90 }, spread = 1.8, drag = 6,
-    size = { 8, 17 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.42,
+    count = { 2, 3 }, life = { 0.3, 0.6 }, emit = "disc", radius = { 0, 6 },
+    speed = { 40, 110 }, spread = 1.8, drag = 6,
+    size = { 10, 22 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.55,
     spin = { -2, 2 },
     colors = { c(R.sand[3], 0.6), c(R.bark[3], 0.35), c(R.soil[1], 0) } },
   { layer = "world", blend = "alpha", shape = "leaf",
@@ -662,15 +667,16 @@ DEFS.chew_debris = {
 DEFS.tree_snap = {
   { layer = "ground", blend = "alpha", shape = "ring",
     count = 1, life = 0.42, emit = "point",
-    ring0 = 5, ring1 = 66, ringW = 9, ringSegs = 30, ringCurve = "swell",
-    ringWob = 0.17, ringWobN = 4, alphaCurve = "smoothOut", alpha = 0.5,
+    ring0 = 5, ring1 = 66, ringW = 13, ringSegs = 28, ringCurve = "swell",
+    ringWob = 0.19, ringWobN = 4, ringCore = 0.2,
+    alphaCurve = "smoothOut", alpha = 0.45,
     colors = { c(R.sand[3], 0.75), c(R.soil[3], 0.4), c(R.soil[1], 0) } },
   { layer = "world", blend = "alpha", shape = "shard",
     count = { 8, 12 }, life = { 1.6, 2.8 }, emit = "disc", radius = { 0, 9 },
     speed = { 90, 290 }, spread = TAU, drag = 5.0, grav = 300, settle = 0.42,
     size = { 6, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -13, 13 }, tumble = 8,
-    colors = { c(R.bark[4]), c(R.bark[3]), c(R.bark[2]), c(R.bark[1], 0) } },
+    colors = { lt(R.bark[4], 0.2), c(R.bark[4]), c(R.bark[3]), c(R.bark[2], 0) } },
   { layer = "ground", blend = "alpha", shape = "smoke",
     count = { 5, 7 }, life = { 0.5, 1.0 }, emit = "disc", radius = { 2, 14 },
     speed = { 45, 140 }, spread = TAU, drag = 5.0,
@@ -687,9 +693,10 @@ DEFS.tree_snap = {
 DEFS.tree_crash = {
   { layer = "ground", blend = "alpha", shape = "ring",
     count = 1, life = 0.7, emit = "point",
-    ring0 = 18, ring1 = 200, ringW = 20, ringSegs = 48, ringCurve = "swell",
-    ringWob = 0.22, ringWobN = 5, alphaCurve = "smoothOut", alpha = 0.6,
-    colors = { c(R.sand[4], 0.8), c(R.soil[3], 0.45), c(R.soil[1], 0) } },
+    ring0 = 16, ring1 = 152, ringW = 26, ringSegs = 40, ringCurve = "swell",
+    ringWob = 0.24, ringWobN = 4, ringCore = 0.16,
+    alphaCurve = "smoothOut", alpha = 0.36,
+    colors = { c(R.sand[3], 0.7), c(R.soil[3], 0.4), c(R.soil[1], 0) } },
   { layer = "world", blend = "alpha", shape = "smoke",
     count = { 12, 16 }, life = { 0.9, 1.8 }, emit = "ring", radius = { 10, 60 },
     speed = { 110, 280 }, spread = 0.7, drag = 3.4, grav = -20, wind = 0.4,
@@ -707,7 +714,7 @@ DEFS.tree_crash = {
     speed = { 140, 400 }, spread = TAU, drag = 3.6, grav = 420, settle = 0.46,
     size = { 7, 17 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -15, 15 }, tumble = 9,
-    colors = { c(R.bark[4]), c(R.bark[3]), c(R.bark[2]), c(R.bark[1], 0) } },
+    colors = { lt(R.bark[4], 0.2), c(R.bark[4]), c(R.bark[3]), c(R.bark[2], 0) } },
   { layer = "world", blend = "alpha", shape = "leaf",
     count = { 14, 20 }, life = { 1.2, 2.6 }, emit = "disc", radius = { 0, 44 },
     speed = { 130, 380 }, spread = TAU, drag = 3.8, grav = 70, wind = 0.85,
@@ -837,13 +844,14 @@ DEFS.bot_death = {
   -- a short, cold flash: no celebration
   { layer = "air", blend = "add", shape = "flare",
     count = 1, life = 0.13, emit = "point",
-    size = { 58, 58 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.6,
-    colors = { c(P.botEye, 0.8), c(P.lightFriend, 0.45), c(R.metal[2], 0) } },
+    size = { 52, 52 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.5,
+    colors = { c(P.botEye, 0.7), c(P.lightFriend, 0.45), c(R.metal[2], 0) } },
   -- the ground scuffed out from under it
   { layer = "ground", blend = "alpha", shape = "ring",
     count = 1, life = 0.4, emit = "point",
-    ring0 = 5, ring1 = 58, ringW = 8, ringSegs = 28, ringCurve = "swell",
-    ringWob = 0.16, ringWobN = 4, alphaCurve = "smoothOut", alpha = 0.45,
+    ring0 = 5, ring1 = 58, ringW = 10, ringSegs = 28, ringCurve = "swell",
+    ringWob = 0.18, ringWobN = 4, ringCore = 0.3,
+    alphaCurve = "smoothOut", alpha = 0.42,
     colors = { c(R.sand[3], 0.7), c(R.soil[2], 0.4), c(R.soil[1], 0) } },
   -- Smoke that hangs -- at the wreck's depth, not above the forest. On "air"
   -- it drew over every canopy in the frame, and in cold pale `rock` grey a
@@ -910,8 +918,9 @@ DEFS.bot_felled = {
   -- 5. a low blue wash on the ground, so you can find the body
   { layer = "ground", blend = "add", shape = "ring",
     count = 1, life = 0.5, emit = "point",
-    ring0 = 4, ring1 = 52, ringW = 6, ringSegs = 28, ringCurve = "swell",
-    ringWob = 0.14, ringWobN = 4, alphaCurve = "smoothOut", alpha = 0.34,
+    ring0 = 4, ring1 = 50, ringW = 7, ringSegs = 28, ringCurve = "swell",
+    ringWob = 0.16, ringWobN = 4, ringCore = 0.45,
+    alphaCurve = "smoothOut", alpha = 0.32,
     colors = { c(P.lightFriend, 0.55), c(P.o2, 0.3), c(P.lightFriend, 0) } },
 }
 
@@ -929,58 +938,74 @@ DEFS.bot_felled = {
 --   * it is DIRECTIONAL. Emitted with the vector from the hull outward, so the
 --     blast sprays back off the plate instead of ballooning symmetrically --
 --     it reads as something arriving and hitting, not as something popping.
---   * it has an ARC. The one shape in the library nothing else uses at this
---     scale: a fan of pressure riding along the hull face.
+--   * it has a JET. Lit vapour blasted back off the plate in a cone -- the only
+--     additive smoke in this file, and the only explosion in the game with a
+--     direction and a soft glowing body instead of a symmetrical starburst.
 --   * it LEAVES SOMETHING. Brass lands at the rig's feet and stays. By the
 --     end of the extraction the ground around it is covered in them.
 --   * and it BREATHES OUT. After the bang, a slow column of blue drifting up
 --     for two seconds. That part is the eulogy, and it is why the effect is
 --     allowed to be the longest one in the file.
--- Nothing reaches white; the hottest stop is `o2` lifted a fifth of the way,
--- which is a pale cyan and still unmistakably a colour.
+-- Nothing reaches white: the hottest stop anywhere in it is `o2` itself, and
+-- the flash is deliberately small -- the size of the bot that just went off,
+-- not the size of the rig -- because this lands twenty times in two minutes
+-- against the brightest surface in the game.
 DEFS.bot_detonate = {
-  -- 1. the flash, wide and very short
+  -- 1. the flash. Short, but with a heart behind it that lasts long enough to
+  --    be seen: at 0.12 s and nothing underneath, the middle of the biggest
+  --    moment in the game was a dark hole two frames after it went off.
   { layer = "air", blend = "add", shape = "flare",
-    count = 1, life = 0.12, emit = "point",
-    size = { 96, 96 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.9,
-    colors = { lt(P.o2, 0.2, 0.95), c(P.botEye, 0.75), c(P.lightFriend, 0) } },
+    count = 1, life = 0.15, emit = "point",
+    size = { 46, 46 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.5,
+    colors = { c(P.botEye, 0.9), c(P.lightFriend, 0.6), c(P.lightFriend, 0) } },
+  { layer = "air", blend = "add", shape = "glow",
+    count = 1, life = 0.3, emit = "point",
+    size = { 30, 30 }, sizeCurve = "shrink", alphaCurve = "smoothOut", alpha = 0.45,
+    colors = { c(P.botEye, 0.85), c(P.lightFriend, 0.5), c(P.lightFriend, 0) } },
   -- 2. and the after-bloom behind it, with the pink in it: these things loved you
   { layer = "air", blend = "add", shape = "glow",
-    count = 1, life = 0.46, emit = "point",
-    size = { 44, 170 }, sizeCurve = "bloom", alphaCurve = "smoothOut", alpha = 0.3,
+    count = 1, life = 0.5, emit = "point",
+    size = { 34, 92 }, sizeCurve = "bloom", alphaCurve = "smoothOut", alpha = 0.15,
     colors = { c(P.lightFriend, 0.7), c(P.love, 0.4), c(P.lightFriend, 0) } },
-  -- 3. two fronts, both out of round, the second thinner and quicker
+  -- 3. two fronts, both out of round: a thin quick one and a wider, softer one
+  --    behind it. Thin on purpose -- a fat ring is a soap bubble.
   { layer = "air", blend = "add", shape = "ring",
-    count = 1, life = 0.44, emit = "point",
-    ring0 = 10, ring1 = 156, ringW = 15, ringSegs = 40, ringCurve = "swell",
-    ringWob = 0.20, ringWobN = 5, alphaCurve = "smoothOut", alpha = 0.5,
-    colors = { c(P.botEye, 0.75), c(P.o2, 0.45), c(P.lightFriend, 0) } },
+    count = 1, life = 0.26, emit = "point",
+    ring0 = 8, ring1 = 86, ringW = 3, ringSegs = 36, ringCurve = "swell",
+    ringWob = 0.13, ringWobN = 6, alphaCurve = "sharpOut", alpha = 0.6,
+    colors = { c(P.o2, 0.85), c(P.lightFriend, 0.6), c(P.lightFriend, 0) } },
   { layer = "air", blend = "add", shape = "ring",
-    count = 1, life = 0.3, emit = "point",
-    ring0 = 8, ring1 = 112, ringW = 4, ringSegs = 40, ringCurve = "swell",
-    ringWob = 0.11, ringWobN = 7, alphaCurve = "sharpOut", alpha = 0.75,
-    colors = { lt(P.o2, 0.18, 0.9), c(P.lightFriend, 0.6), c(P.lightFriend, 0) } },
-  -- 4. the fan up the plate
-  { layer = "air", blend = "add", shape = "arc",
-    count = 1, life = 0.3, emit = "point",
-    arcR0 = 16, arcR1 = 128, arcW = 44, arcSpan = 2.5, arcHead = 0.4, arcTail = 0.28,
-    alphaCurve = "smoothOut", alpha = 0.6,
-    colors = { c(P.botEye, 0.85), c(P.o2, 0.5), c(P.lightFriend, 0) } },
+    count = 1, life = 0.42, emit = "point",
+    ring0 = 12, ring1 = 118, ringW = 7, ringSegs = 36, ringCurve = "swell",
+    ringWob = 0.23, ringWobN = 4, ringCore = 0.4,
+    alphaCurve = "smoothOut", alpha = 0.3,
+    colors = { c(P.botEye, 0.7), c(P.o2, 0.4), c(P.lightFriend, 0) } },
+  -- 4. THE JET. Lit vapour blasted straight back off the plate, in a cone
+  --    along the impact normal. This is the piece that makes a detonation
+  --    unmistakable: it is the only additive smoke in the file, so it is the
+  --    only explosion in the game with a *direction* and a soft glowing body
+  --    rather than a symmetrical starburst -- you can see, from across the
+  --    clearing, which face of the rig just took one.
+  { layer = "air", blend = "add", shape = "smoke",
+    count = { 4, 6 }, life = { 0.26, 0.55 }, emit = "disc", radius = { 0, 6 },
+    speed = { 220, 500 }, spread = 1.15, drag = 6.5,
+    size = { 16, 42 }, sizeCurve = "swell", alphaCurve = "sharpOut", alpha = 0.14,
+    spin = { -2, 2 },
+    colors = { c(P.o2, 0.55), c(P.lightFriend, 0.35), c(P.lightFriend, 0) } },
   -- 5. brass. It flies back off the hull, it tumbles, and it stays there.
   { layer = "world", blend = "alpha", shape = "shard",
     count = { 12, 16 }, life = { 1.8, 3.2 }, emit = "disc", radius = { 0, 10 },
     speed = { 230, 620 }, spread = 2.3, drag = 3.2, grav = 480, settle = 0.45,
     size = { 7, 16 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -22, 22 }, tumble = 13,
-    colors = { lt(R.metalW[4], 0.2), c(R.metalW[3]), c(R.metalW[2]),
-               c(R.metalW[1], 0) } },
-  -- 6. hot fragments, all directions, gone fast
+    colors = { c(R.metalW[3]), c(R.metalW[2]), c(R.metalW[1], 0) } },
+  -- 6. hot fragments, thrown back off the plate
   { layer = "air", blend = "add", shape = "spark",
     count = { 8, 12 }, life = { 0.16, 0.36 }, emit = "disc", radius = { 0, 8 },
-    speed = { 300, 700 }, spread = TAU, drag = 6.5, grav = 180,
+    speed = { 300, 700 }, spread = 3.4, drag = 6.5, grav = 180,
     align = true, stretch = 0.008,
-    size = { 6, 18 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
-    colors = { lt(P.botEye, 0.15, 1), c(P.o2, 0.8), c(P.lightFriend, 0) } },
+    size = { 6, 18 }, sizeCurve = "shrink", alphaCurve = "sharpOut", alpha = 0.85,
+    colors = { c(P.botEye, 0.95), c(P.o2, 0.7), c(P.lightFriend, 0) } },
   -- 7. the column, drifting off the hull
   { layer = "world", blend = "alpha", shape = "smoke",
     count = { 6, 9 }, life = { 1.8, 3.2 }, emit = "disc", radius = { 2, 14 },
@@ -1095,9 +1120,10 @@ DEFS.blight_death = {
   -- 1. the pressure wave, on the floor, out of round
   { layer = "ground", blend = "alpha", shape = "ring",
     count = 1, life = 0.34, emit = "point",
-    ring0 = 6, ring1 = 78, ringW = 10, ringSegs = 30, ringCurve = "swell",
-    ringWob = 0.19, ringWobN = 5, alphaCurve = "smoothOut", alpha = 0.55,
-    colors = { c(R.blight[3], 0.8), c(P.necrosis, 0.5), c(R.ash[1], 0) } },
+    ring0 = 6, ring1 = 64, ringW = 12, ringSegs = 28, ringCurve = "swell",
+    ringWob = 0.20, ringWobN = 4, ringCore = 0.35,
+    alphaCurve = "smoothOut", alpha = 0.5,
+    colors = { c(P.danger, 0.5), c(R.blight[3], 0.45), c(R.ash[1], 0) } },
   -- 2. the flash, and it is a *shape*: an irregular blob, not the library's
   --    four-point star, so a rupture never reads as a muzzle or a pickup
   { layer = "air", blend = "add", shape = "blob",
@@ -1114,7 +1140,7 @@ DEFS.blight_death = {
     speed = { 190, 520 }, spread = TAU, drag = 4.8, grav = 300, settle = 0.32,
     size = { 6, 14 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -22, 22 }, tumble = 12,
-    colors = { lt(R.blight[3], 0.2), c(R.blight[2]), c(P.necrosis, 0.55),
+    colors = { lt(R.blight[3], 0.38), c(R.blight[3]), c(P.necrosis, 0.6),
                c(R.ash[1], 0) } },
   -- 4. the wet part
   { layer = "world", blend = "alpha", shape = "spore",
@@ -1315,6 +1341,7 @@ local function normEmitter(e)
     e.ringSegs = e.ringSegs or 32
     e.ringWob = e.ringWob or 0
     e.ringWobN = e.ringWobN or 5
+    e.ringCore = e.ringCore or 1
   elseif e.shape == "arc" then
     e.kind = KIND_ARC
     e.arcR0 = e.arcR0 or 20; e.arcR1 = e.arcR1 or 70
@@ -1534,7 +1561,12 @@ local function fire(e, x, y, o)
 end
 
 --- Fire a named effect. `opts` is never retained.
+--- The lazy init matters: DEFS are only normalised inside `init`, and an entity
+--- that fires an effect during a scene's `enter` -- a tree felled by the world
+--- generator, a bot booted before the first frame -- reaches `fire` with an
+--- emitter that has none of its derived fields yet.
 function VFX.emit(name, x, y, o)
+  if not inited then VFX.init() end
   local def = DEFS[name]
   if not def then return 0 end
   if o and (o.dx or o.dy) then
@@ -1549,6 +1581,7 @@ end
 --- Fire an ad-hoc definition table (single emitter or array of them).
 function VFX.spawn(def, x, y, o)
   if not def then return 0 end
+  if not inited then VFX.init() end
   local list = def
   if def.shape or def.colors or def.count then list = { def } end
   if not list[1].kind then
@@ -1567,6 +1600,7 @@ end
 --- Fractional counts accumulate on the definition, so many callers of the same
 --- effect still add up to the right aggregate rate.
 function VFX.stream(name, x, y, dt, o)
+  if not inited then VFX.init() end
   local def = DEFS[name]
   if not def then return 0 end
   local mul = (o and o.rate) or 1
@@ -1778,15 +1812,22 @@ local function drawRing(p, t)
   -- a pressure wave and a smoke ring.
   local pts
   if e.ringWob > 0 then
-    if segs < 24 then segs = 24 end
+    if segs < 28 then segs = 28 end
     local amp = e.ringWob * (0.34 + 0.66 * t)
-    local ph = p.seed * TAU
-    local k1 = e.ringWobN
-    local k2 = e.ringWobN * 2 + 1
+    -- Three harmonics, each with its own phase off the particle's seed, and the
+    -- base lobe count jittered per particle. Two harmonics at N and 2N+1 in
+    -- lockstep is a daisy: evenly spaced petals, the same flower every time.
+    -- These beat against each other, so one side of the front runs ahead, one
+    -- side is flat, and no two blasts are the same shape.
+    local s = p.seed
+    local ph = s * TAU
+    local k1 = e.ringWobN + floor(s * 3)
     local n = 0
     for i = 0, segs do
       local th = i / segs * TAU
-      local d = 1 + amp * (sin(k1 * th + ph) * 0.62 + sin(k2 * th + ph * 1.7) * 0.38)
+      local d = 1 + amp * (sin(k1 * th + ph) * 0.5
+                         + sin((k1 + 3) * th + ph * 2.3) * 0.31
+                         + sin((k1 * 2 + 1) * th + ph * 4.1) * 0.19)
       local rr = r * d
       WOB_PTS[n + 1] = p.x + cos(th) * rr
       WOB_PTS[n + 2] = p.y + sin(th) * rr
@@ -1802,10 +1843,16 @@ local function drawRing(p, t)
   g.setColor(cr, cg, cb, ca * 0.38)
   g.setLineWidth(w * 1.35)
   if pts then g.line(pts) else g.circle("line", p.x, p.y, r, segs) end
-  local k = 0.2
-  g.setColor(cr + (W[1] - cr) * k, cg + (W[2] - cg) * k, cb + (W[3] - cb) * k, ca)
-  g.setLineWidth(w * 0.5 < 0.9 and 0.9 or w * 0.5)
-  if pts then g.line(pts) else g.circle("line", p.x, p.y, r, segs) end
+  -- The hot inner stroke is what makes a ring read as a *rim*. Dust does not
+  -- have a rim, so `ringCore` takes it down (or off) for the ground-layer
+  -- shoves, and the thin bright loop stays where it belongs: on discharges.
+  local core = e.ringCore
+  if core > 0.01 then
+    local k = 0.2 * core
+    g.setColor(cr + (W[1] - cr) * k, cg + (W[2] - cg) * k, cb + (W[3] - cb) * k, ca * core)
+    g.setLineWidth(w * 0.5 < 0.9 and 0.9 or w * 0.5)
+    if pts then g.line(pts) else g.circle("line", p.x, p.y, r, segs) end
+  end
 end
 
 local ARC_SEGS = 20

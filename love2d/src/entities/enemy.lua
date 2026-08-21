@@ -96,6 +96,26 @@ function Enemy:release()
   if t and t.stopChew then t:stopChew() end
 end
 
+--- Wood coming off a tree that is being eaten.
+---
+--- The whole of the Blight taking the forest apart used to be two leaves twice a
+--- second, thrown from the top of the canopy: from anywhere but on top of it, a
+--- Chomper eating a tree and a Chomper standing next to one looked the same, and
+--- the forest quietly went down while nothing on screen said so. The chips come
+--- off the *trunk*, on the side the teeth are, going away from the wood -- and
+--- they lie where they land, so a tree that has been worked on for ten seconds
+--- has a litter round its base you can read from across the clearing.
+local BITE = { dx = 0, dy = 0, power = 1 }
+function Enemy:biteDebris(t, power)
+  if not t then return end
+  local nx, ny = U.norm(self.x - t.x, self.y - t.y)
+  if nx == 0 and ny == 0 then nx, ny = 1, 0 end
+  local r = (t.radius or 8) + 2
+  BITE.dx, BITE.dy = nx, ny
+  BITE.power = power or 1
+  VFX.emit("chew_debris", t.x + nx * r, t.y + ny * r - 6, BITE)
+end
+
 function Enemy:update(dt)
   self:updateCommon(dt)
   if self.wardedT > 0 then
@@ -202,7 +222,7 @@ function Enemy:update_chomper(dt)
     self.chewT = self.chewT + dt
     if self.rng:chance(dt * 2.5) then
       Audio.play("chomp", { pitch = self.rng:range(0.9, 1.15), volume = 0.5, x = self.x, y = self.y })
-      VFX.emit("leaf_litter", t.x, t.y - t.radius, { count = 2 })
+      self:biteDebris(t)
     end
   else
     self:release()
@@ -379,6 +399,8 @@ function Enemy:update_siphon(dt)
     -- of the island is being taken apart -- so it is load-bearing, not dressing.
     Audio.siphonFeeding(self.x, self.y)
     if self.rng:chance(dt * 5) then VFX.emit("blight_spore", self.x, self.y + 10) end
+    -- it is taking the tree, so the tree has to be visibly coming apart
+    if self.rng:chance(dt * 1.6) then self:biteDebris(t, 0.7) end
   end
 end
 
@@ -409,6 +431,8 @@ function Enemy:update_bulwark(dt)
       -- doing nothing but dust and screen shake.
       self:engage(t)
       VFX.emit("slam_dust", self.x, self.y)
+      -- and if what it just hit was a tree, that is wood coming off it
+      if t.kind == "tree" or t.startChew then self:biteDebris(t, 1.5) end
       J.shake(0.1)
     end
   end
@@ -678,7 +702,12 @@ function Enemy:onDeath()
     end
     Signal.emit("blight:cleared", self)
   end
-  VFX.emit("blight_death", self.x, self.y, { power = self.radius / 14 })
+  -- Scale and power both, off the body. `power` alone drove the debris speed
+  -- and left the shockwave the size of a Chomper's: a Maw is more than twice
+  -- the radius and rupturing one looked identical to popping the smallest thing
+  -- on the island, only with the chunks thrown further.
+  VFX.emit("blight_death", self.x, self.y,
+           { power = self.radius / 14, scale = 0.75 + self.radius / 40 })
   Audio.play("enemy_die", { x = self.x, y = self.y })
   J.shake(0.06)
   if w and w.chips and w.chips:has("thornburst") then

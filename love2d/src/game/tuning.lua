@@ -29,6 +29,9 @@ T.player = {
   shove = {
     arc = math.rad(100), range = 82, cooldown = 0.3, force = 520,
     stun = 0.55, hitstop = 0.055, trauma = 0.34, damage = 1,
+    -- The blade lights what it cuts. Three lights are laid along the arc so
+    -- the swing sweeps rather than flashes.
+    light = { radius = 150, gain = 1.6 },
   },
   -- The Pulse used to cost eight cobalt. Traced across five runs the bank sits
   -- at 0-13 from cycle 2 onward, so the panic button was unaffordable at
@@ -97,6 +100,21 @@ T.cobalt = {
 --------------------------------------------------------------------------- bots
 -- cost, hp, and the numbers each behaviour needs.
 T.bots = {
+  -- What a bot puts back into the lighting buffer after dusk. The crew used to
+  -- light a 5-radius circle at half strength while the Blight -- retuned twice
+  -- since -- lit seven and a half at one and a half, so at night the enemy was
+  -- the best-lit thing on the island and your own crew were shapes moving
+  -- between the red pools. They are forty-eight lamps you paid for; they
+  -- should read like it.
+  light = {
+    radius   = 6.6,   -- multiples of the bot's own radius
+    gain     = 1.05,
+    downGain = 0.55,  -- a bot on the ground still has to be findable
+    core     = 1.7,   -- a tight centre, so the chassis is lit and not just the grass
+    coreGain = 0.8,
+    bodyGain = 0.55,  -- the glow drawn *on* it
+    bodySize = 1.5,
+  },
   order = { "planter", "builder", "repulsor", "sentry", "harvester", "beacon" },
 
   planter = {
@@ -105,11 +123,11 @@ T.bots = {
     -- build, it is the absence of one.
     label = "PLANTER", prefix = "SEED", cost = 10, hp = 3, radius = 12, speed = 78,
     costGrowth = 0.26,
-    -- Scaled with the cycle. This is a wall-clock period and the clock moved:
-    -- a minute-long cycle is a third of what it was, so a rate left at 15 s
-    -- bought a third of the forest it used to and the sky could not be filled
-    -- however well you played.
-    plantEvery = 10.0, minTreeGap = 40, wanderRetarget = { 1.2, 3.4 },
+    -- Scaled with the cycle, and rescaled when the cycle changed again. This
+    -- is a wall-clock period: the forest a run reaches is roughly its length
+    -- divided by this, so the two have to move together or the sky is either
+    -- unfillable or full by cycle four.
+    plantEvery = 18.0, minTreeGap = 40, wanderRetarget = { 1.2, 3.4 },
     desc = "Wanders and plants saplings, forever.",
   },
   builder = {
@@ -188,9 +206,9 @@ T.tree = {
   growTime      = 26,          -- sapling -> mature
   elderTime     = 540,         -- mature -> elder; Old Growth makes it far quicker
   -- Also scaled with the cycle, and it matters more than the Planters do:
-  -- spread compounds, so shortening the run cut the number of doublings rather
-  -- than a fixed number of trees.
-  spreadEvery   = { 47, 85 },  -- seconds between seedling attempts
+  -- spread compounds, so the run's length changes the number of doublings
+  -- rather than a fixed number of trees.
+  spreadEvery   = { 82, 150 }, -- seconds between seedling attempts
   -- Only trees on the edge of the wood put out seedlings. That is what turns the
   -- forest into an advancing front with a defensible line instead of a mat.
   -- Nothing roots in bare rock. The island's stone spines therefore stay clear,
@@ -257,17 +275,17 @@ T.o2 = {
 ------------------------------------------------------------------------ cycles
 T.cycle = {
   count      = 7,
-  -- One minute a cycle, dusk included. The ratio of day to night is kept from
+  -- Two minutes a cycle, dusk included. The ratio of day to night is kept from
   -- the old curve -- three-fifths day at the start, even by the end -- so the
   -- shape of the campaign survives the compression even though the run does
-  -- not: seven cycles is now about eight minutes rather than twenty-two.
-  dayLen     = { 32, 32, 31, 30, 29, 28, 27 },
-  duskLen    = 6,
+  -- not: seven cycles is about seventeen minutes.
+  dayLen     = { 64, 64, 62, 60, 58, 56, 54 },
+  duskLen    = 12,
   -- Dusk is otherwise twelve dead seconds. HOLD THE DAWN buys more day at the
   -- price of a worse night: one decision, every cycle, with a real cost.
-  holdExtra  = 12,
+  holdExtra  = 24,
   holdBudget = 1.45,
-  nightLen   = { 22, 22, 23, 24, 25, 26, 27 },
+  nightLen   = { 44, 44, 46, 48, 50, 52, 54 },
   -- The night's spend used to be mostly a function of how big your forest was:
   -- 0.28 a tree meant every tree you grew bought the Blight more of a night,
   -- in exact proportion, so growth was self-punishing and loss was
