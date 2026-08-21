@@ -398,6 +398,7 @@ T.hud = {
     holdW     = 260,   -- HOLD THE DAWN moves to the freed bottom-centre band and
     holdH     = 74,    -- becomes a tap target rather than a key prompt
     holdUp    = 26,    -- above the bottom safe edge
+    holdGap   = 14,    -- ...and this much clear of the thumb cluster
     bossUp    = 118,   -- the boss bar's baseline above the bottom safe edge
     bossW     = 0.42,  -- ...and its width, so its end clears the thumb cluster
     overlayFloor = 214,

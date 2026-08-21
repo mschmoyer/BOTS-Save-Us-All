@@ -141,8 +141,9 @@ function Touch.getContext() return context end
 local latch = {}
 for i = 1, ACT_N do latch[ACT[i].id] = 0 end
 for i = 1, #TU.bots.order do latch["build" .. i] = 0 end
-latch.map    = 0
-latch.commit = 0
+latch.map     = 0
+latch.commit  = 0
+latch.confirm = 0
 
 ------------------------------------------------------------------------ layout
 local L = {
@@ -150,7 +151,7 @@ local L = {
   sl = 0, st = 0, sr = 0, sb = 0,          -- safe-area insets
   px = 0, py = 0,                          -- the thumb pivot
   stickX0 = 0, stickX1 = 0, stickTop = 0,
-  homeX = 0, homeY = 0, anchor = -1,
+  homeX = 0, homeY = 0, anchor = -1, safeW = -1, safeH = -1,
   ringR = 0, nubR = 0,
   dirty = true,
 }
@@ -171,13 +172,18 @@ function Touch.getSafeArea() return L.sl, L.st, L.sr, L.sb end
 --- is still drawing a rounded display corner and a camera housing over the
 --- outermost band, and on a native build there is no shell to pad the canvas.
 --- The HUD reads this too, so the two layers agree about where the glass ends.
+--- Keep the read insets current even if nothing has laid out yet: the HUD asks
+--- for these to place its own readouts and it may ask first.
+local ensureSafe
 function Touch.safeInsets()
+  ensureSafe()
   local f = CFG.safeFloor
   return max(L.sl, f), max(L.st, f), max(L.sr, f), max(L.sb, f)
 end
 
 local function readSafeArea(w, h, s)
   if safeManual then return end
+  L.safeW, L.safeH = w, h
   local l, t, r, b
   if love.window and love.window.getSafeArea then
     local ok, x, y, sw, sh = pcall(love.window.getSafeArea)
@@ -198,6 +204,12 @@ local function readSafeArea(w, h, s)
   L.sl, L.st, L.sr, L.sb = max(l, 0), max(t, 0), max(r, 0), max(b, 0)
 end
 
+ensureSafe = function()
+  local w, h = lg.getDimensions()
+  if L.safeW == w and L.safeH == h then return end
+  readSafeArea(w, h, min(min(w, h), max(w, h) * CFG.aspectRef))
+end
+
 --- Recompute every hit target. Only runs when something structural changed.
 local function layout()
   local w, h = lg.getDimensions()
@@ -207,7 +219,7 @@ local function layout()
   if not L.dirty and w == L.w and h == L.h and scale == L.scale and side == L.side then return end
   L.w, L.h, L.s, L.scale, L.side, L.dirty = w, h, s, scale, side, false
 
-  readSafeArea(w, h, s)
+  ensureSafe()
   local sl, st, sr, sb = Touch.safeInsets()
 
   local mirror = (side == "left") and -1 or 1
@@ -333,6 +345,25 @@ local function freeSlot()
     if slots[i].id == nil then return slots[i] end
   end
   return nil
+end
+
+--- The bounding box of the thumb cluster, in screen pixels, or nil when the
+--- layer is not up. The HUD asks so that the one panel it puts in the freed
+--- bottom band -- the dawn offer -- can be kept out from under a button.
+function Touch.clusterBounds()
+  if not Touch.active then return nil end
+  local x0, y0, x1, y1 = math.huge, math.huge, -math.huge, -math.huge
+  for i = 1, ACT_N do
+    local b = ACT[i]
+    if b.ring ~= "rail" and b.on and b.r > 0 then
+      if b.x - b.r < x0 then x0 = b.x - b.r end
+      if b.y - b.r < y0 then y0 = b.y - b.r end
+      if b.x + b.r > x1 then x1 = b.x + b.r end
+      if b.y + b.r > y1 then y1 = b.y + b.r end
+    end
+  end
+  if x0 == math.huge then return nil end
+  return x0, y0, x1, y1
 end
 
 function Touch.touchCount()
@@ -513,6 +544,21 @@ end
 function Touch.onPressed(id, x, y)
   Touch.activate()
   if not Touch.enabled then return end
+  -- A cutscene owns the whole screen, so the whole screen is the button. There
+  -- is no SPACE bar on a phone and the control layer has faded out under the
+  -- letterbox with the rest of the chrome: without this the prologue is a
+  -- dead end, which is a poor way to open a game.
+  if HUD.cinematic then
+    local ok, on = pcall(HUD.cinematic)
+    if ok and on then
+      latch.confirm = max(latch.confirm, CFG.latch * 1.5)
+      buzz(CFG.hapticTap)
+      return
+    end
+  end
+  -- ...and a layer that has stepped out of the way for a menu takes nothing at
+  -- all: a shove fired through the dawn draft is the bug invisible buttons are
+  -- for.
   if (Touch.gate or 1) < CFG.gateMin then return end
   layout()
   local sl = freeSlot()
@@ -817,6 +863,22 @@ function Touch.isDown(a, b)
   local btn = BY_ID[action]
   if btn then return btn.slot ~= nil and not btn.modal end
   return false
+end
+
+--- What to print in a prompt for an action, in this layer's language.
+---
+--- Every touch prompt in the game used to read "TAP", which was true and
+--- useless: with six things on the glass, "TAP SEND THEM SOMEWHERE" does not
+--- say which of them. A verb that has a button is named by that button's own
+--- caption -- including the contextual one, so a rescue hint reads CARRY the
+--- moment you are standing over somebody. Anything without a button really is
+--- just a tap, on the panel that is offering it.
+function Touch.glyphFor(action)
+  if action == "map" then return "MAP" end
+  local b = BY_ID[action]
+  if not b then return "TAP" end
+  if b.context then return CONTEXT[context].label end
+  return b.label
 end
 
 --- Charge progress of the pulse button, 0..1. Purely cosmetic.

@@ -75,11 +75,11 @@ end
 
 --- Loose cobalt on the ground, worth `value`, thrown a little way. Loose chunks
 --- magnetise to the player, so this is money you have to walk to.
-local function dropChunk(w, x, y, value, kick)
-  local c = CobaltE.new(x, y, w, w.rng, false)
+local function dropChunk(chips, w, x, y, value, kick)
+  local c = CobaltE.new(x, y, w, chips.rng, false)
   if value then c.left = max(1, floor(value)) end
   if kick and kick > 0 then
-    local a = w.rng:angle()
+    local a = chips.rng:angle()
     c:push(cos(a), sin(a), kick)
   end
   w:addEntity(w.cobalts, w.hCobalt, c)
@@ -174,8 +174,9 @@ local C = {
       if not e or e.kind ~= "enemy" then return end
       local cost = (e.def and e.def.cost) or 4
       local n = cost >= 14 and 3 or 1
+      local rng = chips.rng
       for _ = 1, n do
-        dropChunk(w, e.x + w.rng:range(-8, 8), e.y + w.rng:range(-8, 8), nil, 110)
+        dropChunk(chips, w, e.x + rng:range(-8, 8), e.y + rng:range(-8, 8), nil, 110)
       end
     end },
   },
@@ -252,8 +253,9 @@ local C = {
       if cost <= 0 then return end
       local n = U.clamp(floor(cost / 8) + 1, 1, 6)
       local per = max(1, floor(cost / n))
+      local rng = chips.rng
       for _ = 1, n do
-        dropChunk(w, b.x + w.rng:range(-14, 14), b.y + w.rng:range(-14, 14), per, 130)
+        dropChunk(chips, w, b.x + rng:range(-14, 14), b.y + rng:range(-14, 14), per, 130)
       end
     end },
   },
@@ -283,7 +285,7 @@ local C = {
       if not tx then return end
       eachBot(w, function(b)
         if b.static or b.state ~= "work" then return end
-        local a, d = w.rng:angle(), w.rng:range(0, 150)
+        local a, d = chips.rng:angle(), chips.rng:range(0, 150)
         b.wx, b.wy = onLand(w, tx + cos(a) * d, ty + sin(a) * d)
       end)
     end },
@@ -345,20 +347,16 @@ local C = {
 
   --------------------------------------------------------------------- rares
   { id = "oldGrowth", f = F.GROWTH, r = 3, name = "OLD GROWTH",
-    desc = "Trees reach their elder years three times sooner. An elder seeds no more.",
-    -- Was the one card that decided whether a run could reach its win
-    -- condition, and it cost nothing. It costs the forest's compounding now:
-    -- your wood converts into oxygen instead of into more wood, and if you take
-    -- it early the frontier stops advancing while you still need it to.
-    mod = { elderRate = 3.0 },
-    every = 1.0,
-    tick = function(chips, w, dt)
-      local trees = w.trees
-      for i = 1, #trees do
-        local t = trees[i]
-        if t.alive and t.stage == "elder" then t.nextSpread = math.huge end
-      end
-    end },
+    desc = "Trees age into elders three times sooner, and grow up half as fast.",
+    -- Was the one card that decided whether a run could reach its win condition,
+    -- and it cost nothing. The cost is the near end of the forest now: a sapling
+    -- takes fifty-two seconds to make wood instead of twenty-six, and only wood
+    -- seeds, so the front of the advance is slowed exactly as much as the back
+    -- of it is hurried. (Sterilising elders was tried first and cost nothing at
+    -- all: an elder is an interior tree and the frontier rule had already
+    -- stopped it seeding.) `growRate` halves everything the multiplier touches,
+    -- eldering included, so the elder term is doubled to land on a true 3x.
+    mod = { elderRate = 6.0, growRate = 0.5 } },
 
   { id = "tallOrder", f = F.GROWTH, r = 3, name = "TALL ORDER",
     desc = "Elders count double. Saplings count for nothing at all.",
@@ -377,7 +375,7 @@ local C = {
     -- covered: a Scar left standing still lets the night start in your wood.
     mod = { budget = 2.0 },
     onAdd = function(chips, w)
-      w.frontSide = (w.director and w.director.side) or w.rng:int(0, 3)
+      w.frontSide = (w.director and w.director.side) or chips.rng:int(0, 3)
     end,
     every = 0.2,
     tick = function(chips, w, dt)
@@ -433,7 +431,7 @@ local C = {
     -- a go. Where you spend the charge stops being only about the swarm.
     on = { ["player:pulse"] = function(chips, w, p)
       local r = TU.player.pulse.radius * 0.58
-      local a0 = w.rng:angle()
+      local a0 = chips.rng:angle()
       for i = 0, 4 do
         local a = a0 + i * (U.TAU / 5)
         w:plantTree(p.x + cos(a) * r, p.y + sin(a) * r, "player")
@@ -491,6 +489,10 @@ function Chips:init(world)
   self.mods = {}
   self.list = {}
   self.acc = {}
+  -- A stream of its own, seeded off the world's. A card that jittered a drop
+  -- with `world.rng` would shift every later draw in the run, so owning it
+  -- changed the weather as well as the thing the card is for.
+  self.rng = U.rng(((world and world.seed) or 1) * 7717 + 13)
   wireSignals()
 
   -- Rules that need a frame need it on *world* time: Timer.global runs on the

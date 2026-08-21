@@ -199,20 +199,16 @@ function M.draw(world, cam, alpha)
   elseif Text.display and k < 0.3 then
     -- What opens it. Nothing else on the screen says so, so it is worth a line
     -- of type -- but only while the player is still learning the island, not
-    -- for the whole run. On a phone it goes *above* the plate: below it is the
-    -- rail, and under that the thumb.
+    -- for the whole run. It hangs under the plate's outer corner on both
+    -- layouts; on a phone that corner is clear because the rail runs down the
+    -- plate's *inboard* edge, not under it.
     local age = world.time or 0
     local hint = (0.5 - k) * 1.2 * U.saturate((90 - age) / 20) * alpha
     if hint > 0.01 then
-      if touch then
-        Text.display("TAP  MAP", cx, cy - 13, 10,
-                     { color = P.inkDim, alpha = hint, tracking = 0.26,
-                       align = "left", shadow = 2 })
-      else
-        Text.display(Input.glyph("map") .. "  MAP", cx + w, cy + h + 8, 10,
-                     { color = P.inkDim, alpha = hint, tracking = 0.24,
-                       align = "right", shadow = 1 })
-      end
+      Text.display(touch and "TAP  MAP" or (Input.glyph("map") .. "  MAP"),
+                   cx + w, cy + h + 8, 10,
+                   { color = P.inkDim, alpha = hint, tracking = 0.24,
+                     align = "right", shadow = touch and 2 or 1 })
     end
   end
   g.setColor(1, 1, 1, 1)

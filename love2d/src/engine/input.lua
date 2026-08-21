@@ -246,7 +246,18 @@ function Input.glyph(action)
     if b.pad and b.pad[1] then return GLYPH[Input.brand][b.pad[1]] or b.pad[1]:upper() end
     return "-"
   end
-  if Input.scheme == "touch" then return "TAP" end
+  -- Touch used to answer "TAP" for everything, which is true of every button on
+  -- the glass and therefore tells the player nothing: "TAP SEND THEM SOMEWHERE"
+  -- does not say which of six round buttons to tap. The touch layer names its
+  -- own controls, including the contextual one.
+  if Input.scheme == "touch" then
+    local t = Input.touchModule
+    if t and t.glyphFor then
+      local ok, g = pcall(t.glyphFor, action)
+      if ok and type(g) == "string" then return g end
+    end
+    return "TAP"
+  end
   local k = b.keys and b.keys[1]
   if not k then
     if b.mouse then return b.mouse[1] == 1 and "LMB" or "RMB" end

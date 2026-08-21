@@ -361,7 +361,12 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
           + vec2((fbm3(w * 0.0026 + 313.0) - 0.5) * 150.0,
                  (fbm3(w * 0.0026 +  91.0) - 0.5) * 110.0)
           + vec2((fbm3(w * 0.0115 + 27.0) - 0.5) * 26.0,
-                 (fbm3(w * 0.0115 + 53.0) - 0.5) * 20.0);
+                 (fbm3(w * 0.0115 + 53.0) - 0.5) * 20.0)
+          // one last small, fast term: without it every slab edge is a clean
+          // straight bisector and the spine reads as paving rather than as
+          // stone that has broken
+          + vec2((vn(w * 0.052 + 9.0) - 0.5) * 7.5,
+                 (vn(w * 0.052 + 71.0) - 0.5) * 6.0);
   vec2 sw = vec2(dot(uSun, td), dot(uSun, gd)) * 7.0;
   vec2 cs = vec2(0.0138, 0.0230);                   // ~72 x 43 px slabs
   vec3 ca = cells(pw * cs);
@@ -372,8 +377,13 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 0.86), hash21(ca.xy + 11.3), 0.54);
   float ha   = hash21(ca.xy + 61.0);              // ...and how high it stands
   float hb   = hash21(cb.xy + 61.0);
+  // Keep a floor under the value. Bare stone is the only surface with no
+  // canopy over it and no light of its own, so under a night grade it is
+  // multiplied straight down; taken too low in daylight it stops being a
+  // surface after dark and becomes a black polygon with pale lines on it --
+  // a hole in the world, on exactly the ground the player has to fight on.
   vec3 rockC = ramp(cStone[0], cStone[1], cStone[2], cStone[3],
-                    0.26 + tone * 1.34 + broad * 0.40 + elev * 0.18) * 0.92;
+                    0.68 + tone * 1.30 + broad * 0.36 + elev * 0.16) * 0.97;
   // shadowed stone runs cool and lit stone runs warm: without the temperature
   // split a grey ramp is just grey, and the sun has nothing to land on
   rockC *= mix(vec3(0.93, 0.97, 1.06), vec3(1.03, 1.00, 0.96), tone);
@@ -384,13 +394,19 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // where the two samples disagree, so it is an edge and not a gradient.
   float onEdge = step(0.001, length(cb.xy - ca.xy));
   float rise = clamp((hb - ha) * 2.6, -1.0, 1.0);
-  rockC *= 1.0 - onEdge * max(rise, 0.0) * 0.44;
+  rockC *= 1.0 - onEdge * max(rise, 0.0) * 0.34;
   rockC *= 1.0 + onEdge * max(-rise, 0.0) * 0.24;
-  // and the fissure itself, always there, always thin
-  rockC *= 1.0 - smoothstep(0.052, 0.004, ca.z * (0.60 + 1.00 * fbm3(w * 0.019 + 3.0))) * 0.32;
+  // The fissure itself: thin, and *not the same everywhere*. Evenly weighted
+  // edges over evenly sized slabs is a survey drawing, not a headland, so a
+  // slow field decides where the stone is well broken and where it is barely
+  // parted at all -- and it also stops the linework being the only thing left
+  // once a night grade has taken the surface down.
+  float fisK = 0.20 + 1.15 * fbm3(w * 0.0043 + 137.0);
+  rockC *= 1.0 - smoothstep(0.052, 0.004, ca.z * (0.60 + 1.00 * fbm3(w * 0.019 + 3.0)))
+                 * clamp(fisK, 0.0, 1.0) * 0.30;
   // A rare through-going fault, crossing several slabs at once.
   float jnt = rdg3(w * 0.0062 + vec2(0.0, elev * 26.0) + 7.0);
-  rockC *= 1.0 - smoothstep(0.93, 0.995, jnt) * 0.36;
+  rockC *= 1.0 - smoothstep(0.93, 0.995, jnt) * 0.28;
 
   // sun-side rim and down-sun drop shadow, sampled from the neighbouring field
   vec4 As = Texel(fieldA, fuv(w + uSun * 30.0));
@@ -415,7 +431,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 
   // The scree apron: broken stone half-buried in the soil it is sliding over.
   vec3 screeC = mix(ramp(cStone[0], cStone[1], cStone[2], cStone[3],
-                         0.35 + broad * 0.70 + (d2 - 0.5) * 0.95 + (d3 - 0.5) * 0.40),
+                         0.75 + broad * 0.70 + (d2 - 0.5) * 0.95 + (d3 - 0.5) * 0.40),
                     ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.80 + d1 * 1.00),
                     0.56 - screeT * 0.26);
   col = mix(col, screeC, screeT * 0.80);
@@ -1457,8 +1473,8 @@ function Terrain:_scatterMarks(tile, part, parts)
           -- toward soil, because the cold blue of `rock` on green grass read
           -- as a scattering of blueberries.
           local r = 1.8 + rng:next() * 3.4
-          local body = P.mix(P.shade(R.stone, 2.4 + rng:next() * 0.9), R.soil[3], 0.16)
-          love.graphics.setColor(P.alpha(P.darken(R.soil[1], 0.15), 0.30))
+          local body = P.mix(P.shade(R.stone, 2.6 + rng:next() * 0.8), R.moss[1], 0.18)
+          love.graphics.setColor(P.alpha(P.darken(R.soil[1], 0.15), 0.24))
           love.graphics.ellipse("fill", lx + 1.3, ly + 1.1, r, r * 0.7, 6)
           love.graphics.setColor(body)
           love.graphics.ellipse("fill", lx, ly, r, r * 0.76, 6)

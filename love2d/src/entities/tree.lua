@@ -671,7 +671,12 @@ local function buildMesh(sk, g, kind)
             if -(by - br_) > maxY then maxY = -(by - br_) end
             if abs(bx) + br_ > maxR then maxR = abs(bx) + br_ end
             if shadow then
-              if layer >= 2 then
+              -- Front canopy layer only. The middle layer sits *inside* the
+              -- front one's silhouette, so its blobs changed 0.09% of the
+              -- pixels of a sparse daylight frame while adding 27% to the
+              -- shadow pass's fill -- and the shadow pass is the second most
+              -- expensive thing the trees do.
+              if layer >= 3 then
                 emitBlob(V, Ilayer[3], bx, by, br_ * 1.06, b, invY, segs,
                          1, 1, 1, 0.55, LAYER_LAG[layer], 0)
               end

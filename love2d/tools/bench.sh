@@ -5,7 +5,9 @@
 # measurement of whatever else landed in the last five minutes (and a run can
 # simply be broken by somebody else's in-flight edit).
 #
-#   tools/bench.sh <scenario-env-file> [tag]
+# BASE_REF pins the baseline to the last commit *before* this workstream
+# started, so the comparison stays a comparison of these five files and not of
+# whatever the other three workstreams landed while a run was in flight.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$ROOT/.." && pwd)"
@@ -15,7 +17,7 @@ MINE=(src/entities/tree.lua src/engine/vfx.lua src/engine/lighting.lua
       src/engine/postfx.lua src/engine/draw.lua)
 
 rm -rf /tmp/bench; mkdir -p "$BASE" "$AFTER"
-git -C "$REPO" archive HEAD love2d | tar -x -C "$BASE" --strip-components=1
+git -C "$REPO" archive "${BASE_REF:-446e0ab}" love2d | tar -x -C "$BASE" --strip-components=1
 cp -r "$BASE"/. "$AFTER"/
 for f in "${MINE[@]}"; do cp "$ROOT/$f" "$AFTER/$f"; done
 cp -r "$ROOT/tools/." "$BASE/tools/"

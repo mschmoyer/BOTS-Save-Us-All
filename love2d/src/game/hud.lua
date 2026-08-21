@@ -271,7 +271,7 @@ local TL = {
 function HUD.touchLayout() return TL end
 
 local L = {   -- resolved layout, rebuilt on resize
-  sw = 0, sh = 0, tm = nil,
+  sw = 0, sh = 0, tm = nil, key = -1,
   il = 0, it = 0, ir = 0, ib = 0,          -- safe insets actually used
   o2x = 0, o2y = 0, o2w = 0, o2R = 0, o2cx = 0, o2cy = 0, o2a0 = 0, o2a1 = 0,
   dialX = 0, dialY = 0, dialR = 0,
@@ -291,19 +291,22 @@ end
 local function setRect(r, x, y, w, h) r.x, r.y, r.w, r.h = x, y, w, h end
 
 local function layout(sw, sh, tm)
-  if L.sw == sw and L.sh == sh and L.tm == tm then return end
-  L.sw, L.sh, L.tm = sw, sh, tm
   local TT = TU.hud.touch
 
   -- The inset the whole layer respects. On a phone it is the OS safe area --
   -- floored, because a browser that swears there is no notch is still drawing a
   -- rounded display corner over the outermost band -- plus a grid pad inside it.
+  -- It is part of the cache key: a platform layer may hand the touch module a
+  -- real safe area some frames after boot, and the layout has to follow it.
   local il, it, ir, ib = PAD, PAD, PAD, PAD
   if tm then
     local T = touchMod()
     if T and T.safeInsets then il, it, ir, ib = T.safeInsets() end
     il, it, ir, ib = il + TT.pad, it + TT.pad, ir + TT.pad, ib + TT.pad
   end
+  local key = il + it * 8 + ir * 64 + ib * 512
+  if L.sw == sw and L.sh == sh and L.tm == tm and L.key == key then return end
+  L.sw, L.sh, L.tm, L.key = sw, sh, tm, key
   L.il, L.it, L.ir, L.ib = il, it, ir, ib
 
   -- oxygen: a shallow arc struck from far below the screen, so it reads as
@@ -348,9 +351,24 @@ local function layout(sw, sh, tm)
     -- HOLD THE DAWN drops into the band the build bar used to eat. It is one of
     -- two real decisions in a run, it is offered for twelve seconds, and on a
     -- phone the only honest way to offer it is a panel big enough to hit.
-    L.holdW, L.holdH = TT.holdW, TT.holdH
+    L.holdW, L.holdH = min(TT.holdW, floor(sw * 0.32)), TT.holdH
     L.holdX = floor((sw - L.holdW) * 0.5)
     L.holdY = sh - ib - TT.holdUp - L.holdH
+    -- Centred, but never under a thumb: on a short viewport the cluster's
+    -- inboard button reaches past the middle of the screen, and a panel you
+    -- have to tap cannot share pixels with a panic button.
+    local T = touchMod()
+    if T and T.clusterBounds then
+      local cx0, _, cx1 = T.clusterBounds()
+      if cx0 then
+        if (cx0 + cx1) * 0.5 > sw * 0.5 then
+          L.holdX = U.clamp(L.holdX, il, max(il, cx0 - TT.holdGap - L.holdW))
+        else
+          L.holdX = U.clamp(L.holdX, min(cx1 + TT.holdGap, sw - ir - L.holdW),
+                            max(il, sw - ir - L.holdW))
+        end
+      end
+    end
     L.bossY = sh - ib - TT.bossUp
   else
     L.heartX, L.heartY = il, sh - ib - 26
@@ -1576,14 +1594,21 @@ local function drawBossBar(w, a)
   -- what the plates are, in three words, only while they are actually stopping
   -- you: a stalled bar with no explanation reads as a bug
   if boss and (boss.hullBlock or 0) > 0.05 and boss.plates > 0 then
-    UI.text("ARMOUR HOLDING", bx + bw * 0.5, by - 21, UI.ts.micro, P.warn,
-            "center", 0.9 * (boss.hullBlock or 0) * aa, 0.34)
+    -- Above the bar on a desktop, below it on a phone: the phone's bar is
+    -- narrower and a centred line on that baseline lands inside the rig's name.
+    UI.text("ARMOUR HOLDING", bx + bw * 0.5, L.tm and (by + bh + 6) or (by - 21),
+            UI.ts.micro, P.warn, "center", 0.9 * (boss.hullBlock or 0) * aa, 0.34)
   end
   if boss then
     UI.text(itos(math.ceil(boss.hp)), bx + bw, by - 21, UI.ts.label,
             P.ink, "right", 0.8 * aa, 0.16)
   end
 end
+
+--- Is a cutscene holding the screen? The chrome layer already hides under the
+--- letterbox; engine/touch.lua needs the same fact for a different reason.
+--- Published here because this is the file that already watches the bars.
+function HUD.cinematic() return (Dialogue.bar or 0) > 0.3 end
 
 --- What the rest of the screen furniture -- the build bar, the minimap -- should
 --- be drawn at. They belong to the same layer as the readouts and have to leave
