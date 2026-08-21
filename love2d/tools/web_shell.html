@@ -269,6 +269,52 @@
     }
   } catch (e) {}
 
+  /* --- cap the drawing buffer ---------------------------------------------
+     LOVE runs with highdpi enabled, and emscripten's SDL sizes the backing
+     store as CSS pixels x window.devicePixelRatio. On a 3x phone that is a
+     2562x1440 drawing buffer for a 6-inch screen -- 3.7 megapixels through a
+     renderer that already asks for twenty-odd screens of canopy overdraw, a
+     full lighting composite and a nine-pass post chain. It is the single
+     largest multiplier on this game's cost on the device it is meant to ship
+     on, and it buys detail nobody can resolve: the frame is graded, bloomed,
+     vignetted and grained, and the art is flat vector shapes.
+
+     So the ratio is capped, in one place, before the module reads it: never
+     above 2, and never so high that the buffer passes ~1.6 megapixels (about
+     1600x900, which is what the game is composed at). A 3x phone lands at
+     about 1.5x, still half again as sharp as a non-retina screen.
+
+     Nothing else in the page reads devicePixelRatio, and LOVE derives its
+     touch and mouse mapping from the same number, so the input geometry stays
+     consistent with what is drawn. */
+  (function () {
+    var MAXPX = 1600 * 900, MAXDPR = 2;
+    var real = window.devicePixelRatio || 1;
+    // Cached, not computed per read: SDL reads this to size the buffer and
+    // again to scale pointer coordinates, and a value that drifted between
+    // those two reads would put the touch geometry out of step with the
+    // picture. It is recomputed only when the layout actually changes.
+    var value = 1;
+    function recompute() {
+      var w = canvas.clientWidth || window.innerWidth || 1;
+      var h = canvas.clientHeight || window.innerHeight || 1;
+      var fit = Math.sqrt(MAXPX / Math.max(1, w * h));
+      value = Math.max(1, Math.min(real, MAXDPR, fit));
+    }
+    recompute();
+    try {
+      Object.defineProperty(window, 'devicePixelRatio', {
+        configurable: true,
+        get: function () { return value; }
+      });
+      window.addEventListener('resize', recompute);
+      window.addEventListener('orientationchange', function () { setTimeout(recompute, 150); });
+      window.__dprCap = function (px, maxDpr) {   // console escape hatch
+        MAXPX = px || MAXPX; MAXDPR = maxDpr || MAXDPR; recompute();
+      };
+    } catch (e) { /* older engine: leave it alone rather than break boot */ }
+  })();
+
   var Module = {
     arguments: argv,
     INITIAL_MEMORY: 402653184,

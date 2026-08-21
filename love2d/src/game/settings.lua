@@ -225,8 +225,16 @@ local function loadLiteral(src)
 end
 
 --------------------------------------------------------------------- load/save
+local fromDisk = false
+
+--- Did this session read a saved file, or is it a first run on defaults? Boot
+--- asks so it can pick a detail level for the machine without ever overriding
+--- a choice the player has actually made.
+function Settings.wasLoadedFromDisk() return fromDisk end
+
 function Settings.load()
   loaded = true
+  fromDisk = false
   for k, v in pairs(Settings.defaults) do values[k] = v end
   dirty = false
   if not (love and love.filesystem) then return false end
@@ -242,6 +250,7 @@ function Settings.load()
     local v = coerce(k, tbl[k])
     if v ~= nil then values[k] = v end
   end
+  fromDisk = true
   return true
 end
 

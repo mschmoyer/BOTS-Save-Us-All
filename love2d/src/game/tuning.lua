@@ -420,15 +420,15 @@ T.boss = {
     descend       = 400,    -- how far above the canopy the arrival starts
     gaitLift      = 0.22,   -- foot lift, in rig radii
     gaitReach     = 0.15,   -- foot swing along the heading, in rig radii
-    -- The molten core, rebuilt as crust over a pool rather than a graded disc.
-    -- Two rings of cooled plate turn over the melt in opposite directions and
-    -- the gaps between them are the cracks, so the fissure network moves on its
-    -- own without a frame of it being authored.
-    coreCracks    = 11,     -- fissures walking out of the vent through the crust
+    -- The molten core, rebuilt as a near-black crust with hot cracks in it
+    -- rather than a graded tan disc. The crack field turns slowly, each crack
+    -- breathes on its own clock and a bright pulse travels up it, so the
+    -- fissure network moves without a frame of it being authored.
+    coreCracks    = 8,      -- fissures walking out of the vent through the crust
     coreDriftRps  = 0.026,  -- the whole crack field turns at this, revs/sec
     coreCrack     = 0.017,  -- crack width, in rig radii, with the core sealed
     coreCrackOpen = 0.014,  -- ...added on top once it is open
-    coreFlowHz    = 0.30,   -- the breathing and the convection turn at this
+    coreFlowHz    = 0.30,   -- the pulse that travels up a crack, and its wander
     coreVeins     = 6,      -- cracks running out of the core over the deck
     deckRivets    = 8,      -- one per deck seam; it used to be twenty-four
     -- The beam. It used to be drawn wide at the muzzle with a 62 px radial
@@ -437,7 +437,7 @@ T.boss = {
     beamMuzzleW   = 0.085,  -- beam half-width at the muzzle, in rig radii
     beamFarW      = 0.26,   -- ...and at the far end of its range
     beamMuzzle    = 0.30,   -- the muzzle flash's reach, in rig radii
-    beamSpall     = 5,      -- sparks shed sideways along the cut
+    beamSpall     = 9,      -- sparks shed sideways along the cut
     columnMotes   = 34,
     columnRings   = 6,
     columnRise    = 0.26,   -- column-heights per second travelled by rings/motes

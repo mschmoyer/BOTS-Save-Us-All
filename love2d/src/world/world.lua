@@ -1067,15 +1067,23 @@ function World:threat()
 end
 
 -------------------------------------------------------------------------- draw
-local function addDraw(list, e) list[#list + 1] = e end
-
 --- Depth key. Entities may supply `sortKey`; anything else sorts on its feet.
 local function depthOf(e)
   if e.sortKey then return e:sortKey() end
   local z = e.z
   return e.y + (type(z) == "number" and z or 0)
 end
-local function bySortKey(a, b) return depthOf(a) < depthOf(b) end
+
+--- The key is stashed when the list is built, not recomputed inside the
+--- comparator. table.sort calls its comparator O(n log n) times, so a
+--- five-hundred entity frame was making about nine thousand dynamic dispatches
+--- through depthOf -- 1.3 to 1.8 ms of interpreted Lua, every frame, to answer
+--- five hundred questions.
+local function addDraw(list, e)
+  e._dz = depthOf(e)
+  list[#list + 1] = e
+end
+local function bySortKey(a, b) return a._dz < b._dz end
 
 function World:draw(camera)
   self.camera = camera
@@ -1121,7 +1129,10 @@ function World:draw(camera)
   local sunL = DayNight.sunLength or 0.6
   for i = 1, #self.trees do
     local t = self.trees[i]
-    if t.alive and camera:visible(t.x, t.y, 220) and t.drawShadow then t:drawShadow(sunA, sunL) end
+    -- t.onScreen is computed once in Tree:update and both draw paths early-out
+    -- on it anyway; re-asking the camera here was fourteen hundred redundant
+    -- visibility tests a frame.
+    if t.alive and t.onScreen and t.drawShadow then t:drawShadow(sunA, sunL) end
   end
   if Tree.endPass then Tree.endPass() end
   local lists = { self.bots, self.enemies, self.cobalts, self.projectiles }
@@ -1143,7 +1154,7 @@ function World:draw(camera)
   for i = #dl, 1, -1 do dl[i] = nil end
   for i = 1, #self.trees do
     local t = self.trees[i]
-    if t.alive and camera:visible(t.x, t.y, 240) then t.isTree = true addDraw(dl, t) end
+    if t.alive and t.onScreen then t.isTree = true addDraw(dl, t) end
   end
   for l = 1, #lists do
     local list = lists[l]
@@ -1163,15 +1174,11 @@ function World:draw(camera)
   end
   if Tree.endPass then Tree.endPass() end
 
-  -- additive canopy rim/backlight, over the trees and under the air particles
-  local prevB = love.graphics.getBlendMode()
-  love.graphics.setBlendMode("add", "alphamultiply")
-  for i = 1, #dl do
-    local e = dl[i]
-    if e.isTree and e.drawCanopyLight then e:drawCanopyLight() end
-  end
-  love.graphics.setBlendMode(prevB)
-  if Tree.endPass then Tree.endPass() end
+  -- The canopy's backlight used to be a third additive pass over every crown
+  -- in the forest, here. It is a term inside the tree shader now: measured, the
+  -- separate pass was just over half of all the fill in the game -- and because
+  -- it had no depth test and ran after the whole forest, most of what it
+  -- painted was a hidden tree's rim landing on whatever stood in front of it.
 
   -- The rig goes last, over the canopy and over the canopy's backlight. It is
   -- standing on the trees, and it was being washed out by the additive rim

@@ -82,6 +82,26 @@ function Boot.applyQuality()
   if ok and Lighting.setQuality then Lighting.setQuality(level) end
   local okv, VFX = pcall(require, "src.engine.vfx")
   if okv and VFX.setQuality then VFX.setQuality(level) end
+  local okp, PostM = pcall(require, "src.engine.postfx")
+  if okp and PostM.setScale then
+    PostM.setScale(level == 0 and 0.7 or (level == 1 and 0.85 or 1))
+  end
+end
+
+--- On a first run only, pick a detail level the machine can actually hold.
+---
+--- `highdpi` is on, so a retina display renders three or four times the
+--- fragments a 1x one does -- and this game asks for twenty-odd screens of
+--- blended canopy overdraw before it asks for anything else. A first-time
+--- player on a 3x phone or a 5K monitor should not have to find the options
+--- screen to discover why it is uneven. A saved choice is never overridden.
+function Boot.autoQuality()
+  if Settings.wasLoadedFromDisk and Settings.wasLoadedFromDisk() then return end
+  if not (love.graphics and love.graphics.getPixelDimensions) then return end
+  local pw, ph = love.graphics.getPixelDimensions()
+  local mpix = (pw * ph) / 1000000
+  if mpix >= 3.2 then Settings.set("quality", "low")
+  elseif mpix >= 2.2 then Settings.set("quality", "medium") end
 end
 
 --------------------------------------------------------------------- love.load
@@ -92,6 +112,7 @@ function love.load()
   math.random(); math.random()
 
   Settings.load()
+  Boot.autoQuality()
   Settings.applyJuice(J)
   Settings.applyInput(Input)
   Boot.applyQuality()

@@ -83,7 +83,7 @@ const fs = require('fs');
     const f = window.__perf.frames;
     // a "real" frame is one that issued a meaningful number of draw calls
     let first = null;
-    for (const x of f) if (x[0] > clickAt && x[2] > 40) { first = x; break; }
+    for (const x of f) if (x[0] > clickAt && x[2] > 300) { first = x; break; }
     const tail = f.filter(x => x[0] > clickAt).slice(-90);
     const med = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
     const gaps = [];
@@ -91,6 +91,8 @@ const fs = require('fs');
     return {
       totalFrames: f.length,
       firstFrameMs: first ? first[0] - clickAt : null,
+      msNavToFirstFrame: first ? Math.round(first[0]) : null,
+      msNavToClick: Math.round(clickAt),
       cbMedMs: med(tail.map(x => x[1])),
       gapMedMs: med(gaps),
       drawCalls: med(tail.map(x => x[2])),
@@ -99,6 +101,11 @@ const fs = require('fs');
       progFbo: med(tail.map(x => x[5])),
       heapMB: performance.memory ? +(performance.memory.usedJSHeapSize / 1048576).toFixed(1) : null,
       canvas: (() => { const c = document.querySelector('canvas'); return c ? [c.width, c.height] : null; })(),
+      // The first frames after the click: LOVE's love.load (audio synthesis and
+      // the terrain bake) runs inside the first main-loop tick, so it shows up
+      // as one very long callback before any drawing happens.
+      firstTicks: f.filter(x => x[0] > clickAt).slice(0, 6)
+        .map(x => ({ atMs: Math.round(x[0] - clickAt), ms: Math.round(x[1]), draws: x[2] })),
     };
   }, clickAt);
 

@@ -176,14 +176,23 @@ float rdg3(vec2 p) {
 // can overflow to inf and the fract() to NaN, which then propagates into the
 // colour channel by channel. Native never showed it; WebGL rendered the scar
 // in flat patches of red and olive. These stay bounded and agree everywhere.
+// The mixing constant is 3.71 and not the usual 33.33 for a reason. Both forms
+// end in fract() of a product, and with 33.33 that product runs to five figures
+// -- where a single-ULP disagreement between two compilers flips the result
+// outright. Desktop GL and the browser's WebGL translator do disagree, because
+// they reassociate and contract the arithmetic differently, and the browser
+// then bakes a *different island* from the one that was reviewed: whole plates
+// of a scar came out on the wrong side of a threshold and went magenta. At 3.71
+// the product stays under 410, the fraction keeps fifteen bits, and the two
+// agree. Distribution and neighbour correlation are unchanged.
 vec2 hash22(vec2 p) {
   vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
-  q += dot(q, q.yzx + 33.33);
+  q += dot(q, q.yzx + 3.71);
   return fract((q.xx + q.yz) * q.zy);
 }
 float hash21(vec2 p) {
   vec3 q = fract(vec3(p.xyx) * 0.1031);
-  q += dot(q, q.yzx + 33.33);
+  q += dot(q, q.yzx + 3.71);
   return fract((q.x + q.y) * q.z);
 }
 
@@ -407,7 +416,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // surface after dark and becomes a black polygon with pale lines on it --
   // a hole in the world, on exactly the ground the player has to fight on.
   vec3 rockC = ramp(cStone[0], cStone[1], cStone[2], cStone[3],
-                    0.68 + tone * 1.30 + broad * 0.36 + elev * 0.16) * 0.97;
+                    0.54 + tone * 1.66 + broad * 0.32 + elev * 0.16) * 0.97;
   // shadowed stone runs cool and lit stone runs warm: without the temperature
   // split a grey ramp is just grey, and the sun has nothing to land on
   rockC *= mix(vec3(0.93, 0.97, 1.06), vec3(1.03, 1.00, 0.96), tone);
@@ -418,8 +427,8 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // where the two samples disagree, so it is an edge and not a gradient.
   float onEdge = step(0.001, length(cb - ca.xy));
   float rise = clamp((hb - ha) * 2.6, -1.0, 1.0);
-  rockC *= 1.0 - onEdge * max(rise, 0.0) * 0.34;
-  rockC *= 1.0 + onEdge * max(-rise, 0.0) * 0.24;
+  rockC *= 1.0 - onEdge * max(rise, 0.0) * 0.38;
+  rockC *= 1.0 + onEdge * max(-rise, 0.0) * 0.28;
   // The fissure itself: thin, and *not the same everywhere*. Evenly weighted
   // edges over evenly sized slabs is a survey drawing, not a headland, so a
   // slow field decides where the stone is well broken and where it is barely
@@ -510,7 +519,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     // reaching it turned the whole scar the colour of a leather sofa. Ash, then
     // desaturated toward its own grey, so the scar reads dead rather than dirty.
     vec3 dead = ramp(cAsh[0], cAsh[1], cAsh[2], cAsh[3],
-                     0.55 + tA * 1.00 + tB * 0.50 + (d2 - 0.5) * 0.40);
+                     0.45 + tA * 1.28 + tB * 0.55 + (d2 - 0.5) * 0.40);
     dead = mix(dead, vec3(dot(dead, vec3(0.299, 0.587, 0.114))), 0.20);
     // a little dead soil under the ash: warm, but never enough to make the
     // whole scar brown
@@ -532,11 +541,6 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     float live = smoothstep(0.80, 0.94, hash21(pa.xy + 7.1))
                * smoothstep(0.54, 0.78, fbm3(w * 0.0062 + 41.0));
     dead += cBlight[3] * smoothstep(0.009, 0.0, pa.z * cvz) * deep * deep * live * 0.20;
-    // TEMP DEBUG
-    float dbg = fract(w.x * 0.0035);
-    if (dbg < 0.33) { dead = vec3(tA, tB, 0.0); }
-    else if (dbg < 0.66) { dead = cAsh[3]; }
-    else { dead = cBlight[3]; }
     col = mix(col, dead, scarT);
     // The rot rim: living ground going grey a few metres before it dies. Value
     // and saturation, not hue -- a violet halo round every scar was the tell.
