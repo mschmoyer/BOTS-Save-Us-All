@@ -23,7 +23,9 @@ function Enemy:init(x, y, kind, world, rng)
   self.type    = kind
   self.def     = def
   self.world   = world
-  self.rng     = rng or U.rng(math.floor(x * 13 + y * 7 + love.timer.getTime() * 997))
+  -- Never the wall clock. A seeded world has to replay identically or the
+  -- headless balance traces compare two different runs and say nothing.
+  self.rng     = rng or U.rng(math.floor(x * 13 + y * 7) + 1)
   self.radius  = def.radius
   self.maxHp   = def.hp
   self.hp      = def.hp
