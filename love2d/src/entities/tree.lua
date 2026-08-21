@@ -132,6 +132,7 @@ local TUNE = {
   rimPixels     = 96,     -- ... above which the additive rim pass is worth it
   shadowPixels  = 24,     -- ... under which shadows are skipped entirely
   cullPad       = 90,
+  sleepFrames   = 4,      -- an off-screen tree runs its slow block 1 frame in N
 }
 
 ---------------------------------------------------------------- the species
@@ -979,6 +980,13 @@ local STUMP_COL = P.ramp.bark[2]
 local STUMP_TOP = P.ramp.bark[3]
 
 --------------------------------------------------------------------- Tree
+-- The off-screen rota's slot, dealt round-robin rather than drawn from the
+-- tree's own PRNG: taking one more number out of that stream would shift every
+-- tree's height, lean, tint and variant, and the forest would be a different
+-- forest. Round-robin also spreads better than random - exactly a quarter of
+-- the trees land on each frame instead of a quarter on average.
+local nextSlot = 0
+
 local function pickSpecies(r)
   local x = r:next() * totalWeight
   for i = 1, #SPECIES do
@@ -1043,6 +1051,8 @@ function Tree:init(x, y, seed, opts)
 
   self.bucket = -1
   self.onScreen = true
+  nextSlot = nextSlot % TUNE.sleepFrames + 1
+  self.slowT, self.slowN = 0, nextSlot
   self:refreshStage(true)
   self:refreshMesh()
   return self
@@ -1125,10 +1135,11 @@ end
 -- instead of sixty times.
 local ELDER_STEP = 1 / 512
 
-function Tree:update(dt)
-  local on = self:visible()
-  self.onScreen = on
-
+--- Growth, ageing, chewing and the topple clock: the half of the tick whose
+--- only output is state, none of which anybody can see on the frame it happens.
+--- Split out of `update` so a tree the camera cannot see can run it on a rota -
+--- see the comment on `Tree:update` for why, and for why that is not a cheat.
+function Tree:tickSlow(dt)
   -- `dirty` tracks whether anything that feeds refreshStage actually moved.
   -- For a mature, unbothered tree -- which is nearly the whole forest for
   -- nearly the whole run -- the answer is no, and the stage/oxygen recompute
@@ -1199,6 +1210,38 @@ function Tree:update(dt)
     self:refreshStage()
   elseif dirty or self.death ~= deathWas then
     self:refreshStage()
+  end
+end
+
+--- Wind, leaves, x-ray and pose have always been view-culled; the slow block
+--- above was not, and ran for all 722 trees whether or not anyone could see
+--- them. Measured, that block is 1.4 ms of a 10.4 ms Lua frame here and 3.5 ms
+--- of the browser's 17 - 20% of its whole Lua budget - and it scales straight
+--- to ~9 ms at the 1,900-tree design ceiling.
+---
+--- So an off-screen tree runs it one frame in `TUNE.sleepFrames`, carrying the
+--- skipped frames' `dt` in `slowT` and handing it over whole. That is not an
+--- approximation: every term in `tickSlow` is a plain `+ dt * rate`, so four
+--- steps of `dt` and one step of `4*dt` reach the same number, and the two
+--- springs below - the only integrators on a tree - stay on the per-frame path
+--- where they belong. Slots are dealt round-robin at birth, so a quarter of the
+--- forest ticks on each frame rather than the whole forest on every fourth one.
+--- Coming back into view flushes the carry on the spot, so a tree that walks
+--- on screen is never a fraction of a tick behind the one standing next to it.
+function Tree:update(dt)
+  local on = self:visible()
+  self.onScreen = on
+
+  if on then
+    self:tickSlow(dt + self.slowT)
+    self.slowT = 0
+  else
+    self.slowT = self.slowT + dt
+    self.slowN = self.slowN - 1
+    if self.slowN <= 0 then
+      self:tickSlow(self.slowT)
+      self.slowT, self.slowN = 0, TUNE.sleepFrames
+    end
   end
 
   -- squash & stretch spring after a stage change

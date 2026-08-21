@@ -102,7 +102,325 @@ local SHORE_H    = 362
 local BIOME = { "beach", "meadow", "rock", "marsh", "scar" }
 local B_WATER, B_BEACH, B_MEADOW, B_ROCK, B_MARSH, B_SCAR = 0, 1, 2, 3, 4, 5
 
+-- The island is centred in the world rect and its radial falloff is measured in
+-- half-world units, so the centre and the radii are the same pair of numbers.
+local CX, CY = TW.w * 0.5, TW.h * 0.5
+
+------------------------------------------------------------------ island fields
+--- One cell of the island's three primary fields, in world units.
+---
+--- This is the *reference* implementation of the island: FIELD_GLSL below
+--- reproduces it on the GPU, is spot-checked against it on every run, and this
+--- is what runs when there is no GPU (or when the check fails). Returns the
+--- continental land value (positive on land), elevation and moisture.
+local function cellFields(wx, wy, sb)
+  local s1, s2, s3, s4 = sb + 1, sb + 2, sb + 3, sb + 4
+  local s5, s6, s7, s8 = sb + 5, sb + 6, sb + 7, sb + 8
+  local s9 = sb + 9
+
+  -- two-scale domain warp: bays and peninsulas instead of a circle
+  local w1 = N.fbm(wx * 0.00052 + 4.1, wy * 0.00052 - 2.3, 3, s1)
+  local w2 = N.fbm(wx * 0.00052 - 7.7, wy * 0.00052 + 5.9, 3, s1 + 40)
+  local v1 = N.fbm(wx * 0.00205 + 19.0, wy * 0.00205 + 3.0, 3, s1 + 80)
+  local v2 = N.fbm(wx * 0.00205 - 11.0, wy * 0.00205 - 8.0, 3, s1 + 120)
+  local qx = wx + (w1 - 0.5) * 1280 + (v1 - 0.5) * 300
+  local qy = wy + (w2 - 0.5) * 1080 + (v2 - 0.5) * 250
+
+  local dx, dy = (qx - CX) / CX, (qy - CY) / CY
+  local r = sqrt(dx * dx + dy * dy)
+  local ang = atan2(dy, dx)
+  -- periodic in angle, so the falloff radius itself grows lobes
+  local lobe = 0.46 + 0.40 * N.fbm(cos(ang) * 3.4 + 11.0, sin(ang) * 3.4 + 6.0, 4, s2)
+  local mask = U.smoothstep(lobe + 0.30, lobe - 0.16, r)
+
+  local cont = N.fbm(wx * 0.00090 + 11.0, wy * 0.00090 + 7.0, 5, s3)
+  local det  = N.fbm(wx * 0.00390 - 3.0, wy * 0.00390 + 2.0, 4, s4)
+  local lv = mask * 1.30 + (cont - 0.5) * 1.34 + (det - 0.5) * 0.26 - 0.598
+
+  -- two scales of bay bitten out of the silhouette: broad gulfs and inlets
+  local bay1 = N.fbm(qx * 0.00062 + 301.0, qy * 0.00062 - 143.0, 3, s9)
+  local bay2 = N.fbm(wx * 0.00140 - 77.0, wy * 0.00140 + 211.0, 3, s9 + 30)
+  lv = lv - U.smoothstep(0.47, 0.86, bay1) * 1.10 * U.smoothstep(0.08, 0.86, r)
+          - U.smoothstep(0.60, 0.92, bay2) * 0.70 * U.smoothstep(0.26, 1.00, r)
+
+  -- offshore islets and skerries in the shallow ring
+  local isl = N.fbm(wx * 0.0031 + 41.0, wy * 0.0031 + 17.0, 3, s5)
+  lv = lv + U.smoothstep(0.62, 0.90, isl) * U.smoothstep(1.42, 0.78, r) * 0.72
+
+  if lv <= 0 then return lv, 0, 1 end
+
+  local ln = U.saturate(lv / 0.62)
+  local hills = N.fbm(wx * 0.0030 + 21.0, wy * 0.0030 - 9.0, 5, s6)
+  local basin = N.fbm(wx * 0.0013 + 63.0, wy * 0.0013 - 27.0, 3, s6 + 60)
+  local spine = N.ridge(wx * 0.0018 - 13.0, wy * 0.0018 + 31.0, 4, s7)
+  -- broad plains, a few genuine highlands, a couple of low basins
+  local e = ln ^ 1.25 * (0.26 + 0.42 * hills) + (basin - 0.5) * 0.20
+  e = e + spine * spine * U.smoothstep(0.42, 0.95, ln) * 0.68
+  e = U.saturate(e)
+  local mo = N.fbm(wx * 0.0021 + 77.0, wy * 0.0021 + 53.0, 4, s8)
+  -- water collects low and drains off the highlands
+  return lv, e, U.saturate(mo * 0.80 + (1 - e) * 0.40 - 0.11)
+end
+
+--- The blight's shape at one cell, given the per-cell warp and grain (which do
+--- not depend on which scar is being measured) and one scar centre.
+local function scarAt(wx, wy, ox, oy, fine, c, ca, sa)
+  local px, py = wx + ox - c.x, wy + oy - c.y
+  local ex = (px * ca - py * sa) / (c.r * c.ecc)
+  local ey = (px * sa + py * ca) / c.r
+  local d = sqrt(ex * ex + ey * ey)
+  return U.smoothstep(1.00, 0.30, d + (fine - 0.5) * 0.34)
+end
+
 ------------------------------------------------------------------------ shaders
+-- FIELD_GLSL is the island generator, ported from cellFields above. It exists
+-- because the Lua version is 25.8 million sines on the main thread: 0.71 s under
+-- LuaJIT and a measured 9.7 s in the browser build, the largest single cost in
+-- the load. On the GPU the same grid is a few tens of milliseconds plus one
+-- readback.
+--
+-- REPRODUCING THE HASH IN 32-BIT FLOAT. The noise is sine-hashed:
+--
+--     h(x,y,s) = fract(sin(x*127.1 + y*311.7 + s*74.7) * 43758.5453)
+--
+-- and the argument reaches 4.6e5 for a large seed. A float32 holds that to 0.03,
+-- and 0.03 of argument is a completely different hash -- a naive port produces a
+-- different island, not a slightly different one. So the argument is never
+-- formed at full size. The three inputs are integers, so
+--
+--     x*127.1 + y*311.7 + s*74.7  =  (x*1271 + y*3117 + s*747) / 10  =  M/10
+--
+-- and M is an *exact* integer below 2^24 (measured worst case 4.6e6), so it
+-- survives float32 intact. M is then split into four 6-bit digits and each
+-- digit's contribution is reduced modulo 2pi with a two-term Cody-Waite split
+-- chosen so every product and difference is exact; the four residues are all
+-- below 2pi and are multiples of 2^-15, so their sum is exact too. sin and cos
+-- come from a Taylor pair on [-pi/4, pi/4] rather than the hardware's, because
+-- GLSL ES only promises `sin` to 2^-11 absolute -- times 43758 that is noise.
+--
+-- Measured against the Lua hash over 65k lattice points, across the seed range:
+-- mean error 0.0012, max 0.0057, which is the floor for a float32 sine (an
+-- O(1) float has 6e-8 of headroom and the hash multiplies by 43758). It moves
+-- the coastline by a couple of world units -- well inside one 8-unit cell.
+--
+-- The four corners of a value-noise cell differ by exactly 127.1, 311.7 and
+-- 438.8 in argument, so the expensive reduction runs once per cell and the
+-- other three corners come from the angle-sum identity with constant
+-- coefficients. That is a 3x saving and it is why this is affordable.
+--
+-- PRECISION QUALIFIERS. Everything below is highp in both stages. LOVE injects
+-- highp into the vertex stage and mediump into the fragment stage, and mediump
+-- (10-bit mantissa) does not merely degrade this noise, it deletes it. The
+-- guarded `precision highp float` re-defaults the fragment stage where the
+-- language has precision at all, and is a no-op on desktop GL.
+local NOISE_GLSL = [==[
+#if defined(GL_ES) && defined(GL_FRAGMENT_PRECISION_HIGH)
+precision highp float;
+#endif
+
+const float TWOPI_HI    = 6.28320313;      // 2pi rounded to a multiple of 2^-14
+const float TWOPI_LO    = -1.78178204e-05;
+const float PIO2_HI     = 1.57080078;      // pi/2, likewise
+const float PIO2_LO     = -4.4544551e-06;
+const float INV_TWOPI   = 0.159154943;
+const float TWO_OVER_PI = 0.636619772;
+// (64^i / 10) mod 2pi, split into a multiple of 2^-15 and the remainder
+const float CHI0 = 0.100006104,  CLO0 = -6.10351562e-06;
+const float CHI1 = 0.116821289,  CLO1 = -6.59624209e-06;
+const float CHI2 = 1.19296265,   CLO2 = -7.61315744e-06;
+const float CHI3 = 0.950897217,  CLO3 = 1.22997153e-06;
+// cos/sin of the three corner offsets 127.1, 311.7, 438.8
+const float C127 = 0.134097292,  S127 = 0.990968171;
+const float C311 = -0.776107228, S311 = -0.63060096;
+const float C438 = 0.520831603,  S438 = -0.853659441;
+// the fbm/ridge octave frequencies, as the Lua loop accumulates them
+const float F0 = 1.0, F1 = 2.03, F2 = 4.1209, F3 = 8.365427, F4 = 16.98181681;
+const float G0 = 1.0, G1 = 2.07, G2 = 4.2849, G3 = 8.869743;
+
+/// sin and cos of M/10, for an exact integer M with |M| < 2^24.
+vec2 sincosM(float M) {
+  float sgn = M < 0.0 ? -1.0 : 1.0;
+  float a = abs(M);
+  float d3 = floor(a * (1.0 / 262144.0)); a -= d3 * 262144.0;
+  float d2 = floor(a * (1.0 / 4096.0));   a -= d2 * 4096.0;
+  float d1 = floor(a * (1.0 / 64.0));
+  float d0 = a - d1 * 64.0;
+  float hi = 0.0, lo = 0.0, t, n;
+  t = d0 * CHI0; n = floor(t * INV_TWOPI); hi += t - n * TWOPI_HI; lo += d0 * CLO0 - n * TWOPI_LO;
+  t = d1 * CHI1; n = floor(t * INV_TWOPI); hi += t - n * TWOPI_HI; lo += d1 * CLO1 - n * TWOPI_LO;
+  t = d2 * CHI2; n = floor(t * INV_TWOPI); hi += t - n * TWOPI_HI; lo += d2 * CLO2 - n * TWOPI_LO;
+  t = d3 * CHI3; n = floor(t * INV_TWOPI); hi += t - n * TWOPI_HI; lo += d3 * CLO3 - n * TWOPI_LO;
+  n = floor(hi * INV_TWOPI); hi -= n * TWOPI_HI; lo -= n * TWOPI_LO;
+  float k = floor((hi + lo) * TWO_OVER_PI + 0.5);      // quadrant
+  float x = (hi - k * PIO2_HI) + (lo - k * PIO2_LO);   // |x| <= pi/4
+  float x2 = x * x;
+  float S = x * (1.0 + x2 * (-1.66666667e-1 + x2 * (8.33333333e-3
+              + x2 * (-1.98412698e-4 + x2 * 2.75573192e-6))));
+  float C = 1.0 + x2 * (-0.5 + x2 * (4.16666667e-2 + x2 * (-1.38888889e-3
+              + x2 * (2.48015873e-5 - x2 * 2.75573192e-7))));
+  float q = mod(k, 4.0);
+  vec2 sc;
+  if (q < 0.5)      sc = vec2( S,  C);
+  else if (q < 1.5) sc = vec2( C, -S);
+  else if (q < 2.5) sc = vec2(-S, -C);
+  else              sc = vec2(-C,  S);
+  return vec2(sgn * sc.x, sc.y);
+}
+
+/// N.value: sine-hashed value noise. `sT` is the seed pre-multiplied by 747.
+float nval(vec2 p, float sT) {
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  vec2 sc = sincosM(i.x * 1271.0 + i.y * 3117.0 + sT);
+  float a = fract( sc.x                          * 43758.5453);
+  float b = fract((sc.x * C127 + sc.y * S127)    * 43758.5453);
+  float c = fract((sc.x * C311 + sc.y * S311)    * 43758.5453);
+  float d = fract((sc.x * C438 + sc.y * S438)    * 43758.5453);
+  float ab = a + (b - a) * u.x;
+  float cd = c + (d - c) * u.x;
+  return ab + (cd - ab) * u.y;
+}
+
+float nfbm3(vec2 p, float sT) {
+  float s = nval(p * F0, sT);
+  s += nval(p * F1, sT) * 0.5;
+  s += nval(p * F2, sT) * 0.25;
+  return s / 1.75;
+}
+float nfbm4(vec2 p, float sT) {
+  float s = nval(p * F0, sT);
+  s += nval(p * F1, sT) * 0.5;
+  s += nval(p * F2, sT) * 0.25;
+  s += nval(p * F3, sT) * 0.125;
+  return s / 1.875;
+}
+float nfbm5(vec2 p, float sT) {
+  float s = nval(p * F0, sT);
+  s += nval(p * F1, sT) * 0.5;
+  s += nval(p * F2, sT) * 0.25;
+  s += nval(p * F3, sT) * 0.125;
+  s += nval(p * F4, sT) * 0.0625;
+  return s / 1.9375;
+}
+float nridge4(vec2 p, float sT) {
+  float n = 1.0 - abs(nval(p * G0, sT) * 2.0 - 1.0); float s = n * n;
+  n = 1.0 - abs(nval(p * G1, sT) * 2.0 - 1.0); s += n * n * 0.5;
+  n = 1.0 - abs(nval(p * G2, sT) * 2.0 - 1.0); s += n * n * 0.25;
+  n = 1.0 - abs(nval(p * G3, sT) * 2.0 - 1.0); s += n * n * 0.125;
+  return s / 1.875;
+}
+]==]
+
+-- The generator proper. One texel per grid cell, packed so the whole field set
+-- comes back in one RGBA8 readback:
+--   r,g  elevation, 16 bits      b  moisture, 8 bits
+--   a    beach-width noise in the high 7 bits, "this cell is land" in bit 0
+-- Only the sign of the land value is ever read back (the distance transform is
+-- the only consumer), and elevation is zero on water, so 16 bits of elevation
+-- and one bit of land is the whole of what the CPU needs.
+local FIELD_GLSL = NOISE_GLSL .. [==[
+extern highp vec4 uGen;    // x: seed base  y: cell size  z: beach-noise seed
+extern highp vec2 uCentre; // the island centre, which is also its radii
+
+vec4 effect(vec4 col, Image tx, vec2 tc, vec2 pc) {
+  float sb = uGen.x;
+  float wx = floor(pc.x) * uGen.y;
+  float wy = floor(pc.y) * uGen.y;
+  vec2  w  = vec2(wx, wy);
+
+  float s1 = (sb + 1.0) * 747.0;
+  float w1 = nfbm3(w * 0.00052 + vec2( 4.1, -2.3), s1);
+  float w2 = nfbm3(w * 0.00052 + vec2(-7.7,  5.9), (sb + 41.0) * 747.0);
+  float v1 = nfbm3(w * 0.00205 + vec2(19.0,  3.0), (sb + 81.0) * 747.0);
+  float v2 = nfbm3(w * 0.00205 + vec2(-11.0, -8.0), (sb + 121.0) * 747.0);
+  float qx = wx + (w1 - 0.5) * 1280.0 + (v1 - 0.5) * 300.0;
+  float qy = wy + (w2 - 0.5) * 1080.0 + (v2 - 0.5) * 250.0;
+
+  float dx = (qx - uCentre.x) / uCentre.x;
+  float dy = (qy - uCentre.y) / uCentre.y;
+  float r  = sqrt(dx * dx + dy * dy);
+  // cos and sin of atan2(dy, dx) are dx/r and dy/r -- no trig, and closer to
+  // the Lua double than reproducing atan2 and cos would be
+  float ir = r > 0.0 ? 1.0 / r : 0.0;
+  float ca = r > 0.0 ? dx * ir : 1.0;
+  float sa = dy * ir;
+  float lobe = 0.46 + 0.40 * nfbm4(vec2(ca * 3.4 + 11.0, sa * 3.4 + 6.0), (sb + 2.0) * 747.0);
+  float mask = smoothstep(lobe + 0.30, lobe - 0.16, r);
+
+  float cont = nfbm5(w * 0.00090 + vec2(11.0, 7.0), (sb + 3.0) * 747.0);
+  float det  = nfbm4(w * 0.00390 + vec2(-3.0, 2.0), (sb + 4.0) * 747.0);
+  float lv = mask * 1.30 + (cont - 0.5) * 1.34 + (det - 0.5) * 0.26 - 0.598;
+
+  float s9 = (sb + 9.0) * 747.0;
+  float bay1 = nfbm3(vec2(qx, qy) * 0.00062 + vec2(301.0, -143.0), s9);
+  float bay2 = nfbm3(w * 0.00140 + vec2(-77.0, 211.0), (sb + 39.0) * 747.0);
+  lv = lv - smoothstep(0.47, 0.86, bay1) * 1.10 * smoothstep(0.08, 0.86, r)
+          - smoothstep(0.60, 0.92, bay2) * 0.70 * smoothstep(0.26, 1.00, r);
+
+  float isl = nfbm3(w * 0.0031 + vec2(41.0, 17.0), (sb + 5.0) * 747.0);
+  lv = lv + smoothstep(0.62, 0.90, isl) * smoothstep(1.42, 0.78, r) * 0.72;
+
+  float e = 0.0, mo = 1.0, land = 0.0;
+  if (lv > 0.0) {
+    land = 1.0;
+    float ln = clamp(lv / 0.62, 0.0, 1.0);
+    float s6 = (sb + 6.0) * 747.0;
+    float hills = nfbm5(w * 0.0030 + vec2(21.0, -9.0), s6);
+    float basin = nfbm3(w * 0.0013 + vec2(63.0, -27.0), (sb + 66.0) * 747.0);
+    float spine = nridge4(w * 0.0018 + vec2(-13.0, 31.0), (sb + 7.0) * 747.0);
+    e = pow(max(ln, 1e-20), 1.25) * (0.26 + 0.42 * hills) + (basin - 0.5) * 0.20;
+    e = e + spine * spine * smoothstep(0.42, 0.95, ln) * 0.68;
+    e = clamp(e, 0.0, 1.0);
+    float m = nfbm4(w * 0.0021 + vec2(77.0, 53.0), (sb + 8.0) * 747.0);
+    mo = clamp(m * 0.80 + (1.0 - e) * 0.40 - 0.11, 0.0, 1.0);
+  }
+
+  float bwn = nfbm3(w * 0.0115, uGen.z * 747.0);
+  float e16 = floor(e * 65535.0 + 0.5);
+  float ehi = floor(e16 * (1.0 / 256.0));
+  return vec4(ehi / 255.0,
+              (e16 - ehi * 256.0) / 255.0,
+              floor(mo * 255.0 + 0.5) / 255.0,
+              (floor(bwn * 127.0 + 0.5) * 2.0 + land) / 255.0);
+}
+]==]
+
+-- The blight, once the centres are placed (which needs the shore distance, and
+-- so stays on the CPU). The per-cell warp and grain do not depend on which scar
+-- is being measured, so they are computed once and the centres only cost a
+-- rotation each -- three fbm calls a cell rather than three per centre.
+local SCAR_GLSL = NOISE_GLSL .. [==[
+extern highp vec4 uScar;              // x: seed  y: cell size  z: centre count
+extern highp vec4 uScarA[5];          // x, y, radius, eccentricity
+extern highp vec4 uScarB[5];          // cos(-ang), sin(-ang)
+
+vec4 effect(vec4 col, Image tx, vec2 tc, vec2 pc) {
+  float sN = uScar.x;
+  float wx = floor(pc.x) * uScar.y;
+  float wy = floor(pc.y) * uScar.y;
+  vec2  w  = vec2(wx, wy);
+  float warpX = nfbm3(w * 0.0026 + vec2(5.0, -3.0), sN * 747.0) - 0.5;
+  float warpY = nfbm3(w * 0.0026 + vec2(55.0, 31.0), (sN + 7.0) * 747.0) - 0.5;
+  float fine  = nfbm3(w * 0.0090 + vec2(-21.0, 13.0), (sN + 19.0) * 747.0);
+  float grain = (fine - 0.5) * 0.34;
+
+  float best = 0.0;
+  for (int i = 0; i < 5; i++) {
+    if (float(i) >= uScar.z) break;
+    vec4 a = uScarA[i];
+    vec4 b = uScarB[i];
+    float px = wx + warpX * a.z * 1.45 - a.x;
+    float py = wy + warpY * a.z * 1.45 - a.y;
+    float ex = (px * b.x - py * b.y) / (a.z * a.w);
+    float ey = (px * b.y + py * b.x) / a.z;
+    float v = smoothstep(1.00, 0.30, sqrt(ex * ex + ey * ey) + grain);
+    best = max(best, v);
+  }
+  return vec4(best, 0.0, 0.0, 1.0);
+}
+]==]
+
 local GROUND_GLSL = [==[
 extern Image fieldA;      // r: elevation  g,b: height gradient  a: signed shore distance
 extern Image fieldB;      // r: moisture   g: fertility  b: scar  a: slope
@@ -873,6 +1191,124 @@ function Terrain.newDeferred(seed) return Terrain.new(seed, { defer = true }) en
 function Terrain:bounds() return 0, 0, self.w, self.h end
 
 ---------------------------------------------------------------------- generate
+--- Whether to use the GPU generator. BOTS_TERRAIN_CPU forces the reference
+--- path, which is how the two are A/B'd.
+local function gpuWanted()
+  local cfg = _G.BOTS_CFG
+  if cfg and cfg("BOTS_TERRAIN_CPU") then return false end
+  return love.graphics ~= nil and love.graphics.newCanvas ~= nil
+end
+
+--- Render one grid-sized RGBA8 pass and hand back its bytes. Returns nil (and
+--- leaves nothing behind) if anything about the GPU refuses to co-operate,
+--- which is the whole point of it being a separate step.
+function Terrain:_renderField(shader, send)
+  local gw, gh = self.gw, self.gh
+  local ok, res = pcall(function()
+    if not self._genWhite then
+      local w = love.image.newImageData(1, 1, "rgba8", string.char(255, 255, 255, 255))
+      self._genWhite = love.graphics.newImage(w)
+    end
+    local canvas = self._genCanvas
+    if not canvas then
+      canvas = love.graphics.newCanvas(gw, gh, { format = "rgba8" })
+      canvas:setFilter("nearest", "nearest")
+      self._genCanvas = canvas
+    end
+    local prevCanvas = love.graphics.getCanvas()
+    local prevBlend, prevAlpha = love.graphics.getBlendMode()
+    love.graphics.setCanvas(canvas)
+    love.graphics.clear(0, 0, 0, 0)
+    -- `replace` AND `premultiplied`: every channel is data. Plain "replace"
+    -- still folds src alpha into src RGB (LOVE rewrites srcRGB to SRC_ALPHA
+    -- whenever the alpha mode is the default alphamultiply), which quietly
+    -- scaled the packed elevation bytes by the packed land/beach byte.
+    love.graphics.setBlendMode("replace", "premultiplied")
+    love.graphics.setShader(shader)
+    send(shader)
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(self._genWhite, 0, 0, 0, gw, gh)
+    love.graphics.setShader()
+    love.graphics.setBlendMode(prevBlend, prevAlpha)
+    love.graphics.setCanvas(prevCanvas)
+    local id = canvas:newImageData()
+    local str = id:getString()
+    id:release()
+    return str
+  end)
+  if not ok or type(res) ~= "string" or #res ~= gw * gh * 4 then
+    self.gpuNote = "readback failed: " .. tostring(res):sub(1, 80)
+    return nil
+  end
+  return res
+end
+
+--- The island's three primary fields, generated on the GPU and read back.
+--- Returns nil if the shader will not build, the readback fails, or the result
+--- does not agree with cellFields -- the last of which is the guard against a
+--- device whose `highp` is not really high.
+function Terrain:_fieldsGPU(sb)
+  if not gpuWanted() then return nil end
+  if self._fieldSh == nil then
+    local ok, sh = pcall(love.graphics.newShader, FIELD_GLSL)
+    self._fieldSh = ok and sh or false
+    if not ok then self.gpuNote = "field shader: " .. tostring(sh):sub(1, 120) end
+  end
+  if not self._fieldSh then return nil end
+
+  local gw, gh, cell = self.gw, self.gh, self.cell
+  local bwSeed = (self.seed % 733) + 120
+  local str = self:_renderField(self._fieldSh, function(sh)
+    sh:send("uGen", { sb, cell, bwSeed, 0 })
+    sh:send("uCentre", { CX, CY })
+  end)
+  if not str then return nil end
+
+  local byte = string.byte
+  local elev, moist, land, bwn = {}, {}, {}, {}
+  local k, i = 1, 1
+  local yield = self._yield
+  for gy = 0, gh - 1 do
+    if gy % 48 == 0 then yield(gy / gh * 0.55) end
+    for _ = 0, gw - 1 do
+      local r, g, b, a = byte(str, k, k + 3)
+      elev[i]  = (r * 256 + g) * (1 / 65535)
+      moist[i] = b * (1 / 255)
+      local lb = a % 2
+      land[i]  = (lb == 1) and 1 or -1
+      bwn[i]   = (a - lb) * (1 / 254)
+      k = k + 4
+      i = i + 1
+    end
+  end
+
+  -- Spot-check against the reference. GPU and CPU sines differ, so this is a
+  -- tolerance and not an equality: the measured disagreement is ~0.001 of
+  -- elevation, and anything an order of magnitude past that means the device
+  -- is not computing what we asked it to.
+  local bad = 0
+  for sy = 1, 7 do
+    for sx = 1, 9 do
+      local gx = floor((sx / 10) * (gw - 1))
+      local gy = floor((sy / 8) * (gh - 1))
+      local j = gy * gw + gx + 1
+      local lv, e = cellFields(gx * cell, gy * cell, sb)
+      if abs(lv) > 0.05 and (lv > 0) ~= (land[j] > 0) then bad = bad + 1
+        if _G.BOTS_CFG and _G.BOTS_CFG("BOTS_PROBE") then print(string.format("LANDBAD (%d,%d) lv=%+.4f gpu=%+d", gx, gy, lv, land[j])) end end
+      if lv > 0.05 and abs(e - elev[j]) > 0.02 then bad = bad + 1
+        if _G.BOTS_CFG and _G.BOTS_CFG("BOTS_PROBE") then print(string.format("ELEVBAD (%d,%d) lv=%+.4f cpu=%.4f gpu=%.4f", gx, gy, lv, e, elev[j])) end end
+    end
+  end
+  if bad > 0 then
+    self.gpuNote = string.format("field check failed on %d of 63 probes", bad)
+    return nil
+  end
+
+  self.bwn = bwn
+  return elev, moist, land
+end
+
+---------------------------------------------------------------------- generate
 function Terrain:_generate()
   local t0 = love.timer and love.timer.getTime() or os.clock()
   local yield = self._yield
@@ -880,85 +1316,36 @@ function Terrain:_generate()
   local n = gw * gh
   local sb = (self.seed % 977) * 3
 
-  local s1, s2, s3, s4 = sb + 1, sb + 2, sb + 3, sb + 4
-  local s5, s6, s7, s8 = sb + 5, sb + 6, sb + 7, sb + 8
-  local s9 = sb + 9
-
-  local elev, moist, land = {}, {}, {}
-  local scar, heal = {}, {}
-  local cx, cy = self.w * 0.5, self.h * 0.5
-  local rx, ry = self.w * 0.5, self.h * 0.5
-
-  for gy = 0, gh - 1 do
-    if gy % 24 == 0 then yield(gy / gh * 0.80) end
-    local wy = gy * cell
-    local base = gy * gw
-    for gx = 0, gw - 1 do
-      local wx = gx * cell
-      local i = base + gx + 1
-
-      -- two-scale domain warp: bays and peninsulas instead of a circle
-      local w1 = N.fbm(wx * 0.00052 + 4.1, wy * 0.00052 - 2.3, 3, s1)
-      local w2 = N.fbm(wx * 0.00052 - 7.7, wy * 0.00052 + 5.9, 3, s1 + 40)
-      local v1 = N.fbm(wx * 0.00205 + 19.0, wy * 0.00205 + 3.0, 3, s1 + 80)
-      local v2 = N.fbm(wx * 0.00205 - 11.0, wy * 0.00205 - 8.0, 3, s1 + 120)
-      local qx = wx + (w1 - 0.5) * 1280 + (v1 - 0.5) * 300
-      local qy = wy + (w2 - 0.5) * 1080 + (v2 - 0.5) * 250
-
-      local dx, dy = (qx - cx) / rx, (qy - cy) / ry
-      local r = sqrt(dx * dx + dy * dy)
-      local ang = atan2(dy, dx)
-      -- periodic in angle, so the falloff radius itself grows lobes
-      local lobe = 0.46 + 0.40 * N.fbm(cos(ang) * 3.4 + 11.0, sin(ang) * 3.4 + 6.0, 4, s2)
-      local mask = U.smoothstep(lobe + 0.30, lobe - 0.16, r)
-
-      local cont = N.fbm(wx * 0.00090 + 11.0, wy * 0.00090 + 7.0, 5, s3)
-      local det  = N.fbm(wx * 0.00390 - 3.0, wy * 0.00390 + 2.0, 4, s4)
-      local lv = mask * 1.30 + (cont - 0.5) * 1.34 + (det - 0.5) * 0.26 - 0.598
-
-      -- two scales of bay bitten out of the silhouette: broad gulfs and inlets
-      local bay1 = N.fbm(qx * 0.00062 + 301.0, qy * 0.00062 - 143.0, 3, s9)
-      local bay2 = N.fbm(wx * 0.00140 - 77.0, wy * 0.00140 + 211.0, 3, s9 + 30)
-      lv = lv - U.smoothstep(0.47, 0.86, bay1) * 1.10 * U.smoothstep(0.08, 0.86, r)
-              - U.smoothstep(0.60, 0.92, bay2) * 0.70 * U.smoothstep(0.26, 1.00, r)
-
-      -- offshore islets and skerries in the shallow ring
-      local isl = N.fbm(wx * 0.0031 + 41.0, wy * 0.0031 + 17.0, 3, s5)
-      lv = lv + U.smoothstep(0.62, 0.90, isl) * U.smoothstep(1.42, 0.78, r) * 0.72
-
-      land[i] = lv
-
-      if lv > 0 then
-        local ln = U.saturate(lv / 0.62)
-        local hills = N.fbm(wx * 0.0030 + 21.0, wy * 0.0030 - 9.0, 5, s6)
-        local basin = N.fbm(wx * 0.0013 + 63.0, wy * 0.0013 - 27.0, 3, s6 + 60)
-        local spine = N.ridge(wx * 0.0018 - 13.0, wy * 0.0018 + 31.0, 4, s7)
-        -- broad plains, a few genuine highlands, a couple of low basins
-        local e = ln ^ 1.25 * (0.26 + 0.42 * hills) + (basin - 0.5) * 0.20
-        e = e + spine * spine * U.smoothstep(0.42, 0.95, ln) * 0.68
-        e = U.saturate(e)
-        elev[i] = e
-        local mo = N.fbm(wx * 0.0021 + 77.0, wy * 0.0021 + 53.0, 4, s8)
-        -- water collects low and drains off the highlands
-        moist[i] = U.saturate(mo * 0.80 + (1 - e) * 0.40 - 0.11)
-      else
-        elev[i] = 0
-        moist[i] = 1
+  local elev, moist, land = self:_fieldsGPU(sb)
+  self.gpuFields = elev ~= nil
+  if not elev then
+    if self.gpuNote then print("terrain: CPU fields (" .. self.gpuNote .. ")") end
+    self.bwn = nil
+    elev, moist, land = {}, {}, {}
+    for gy = 0, gh - 1 do
+      if gy % 24 == 0 then yield(gy / gh * 0.55) end
+      local wy = gy * cell
+      local base = gy * gw
+      for gx = 0, gw - 1 do
+        local i = base + gx + 1
+        local lv, e, mo = cellFields(gx * cell, wy, sb)
+        land[i], elev[i], moist[i] = lv, e, mo
       end
-      scar[i] = 0
-      heal[i] = 0
     end
   end
 
+  local scar, heal = {}, {}
+  for i = 1, n do scar[i] = 0; heal[i] = 0 end
+
   self.elev, self.moist, self.landv, self.scar, self.heal = elev, moist, land, scar, heal
 
-  yield(0.82)
+  yield(0.60)
   self:_distanceField()
-  yield(0.86)
+  yield(0.70)
   self:_scars()
-  yield(0.92)
+  yield(0.88)
   self:_classify()
-  yield(0.97)
+  yield(0.94)
   self:_buildFields()
   self.generated = true
 
@@ -1059,14 +1446,23 @@ function Terrain:_scars()
     end
   end
   self.scarCentres = centres
+  if #centres == 0 then return end
 
-  for _, c in ipairs(centres) do
-    local ca, sa = cos(-c.ang), sin(-c.ang)
+  -- Each centre's support fits inside its own box (the warp reaches 0.73 of a
+  -- radius and the falloff 1.17 of one, against a box 1.9 eccentric radii out),
+  -- so the boxes are also all the GPU result that needs reading back.
+  local boxes = {}
+  for ci, c in ipairs(centres) do
     local reach = c.r * c.ecc * 1.9
-    local g0x = max(0, floor((c.x - reach) / cell))
-    local g1x = min(gw - 1, ceil((c.x + reach) / cell))
-    local g0y = max(0, floor((c.y - reach) / cell))
-    local g1y = min(gh - 1, ceil((c.y + reach) / cell))
+    boxes[ci] = { max(0, floor((c.x - reach) / cell)), min(gw - 1, ceil((c.x + reach) / cell)),
+                  max(0, floor((c.y - reach) / cell)), min(gh - 1, ceil((c.y + reach) / cell)) }
+  end
+
+  if self:_scarsGPU(centres, boxes, sN) then return end
+
+  for ci, c in ipairs(centres) do
+    local ca, sa = cos(-c.ang), sin(-c.ang)
+    local g0x, g1x, g0y, g1y = boxes[ci][1], boxes[ci][2], boxes[ci][3], boxes[ci][4]
     for gy = g0y, g1y do
       for gx = g0x, g1x do
         local i = gy * gw + gx + 1
@@ -1074,16 +1470,57 @@ function Terrain:_scars()
         -- warp the sample before measuring, so the blight has an eaten edge
         local ox = (N.fbm(wx * 0.0026 + 5.0, wy * 0.0026 - 3.0, 3, sN) - 0.5) * c.r * 1.45
         local oy = (N.fbm(wx * 0.0026 + 55.0, wy * 0.0026 + 31.0, 3, sN + 7) - 0.5) * c.r * 1.45
-        local px, py = wx + ox - c.x, wy + oy - c.y
-        local ex = (px * ca - py * sa) / (c.r * c.ecc)
-        local ey = (px * sa + py * ca) / c.r
-        local d = sqrt(ex * ex + ey * ey)
         local fine = N.fbm(wx * 0.0090 - 21.0, wy * 0.0090 + 13.0, 3, sN + 19)
-        local v = U.smoothstep(1.00, 0.30, d + (fine - 0.5) * 0.34)
+        local v = scarAt(wx, wy, ox, oy, fine, c, ca, sa)
         if v > scar[i] then scar[i] = v end
       end
     end
   end
+end
+
+--- The same blight on the GPU. Five centres is the shader's ceiling; the
+--- placement loop above never asks for more than four, and a run that somehow
+--- did would fall back to the reference loop rather than lose a scar.
+function Terrain:_scarsGPU(centres, boxes, sN)
+  if not gpuWanted() or #centres > 5 then return false end
+  if self._scarSh == nil then
+    local ok, sh = pcall(love.graphics.newShader, SCAR_GLSL)
+    self._scarSh = ok and sh or false
+    if not ok then self.gpuNote = "scar shader: " .. tostring(sh):sub(1, 120) end
+  end
+  if not self._scarSh then return false end
+
+  local A, B = {}, {}
+  for i = 1, 5 do
+    local c = centres[i]
+    if c then
+      A[i] = { c.x, c.y, c.r, c.ecc }
+      B[i] = { cos(-c.ang), sin(-c.ang), 0, 0 }
+    else
+      A[i] = { 0, 0, 1, 1 }
+      B[i] = { 1, 0, 0, 0 }
+    end
+  end
+  local str = self:_renderField(self._scarSh, function(sh)
+    sh:send("uScar", { sN, self.cell, #centres, 0 })
+    sh:send("uScarA", A[1], A[2], A[3], A[4], A[5])
+    sh:send("uScarB", B[1], B[2], B[3], B[4], B[5])
+  end)
+  if not str then return false end
+
+  local byte, gw, scar = string.byte, self.gw, self.scar
+  for ci = 1, #centres do
+    local g0x, g1x, g0y, g1y = boxes[ci][1], boxes[ci][2], boxes[ci][3], boxes[ci][4]
+    for gy = g0y, g1y do
+      local row = gy * gw
+      for gx = g0x, g1x do
+        local i = row + gx + 1
+        local v = byte(str, i * 4 - 3) * (1 / 255)
+        if v > scar[i] then scar[i] = v end
+      end
+    end
+  end
+  return true
 end
 
 --- The run of columns (or rows) that hold the island, given a per-column land
@@ -1113,6 +1550,10 @@ function Terrain:_classify()
   local sN = (self.seed % 733) + 120
   local kslope = RELIEF / (2 * cell)
 
+  -- the beach-width noise rides back with the GPU fields (7 bits, worth 0.2 of
+  -- a world unit on the sand line); without them it is the last per-cell fbm
+  -- left on the CPU
+  local bwn = self.bwn
   local landIdx, fertIdx = {}, {}
   -- Land per column and per row. The island's own rectangle falls out of these,
   -- and the camera clamps to it -- so it is worth counting here, while we are
@@ -1143,7 +1584,8 @@ function Terrain:_classify()
         local wx, wy = gx * cell, gy * cell
         colN[gx] = colN[gx] + 1
         rowN[gy] = rowN[gy] + 1
-        local bw = BEACH_W * (0.60 + 0.85 * N.fbm(wx * 0.0115, wy * 0.0115, 3, sN))
+        local bwv = bwn and bwn[i] or N.fbm(wx * 0.0115, wy * 0.0115, 3, sN)
+        local bw = BEACH_W * (0.60 + 0.85 * bwv)
         local sc = scar[i]
         local e, m = elev[i], moist[i]
         local b

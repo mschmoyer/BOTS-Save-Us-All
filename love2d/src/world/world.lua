@@ -60,6 +60,9 @@ function World:init(seed, opts)
   self.cobalts, self.projectiles = {}, {}
   self.speeches = {}
   self.drawList = {}
+  -- the same trees as `self.trees`, in depth order, and the slice of that the
+  -- camera can see: see World:addTree
+  self.treesZ, self.visTrees = {}, {}
 
   self.hTree   = Spatial.new(140)
   self.hBot    = Spatial.new(140)
@@ -105,6 +108,10 @@ function World:init(seed, opts)
     self:seedCobalt()
   end
   Warmup.mark("home")
+  -- A restored forest has to be in the visible list before anything draws:
+  -- `World:draw` reads the list rather than sweeping `self.trees`, and the
+  -- loading screen and the ending both paint a world nobody has updated yet.
+  self:refreshVisibleTrees()
 
   Signal._world = self
   Signal.emit("world:ready", self)
@@ -189,6 +196,77 @@ local function sweep(list, hash, dt)
     w = w + 1
   end
   for i = w, total do list[i] = nil end
+end
+
+--- Depth key. Entities may supply `sortKey`; anything else sorts on its feet.
+--- It lives up here with the entity bookkeeping rather than down in the draw
+--- section because the forest's keys are now assigned once when a tree is
+--- planted and never touched again - see World:addTree.
+local function depthOf(e)
+  if e.sortKey then return e:sortKey() end
+  local z = e.z
+  return e.y + (type(z) == "number" and z or 0)
+end
+
+--- The key is stashed when the list is built, not recomputed inside the
+--- comparator. table.sort calls its comparator O(n log n) times, so a
+--- five-hundred entity frame was making about nine thousand dynamic dispatches
+--- through depthOf -- 1.3 to 1.8 ms of interpreted Lua, every frame, to answer
+--- five hundred questions.
+local function addDraw(list, e)
+  e._dz = depthOf(e)
+  list[#list + 1] = e
+end
+local function bySortKey(a, b) return a._dz < b._dz end
+
+--- Plant a tree into the world's bookkeeping.
+---
+--- A tree is the one thing on this island that never moves, so its depth key is
+--- fixed for its whole life and a list held in depth order stays in depth order
+--- for free. `treesZ` is that list. It costs one binary-search insert per
+--- planting - a few a second at the busiest - and it buys the removal of the
+--- ~450-entry `table.sort` through a Lua comparator that `World:draw` was
+--- running every single frame to re-discover an order that had not changed.
+---
+--- `self.trees` deliberately keeps its own insertion order: the update sweep,
+--- the spread cursor and the save file all read it, and the spread cursor draws
+--- from the shared RNG, so reordering it would quietly move the whole run.
+function World:addTree(t)
+  self:addEntity(self.trees, self.hTree, t)
+  t._dz = depthOf(t)
+  local z = self.treesZ
+  local lo, hi = 1, #z
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    if z[mid]._dz <= t._dz then lo = mid + 1 else hi = mid - 1 end
+  end
+  table.insert(z, lo, t)
+  self.treeCount = self.treeCount + 1
+  return t
+end
+
+--- Refresh the depth-ordered list of trees the camera can see, and compact the
+--- dead out of `treesZ` on the same walk. Called straight after the tree sweep,
+--- because `Tree:update` has just computed `onScreen` for its own culling and
+--- both draw passes want exactly that answer: the old code re-derived it with
+--- two more full walks of the 722-tree array inside `World:draw`.
+---
+--- Nothing in this loop can call back into the world, so nothing can append to
+--- either list while it is being compacted. If that ever stops being true it
+--- needs the same slide-down `sweep` does, for the same reason.
+function World:refreshVisibleTrees()
+  local z, vis = self.treesZ, self.visTrees
+  local n, w, v = #z, 0, 0
+  for i = 1, n do
+    local t = z[i]
+    if not (t.isDone and t:isDone()) then
+      w = w + 1
+      z[w] = t
+      if t.alive and t.onScreen then v = v + 1 vis[v] = t end
+    end
+  end
+  for i = w + 1, n do z[i] = nil end
+  for i = v + 1, #vis do vis[i] = nil end
 end
 
 ------------------------------------------------------------------------ queries
@@ -329,8 +407,7 @@ function World:plantTree(x, y, by)
   if not t then return false end
   t.world = self
   t.canElder = true
-  self:addEntity(self.trees, self.hTree, t)
-  self.treeCount = self.treeCount + 1
+  self:addTree(t)
   self.stats.planted = self.stats.planted + 1
 
   VFX.emit("plant_burst", x, y)
@@ -359,8 +436,7 @@ function World:restore(d)
       if elder == 1 then t.elder = true end
       if t.refreshMesh  then t:refreshMesh() end
       if t.refreshStage then t:refreshStage(true) end
-      self:addEntity(self.trees, self.hTree, t)
-      self.treeCount = self.treeCount + 1
+      self:addTree(t)
     end
   end
 
@@ -1041,6 +1117,7 @@ function World:update(dt, realDt)
   if self.rig then self.rig:update(dt) end
   if self.player then self.player:update(dt, self.camera) end
   sweep(self.trees, self.hTree, dt)
+  self:refreshVisibleTrees()
   sweep(self.bots, self.hBot, dt)
   sweep(self.enemies, self.hEnemy, dt)
   sweep(self.cobalts, self.hCobalt, dt)
@@ -1254,24 +1331,6 @@ function World:threat()
 end
 
 -------------------------------------------------------------------------- draw
---- Depth key. Entities may supply `sortKey`; anything else sorts on its feet.
-local function depthOf(e)
-  if e.sortKey then return e:sortKey() end
-  local z = e.z
-  return e.y + (type(z) == "number" and z or 0)
-end
-
---- The key is stashed when the list is built, not recomputed inside the
---- comparator. table.sort calls its comparator O(n log n) times, so a
---- five-hundred entity frame was making about nine thousand dynamic dispatches
---- through depthOf -- 1.3 to 1.8 ms of interpreted Lua, every frame, to answer
---- five hundred questions.
-local function addDraw(list, e)
-  e._dz = depthOf(e)
-  list[#list + 1] = e
-end
-local function bySortKey(a, b) return a._dz < b._dz end
-
 function World:draw(camera)
   self.camera = camera
   local g = love.graphics
@@ -1314,12 +1373,14 @@ function World:draw(camera)
   -- shadow pass: everything's contact shadow lands on the ground, under all art
   local sunA = DayNight.sunAngle or 0.9
   local sunL = DayNight.sunLength or 0.6
-  for i = 1, #self.trees do
-    local t = self.trees[i]
-    -- t.onScreen is computed once in Tree:update and both draw paths early-out
-    -- on it anyway; re-asking the camera here was fourteen hundred redundant
-    -- visibility tests a frame.
-    if t.alive and t.onScreen and t.drawShadow then t:drawShadow(sunA, sunL) end
+  -- `visTrees` is the forest the camera can see, in depth order, built by the
+  -- update sweep that had already worked out `onScreen` for its own culling.
+  -- Both tree passes read it: this one used to walk all 722 trees to find the
+  -- 442 that draw, and the entity pass below used to walk them all again.
+  local vis = self.visTrees
+  for i = 1, #vis do
+    local t = vis[i]
+    if t.drawShadow then t:drawShadow(sunA, sunL) end
   end
   if Tree.endPass then Tree.endPass() end
   local lists = { self.bots, self.enemies, self.cobalts, self.projectiles }
@@ -1336,13 +1397,14 @@ function World:draw(camera)
 
   if VFX.draw then VFX.draw("ground") end
 
-  -- depth-sorted entity pass
+  -- Depth-sorted entity pass. Only the things that actually move are sorted -
+  -- fifty-odd entries rather than five hundred - because the forest arrives
+  -- already in depth order and the two lists are merged as they are drawn. A
+  -- Lua comparator called nine thousand times a frame to re-establish an order
+  -- that had not changed since the last planting was the single most expensive
+  -- thing left in `World:draw`.
   local dl = self.drawList
   for i = #dl, 1, -1 do dl[i] = nil end
-  for i = 1, #self.trees do
-    local t = self.trees[i]
-    if t.alive and t.onScreen then t.isTree = true addDraw(dl, t) end
-  end
   for l = 1, #lists do
     local list = lists[l]
     for i = 1, #list do
@@ -1355,10 +1417,16 @@ function World:draw(camera)
   table.sort(dl, bySortKey)
 
   local sx, sy = math.cos(sunA), math.sin(sunA)
-  for i = 1, #dl do
-    local e = dl[i]
-    if e.isTree then e:draw(sx, sy) else e:draw() end
+  local ei, en = 1, #dl
+  for ti = 1, #vis do
+    local t = vis[ti]
+    local tz = t._dz
+    while ei <= en and dl[ei]._dz < tz do
+      dl[ei]:draw() ei = ei + 1
+    end
+    t:draw(sx, sy)
   end
+  while ei <= en do dl[ei]:draw() ei = ei + 1 end
   if Tree.endPass then Tree.endPass() end
 
   -- The canopy's backlight used to be a third additive pass over every crown
