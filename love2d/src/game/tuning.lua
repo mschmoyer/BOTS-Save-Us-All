@@ -207,15 +207,22 @@ T.boss = {
   -- plates cut that to six: the numbers the fight is actually paced around.
   hullScale    = 4.4,
   platePenalty = 0.42,
-  rebelShare   = 0.70,         -- the fraction of the rig the workforce pays for
+  -- What fraction of the rig the workforce pays for, as a function of how big
+  -- it is. Twelve bots cannot carry three quarters of a fight this size and it
+  -- is a lie to pretend they do; sixty can, and should. This is the curve that
+  -- makes the eleven minutes of building before the rig lands *matter* -- a
+  -- bigger crew is not more damage per bot, it is less of the fight left to you.
+  rebelShareMin   = 0.42,
+  rebelShareMax   = 0.72,
+  rebelSharePerBot = 0.006,
 
   -- The procession. Cohort size scales with the crew so the rebellion always
   -- takes about the same number of waves, whether you built twelve bots or
   -- sixty: the rhythm of the thing is authored, its weight is not.
-  rebelWaves   = 10,
+  rebelWaves   = 14,
   rebelCohort  = 2,            -- floor on a wave, for very small crews
-  rebelEvery   = 7.0,
-  rebelDelay   = 7.5,
+  rebelEvery   = 6.5,
+  rebelDelay   = 8.5,
 
   -- The hull will not go below this fraction of maximum from player damage
   -- alone. The plates come off when the bots arrive, not when you hit hard
@@ -240,6 +247,35 @@ T.boss = {
   droneEvery   = 5.0,
 }
 
+---------------------------------------------------------------------- readouts
+-- The bots are the emotional core of the game and by the middle of a run they
+-- are invisible: eight hundred canopies close over the island and a capture of
+-- an extraction with thirty-four bots alive did not show a single one of them.
+-- The player has had an occlusion-proof marker since the first build. These
+-- numbers give the workforce the same, and nothing more than the same: a mark
+-- that only appears when there is genuinely canopy in the way.
+T.hud = {
+  botPip = {
+    cover      = 3,      -- canopies over a bot before its mark is at full strength
+    coverR     = 62,     -- world radius of the cover test around a bot's head
+    coverUp    = 26,     -- how far above its feet that test is centred
+    coverBack  = 70,     -- a canopy rooted behind this only counts if it sorts in front
+    fade       = 7,      -- 1/s ramp, matching the player pip so the two agree
+    size       = 7,      -- chevron size in screen px; the player's is 11
+    rise       = 2.4,    -- bot radii above its feet the mark floats
+    bob        = 2.6,    -- idle bob rate, 1/s -- slower than the player's, so it reads as a crowd
+    max        = 48,     -- most marks drawn in a frame; the down and the rebelling get theirs first
+    ringR      = 5.5,    -- the static bots' ring; they are installations, not somebody walking
+    downPulse  = 5.0,
+    downRing   = 1.55,   -- multiplier on ringR for the rescue clock
+    tail       = 16,     -- screen px of wake behind a marching rebel
+    -- Every focus is a hole in the canopy and a forest full of holes is not a
+    -- forest, so the x-ray is spent only on the bots you have to walk onto.
+    xrayMax    = 3,
+    xrayRadius = 58,
+  },
+}
+
 -------------------------------------------------------------------------- juice
 T.juice = {
   maxTrauma      = 1.0,
@@ -259,6 +295,11 @@ T.camera = {
   zoom        = 1.25,
   zoomAim     = 1.16,
   edgePad     = 40,
+  -- How far past the island's own bounding box the view may travel. The camera
+  -- is clamped to the land, not to the world rectangle, so a beach still shows
+  -- its wet sand, its surf and a band of open sea -- and never half a screen of
+  -- empty water, which is what clamping to the world rect gave.
+  landPad     = 300,
 }
 
 return T

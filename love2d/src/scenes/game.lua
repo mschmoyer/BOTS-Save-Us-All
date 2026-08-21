@@ -72,6 +72,12 @@ function Game:enter(opts)
 
   -- Dev jump: start a session near a late beat so the finale can be iterated on
   -- without playing thirteen minutes of it first.
+  -- BOTS_CHIPS=brittle,pinBreaker: hand the run a specific loadout, so a chip
+  -- interaction can be reproduced instead of drafted for.
+  local chips = cfg("BOTS_CHIPS")
+  if chips and chips ~= "" then
+    for id in string.gmatch(chips, "[^,]+") do self.world.chips:add(id) end
+  end
   local jump = cfg("BOTS_JUMP")
   if jump and jump ~= "" then self:devJump(jump) end
 
@@ -256,8 +262,9 @@ function Game:telemetry(dt)
   print(string.format("TRACE,%.0f,%d,%s,%.0f,%.0f,%d,%d,%d,%d,%d,%.2f,%d,%d,%s,%d,%d,%d",
     w.time, w.cycle, w.phase, w.phaseT, w.phaseDur, w.treeCount, w.matureTrees or 0,
     w.elderTrees or 0, w:botCount(), #w.enemies, w.o2, w.cobalt, nodes,
-    w.boss and string.format("%d/%d p%d L%d/%d r%d/%s", w.boss.hp, w.boss.maxHp,
+    w.boss and string.format("%d/%d p%d L%d/%d h%d d%d r%d/%s", w.boss.hp, w.boss.maxHp,
       w.boss.phase, w.boss.rebelLanded or 0, w.rebelCrew or 0,
+      w.boss.playerHits or 0, w.boss.playerDamage or 0,
       (function() local n = 0 for i = 1, #w.bots do
          if w.bots[i].state == "rebel" then n = n + 1 end end return n end)(),
       tostring(w.botsRebelled)) or "-",

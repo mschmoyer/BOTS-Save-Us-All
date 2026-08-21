@@ -92,7 +92,10 @@ function Player:update(dt, camera)
   -- aim resolves from mouse / right stick / touch, falling back to facing
   local ax, ay
   if self.agent then
-    ax, ay = self.faceX, self.faceY
+    -- The agent aims where it is looking, not where it is walking. Backing away
+    -- from the rig while shoving used to point the cone at the treeline, which
+    -- made every headless balance trace read as if the player did no damage.
+    ax, ay = self.agent.aimX or self.faceX, self.agent.aimY or self.faceY
   else
     ax, ay = Input.aimVector(self.x, self.y, self.faceX, self.faceY, camera)
   end

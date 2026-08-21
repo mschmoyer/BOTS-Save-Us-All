@@ -688,6 +688,10 @@ function Terrain:_classify()
   local kslope = RELIEF / (2 * cell)
 
   local landIdx, fertIdx = {}, {}
+  -- The island's own rectangle, in grid cells. The world rect is mostly ocean,
+  -- so anything that wants to know where the island *is* -- the camera clamp
+  -- above all -- has to be told here, while we are already visiting every cell.
+  local bx0, by0, bx1, by1 = gw, gh, -1, -1
 
   for gy = 0, gh - 1 do
     local row = gy * gw
@@ -709,6 +713,10 @@ function Terrain:_classify()
         fert[i] = 0
       else
         local wx, wy = gx * cell, gy * cell
+        if gx < bx0 then bx0 = gx end
+        if gx > bx1 then bx1 = gx end
+        if gy < by0 then by0 = gy end
+        if gy > by1 then by1 = gy end
         local bw = BEACH_W * (0.60 + 0.85 * N.fbm(wx * 0.0115, wy * 0.0115, 3, sN))
         local sc = scar[i]
         local e, m = elev[i], moist[i]
@@ -743,6 +751,23 @@ function Terrain:_classify()
   self.gradx, self.grady = gradx, grady
   self.landIdx, self.fertIdx = landIdx, fertIdx
   self.landArea = #landIdx * cell * cell
+  if bx1 >= bx0 and by1 >= by0 then
+    -- one cell of slop on each side, because a cell is classified by its
+    -- centre and the coastline runs somewhere inside it
+    self.landBox = { x = (bx0 - 1) * cell, y = (by0 - 1) * cell,
+                     w = (bx1 - bx0 + 2) * cell, h = (by1 - by0 + 2) * cell }
+  else
+    self.landBox = nil
+  end
+end
+
+--- The island's bounding box, or the whole world rect if generation produced
+--- no land at all. This is what the camera clamps to: clamping to the world
+--- rect let a player standing on a beach fill half the screen with flat ocean.
+function Terrain:landBounds()
+  local b = self.landBox
+  if not b then return self:bounds() end
+  return b.x, b.y, b.w, b.h
 end
 
 --- Pack the fields into two RGBA8 textures for the bake shader.

@@ -12,11 +12,18 @@ function Camera:init(w, h)
   self.zoom, self.zoomTarget = T.zoom, T.zoom
   self.w, self.h = w or 1600, h or 900
   self.bounds = nil
+  self.freeBounds = false
   self.offX, self.offY = 0, 0
   self.rot = 0
 end
 
 function Camera:resize(w, h) self.w, self.h = w, h end
+
+--- The rectangle the *centre of the view* is kept inside, give or take
+--- `T.edgePad`. This is the island's box, not the world's: the world rect is
+--- mostly ocean, and clamping to it let a player standing on a beach fill half
+--- the screen with flat water. game.lua pads it by `T.landPad` so a shore still
+--- shows its surf and a band of sea.
 function Camera:setBounds(x, y, w, h) self.bounds = { x = x, y = y, w = w, h = h } end
 
 function Camera:snapTo(x, y) self.x, self.y, self.tx, self.ty = x, y, x, y end
@@ -40,9 +47,16 @@ function Camera:follow(x, y, vx, vy, dt)
   self:clampToBounds()
 end
 
+--- Pull the view back inside `bounds`.
+---
+--- Cutscene framing is deliberately outside this. `attach` and `focus` fold
+--- offX/offY in, and Dialogue drives them as `cam.x - target`, so a beat can
+--- frame the rig standing in open water and the clamp on `self.x` follows the
+--- player harmlessly underneath it. A scene that stages its own camera and
+--- wants no clamp at all sets `freeBounds`.
 function Camera:clampToBounds()
   local b = self.bounds
-  if not b then return end
+  if not b or self.freeBounds then return end
   local hw, hh = self.w / (2 * self.zoom), self.h / (2 * self.zoom)
   if b.w > hw * 2 then
     self.x = U.clamp(self.x, b.x + hw - T.edgePad, b.x + b.w - hw + T.edgePad)

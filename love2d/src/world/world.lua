@@ -770,7 +770,9 @@ function World:beginExtraction()
     if b.alive and b.state ~= "dead" then able = able + 1 end
   end
   self.rebelCrew = math.max(1, able)
-  self.rebelDamage = math.max(0.5, self.boss.maxHp * TU.boss.rebelShare / self.rebelCrew)
+  self.rebelShare = U.clamp(TU.boss.rebelShareMin + self.rebelCrew * TU.boss.rebelSharePerBot,
+                            TU.boss.rebelShareMin, TU.boss.rebelShareMax)
+  self.rebelDamage = math.max(0.5, self.boss.maxHp * self.rebelShare / self.rebelCrew)
   -- the boss lives in the enemy hash so shoves, pulses and sentry darts find it
   self.hEnemy:insert(self.boss)
   for i = 1, #self.bots do

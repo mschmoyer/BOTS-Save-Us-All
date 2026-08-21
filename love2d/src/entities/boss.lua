@@ -235,6 +235,10 @@ function Boss:damage(n, sx, sy, opts)
     if sx then VFX.emit("hit_spark", sx, sy, { color = P.warn, power = 0.6 }) end
     return false
   end
+  -- kept, not for balance: the ending wants to tell the player what share of
+  -- the rig they took down themselves and what share the workforce bought
+  self.playerHits = (self.playerHits or 0) + 1
+  self.playerDamage = (self.playerDamage or 0) + n
   return Boss.super.damage(self, n, sx, sy, opts)
 end
 

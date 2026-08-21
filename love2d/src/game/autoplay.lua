@@ -69,6 +69,14 @@ function A:decide(p, dt)
     self.rallyX, self.rallyY = self.gx, self.gy
   end
 
+  -- Aim is separate from movement, the way a stick or a mouse is: the agent
+  -- keeps the cone on whatever it is fighting even while it gives ground.
+  if threat then
+    self.aimX, self.aimY = U.norm(threat.x - p.x, threat.y - p.y)
+  elseif self.gx then
+    self.aimX, self.aimY = U.norm(self.gx - p.x, self.gy - p.y)
+  end
+
   local mx, my = 0, 0
   if self.gx then
     local dx, dy, d = U.norm(self.gx - p.x, self.gy - p.y)

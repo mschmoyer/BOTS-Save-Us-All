@@ -320,6 +320,9 @@ S.credits = {
     { key = "cycles",  label = "NIGHTS HELD" },
     { key = "built",   label = "BOTS BUILT" },
     { key = "rescued", label = "CARRIED HOME" },
+    -- The last line of the tally is the one the game is about: the rig came
+    -- down mostly because they walked into it, and the number says how much.
+    { key = "theirs",  label = "THE RIG, THEIR SHARE", suffix = "%" },
   },
 }
 

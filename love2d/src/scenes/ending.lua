@@ -208,12 +208,15 @@ function S:enter(world)
       cycles  = math.min(world.cycle or 1, TU.cycle.count),
       built   = (world.stats and world.stats.botsBuilt) or 0,
       rescued = (world.stats and world.stats.rescued) or 0,
+      -- what the workforce actually paid for, as a percentage of the hull
+      theirs  = world.boss and math.floor(100 * U.saturate(
+                  1 - (world.boss.playerDamage or 0) / math.max(1, world.boss.maxHp))) or 0,
     }
     Story.prepare("ending", world)
   else
     self.bots, self.fallen = {}, {}
     self.stats = { trees = 0, lost = 0, planted = 0, o2 = 0, cycles = 0,
-                   built = 0, rescued = 0 }
+                   built = 0, rescued = 0, theirs = 0 }
   end
 
   if Music.setState then Music.setState("ending") end
@@ -532,8 +535,8 @@ function S:layoutCredits()
     local r = C.rows[i]
     local v = st[r.key] or 0
     local txt
-    if r.key == "o2" then
-      txt = Text.format(v, { decimals = 0, suffix = "%" })
+    if r.suffix then
+      txt = Text.format(v, { decimals = 0, suffix = r.suffix })
     else
       txt = Text.format(v, { comma = true })
     end

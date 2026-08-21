@@ -814,17 +814,37 @@ local view = { x = -1e9, y = -1e9, w = 3e9, h = 3e9 }
 -- enemies vanish under opaque canopies and the minimap ends up doing all the
 -- situational-awareness work. Any tree whose crown covers the focus point and
 -- which sorts in front of it fades down, with a short ramp so it never pops.
-local focusX, focusY, focusR = nil, nil, 0
+-- The x-ray takes more than one point. The player is always the first focus;
+-- the bots that have to be *found* rather than merely seen -- the ones lying on
+-- the ground waiting to be carried -- add themselves for the frame. The list is
+-- a pool that is refilled in place rather than rebuilt, because this is on the
+-- draw path and must not allocate, and it is deliberately short: every focus is
+-- a hole in the canopy, and a forest full of holes is not a forest.
+local FOCI_MAX = 5
+local foci = {}
+local fociN = 0
 local focusFresh = false
 
 --- Point the x-ray at something (normally the player), in world space.
 --- `radius` widens the protected area to cover whatever is standing near it.
+--- Replaces last frame's focus list; `Tree.addFocus` appends to it.
 function Tree.setFocus(x, y, radius)
-  focusX, focusY, focusR = x, y, radius or 60
+  fociN = 0
+  Tree.addFocus(x, y, radius)
+end
+
+--- Add a secondary focus for this frame. Ignored once the pool is full, so the
+--- caller never has to know how many other things asked first.
+function Tree.addFocus(x, y, radius)
+  if fociN >= FOCI_MAX then return end
+  fociN = fociN + 1
+  local f = foci[fociN]
+  if f == nil then f = {} foci[fociN] = f end
+  f.x, f.y, f.r = x, y, radius or 60
   focusFresh = true
 end
 
-function Tree.clearFocus() focusX, focusY = nil, nil focusFresh = false end
+function Tree.clearFocus() fociN = 0 focusFresh = false end
 
 --- Tell the tree system what the camera can see. Trees outside it neither
 --- update their particles nor draw. Call once per frame.
@@ -853,8 +873,7 @@ function Tree.setViewFromCamera(cam)
   -- looking at: it tracks the player with a little lookahead, so a generous
   -- radius covers the player and everything standing with them.
   if not focusFresh then
-    focusX, focusY = cam.tx or cam.x, cam.ty or cam.y
-    focusR = TUNE.xrayRadius
+    Tree.setFocus(cam.tx or cam.x, cam.ty or cam.y, TUNE.xrayRadius)
   end
   focusFresh = false
 end
@@ -1194,13 +1213,17 @@ local AMB_FLY    = { power = 1 }
 --- of it, ramped so it fades rather than pops.
 function Tree:updateXray(dt)
   local want = 0
-  if focusX and self.onScreen and self.growth > 0.30 and self.fade > 0
-     and self.y > focusY - 6 then
-    local rx = self.canopyR * 1.10 + focusR
-    local ry = self.height * 0.52 + focusR * 0.75
-    local dx = (self.x - focusX) / (rx > 1 and rx or 1)
-    local dy = (self.y - self.height * 0.58 - focusY) / (ry > 1 and ry or 1)
-    if dx * dx + dy * dy < 1 then want = 1 end
+  if fociN > 0 and self.onScreen and self.growth > 0.30 and self.fade > 0 then
+    for i = 1, fociN do
+      local f = foci[i]
+      if self.y > f.y - 6 then
+        local rx = self.canopyR * 1.10 + f.r
+        local ry = self.height * 0.52 + f.r * 0.75
+        local dx = (self.x - f.x) / (rx > 1 and rx or 1)
+        local dy = (self.y - self.height * 0.58 - f.y) / (ry > 1 and ry or 1)
+        if dx * dx + dy * dy < 1 then want = 1 break end
+      end
+    end
   end
   self.xray = U.damp(self.xray or 0, want, TUNE.xrayRate, dt)
 end
