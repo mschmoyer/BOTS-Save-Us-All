@@ -371,6 +371,60 @@
     if (!padsBlocked()) { try { console.info('gamepad api blocked here; stubbed'); } catch (e) {} }
   })();
 
+  /* --- the audio context can be born suspended ----------------------------- */
+  // Every sound in this game is synthesized at runtime, and none of it is heard
+  // if the Web Audio context is asleep. The shell used to resume exactly one
+  // context, once, on the Start click:
+  //
+  //     if (Module.SDL2 && Module.SDL2.audioContext) ...resume()
+  //
+  // LOVE does not open the audio device until well after that click, so at the
+  // moment the resume ran there was nothing to resume, and the call did nothing
+  // at all. On a permissive page it did not matter -- the context is born
+  // running and the game is audible -- but in a cross-origin frame without an
+  // autoplay grant it is born suspended, with the click's activation already
+  // spent, and stays that way forever. Everything works; nothing is heard.
+  //
+  // So: catch every context the engine makes, wake it at birth, and wake it
+  // again on any gesture the player makes afterwards.
+  (function () {
+    var ctxs = [];
+    function pump() {
+      for (var i = 0; i < ctxs.length; i++) {
+        try { if (ctxs[i].state === 'suspended') ctxs[i].resume(); } catch (e) {}
+      }
+    }
+    window.__botsAudioPump = pump;
+
+    function wrap(C) {
+      if (typeof C !== 'function') return C;
+      function Wrapped() {
+        var c = new (Function.prototype.bind.apply(C, [null].concat([].slice.call(arguments))))();
+        ctxs.push(c);
+        if (c.state === 'suspended') {
+          try { console.info('audio context born suspended; resuming'); } catch (e) {}
+        }
+        pump();
+        return c;
+      }
+      Wrapped.prototype = C.prototype;
+      return Wrapped;
+    }
+    try { window.AudioContext = wrap(window.AudioContext); } catch (e) {}
+    try { window.webkitAudioContext = wrap(window.webkitAudioContext); } catch (e) {}
+
+    var evs = ['pointerdown', 'mousedown', 'touchstart', 'keydown'];
+    for (var i = 0; i < evs.length; i++) {
+      window.addEventListener(evs[i], pump, true);
+    }
+    // and a slow heartbeat, because a tab restored from the background comes
+    // back suspended with no gesture attached to the restore
+    setInterval(pump, 1000);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) pump();
+    });
+  })();
+
   /* --- never fail silently ------------------------------------------------ */
   // A thrown exception inside the emscripten main loop leaves a black canvas
   // and no explanation. Put the panel back with the reason on it: a page that
@@ -454,6 +508,9 @@
     if (started) return;
     started = true;
     canvas.focus();
+    // wake anything already made, and anything made from here on -- see the
+    // audio-context note above for why the old one-shot resume never fired
+    try { window.__botsAudioPump(); } catch (e) {}
     try { if (Module.SDL2 && Module.SDL2.audioContext) Module.SDL2.audioContext.resume(); } catch (e) {}
     if (booted) { dismiss(); return; }
     // Not drawing yet. Keep the panel, retire the button, let the boot report
