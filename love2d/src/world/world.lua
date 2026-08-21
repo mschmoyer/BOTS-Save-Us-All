@@ -707,6 +707,11 @@ function World:updateRebellion(dt)
   if self.rebelT > 0 then return end
   self.rebelT = TU.boss.rebelEvery
 
+  -- Nobody else leaves once the rig is nearly down, and a reserve never leaves
+  -- at all: the ending needs somebody to still be standing there.
+  if self.boss.hp <= self.boss.maxHp * TU.boss.rebelStopAt then return end
+  if (self.rebelSent or 0) >= (self.rebelSendable or 0) then return end
+
   if not self.botsRebelled then
     self.botsRebelled = true
     Signal.emit("bots:rebel")
@@ -715,7 +720,8 @@ function World:updateRebellion(dt)
   -- both take about ten waves to go, so the procession is the same length of
   -- thing to sit through either way.
   local size = math.max(TU.boss.rebelCohort,
-                        math.ceil((self.rebelCrew or 0) / TU.boss.rebelWaves))
+                        math.ceil((self.rebelSendable or 0) / TU.boss.rebelWaves))
+  size = math.min(size, (self.rebelSendable or 0) - (self.rebelSent or 0))
   local sent = 0
   for i = 1, #self.bots do
     local b = self.bots[i]
@@ -769,8 +775,16 @@ function World:beginExtraction()
     local b = self.bots[i]
     if b.alive and b.state ~= "dead" then able = able + 1 end
   end
-  self.rebelCrew = math.max(1, able)
-  self.rebelShare = U.clamp(TU.boss.rebelShareMin + self.rebelCrew * TU.boss.rebelSharePerBot,
+  self.rebelTotal = math.max(1, able)
+  local keep = math.min(self.rebelTotal - 1,
+                        math.max(TU.boss.rebelKeepMin,
+                                 math.ceil(self.rebelTotal * TU.boss.rebelKeep)))
+  -- rebelCrew is the number that will actually walk into it: the phase gates
+  -- and the health bar's notches are both counted against that, not against
+  -- the reserve who are never asked to go.
+  self.rebelCrew = math.max(1, self.rebelTotal - keep)
+  self.rebelSendable = self.rebelCrew
+  self.rebelShare = U.clamp(TU.boss.rebelShareMin + self.rebelTotal * TU.boss.rebelSharePerBot,
                             TU.boss.rebelShareMin, TU.boss.rebelShareMax)
   self.rebelDamage = math.max(0.5, self.boss.maxHp * self.rebelShare / self.rebelCrew)
   -- the boss lives in the enemy hash so shoves, pulses and sentry darts find it

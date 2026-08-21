@@ -219,6 +219,14 @@ T.boss = {
   -- The procession. Cohort size scales with the crew so the rebellion always
   -- takes about the same number of waves, whether you built twelve bots or
   -- sixty: the rhythm of the thing is authored, its weight is not.
+  -- Not everyone goes. The rig falls before the last of them get there, and
+  -- whoever is still walking when it does simply stops -- which is the only
+  -- mercy in the ending, and also the reason there is anybody left standing in
+  -- the ring at dawn. Without this the whole crew was always spent and the
+  -- last shot of the game was the player alone on a beach.
+  rebelStopAt  = 0.16,         -- hull fraction below which no new cohort leaves
+  rebelKeep    = 0.15,         -- and this share of the crew never leaves at all
+  rebelKeepMin = 3,
   rebelWaves   = 14,
   rebelCohort  = 2,            -- floor on a wave, for very small crews
   rebelEvery   = 6.5,
@@ -283,7 +291,7 @@ T.boss = {
     -- Its own lighting. The rig used to paint itself lavender and stop reading
     -- as metal; the key is deliberately a cold near-neutral and the colour is
     -- pushed out to the ground and the throat where it belongs.
-    keyRadius     = 360, keyGain    = 0.55,
+    keyRadius     = 380, keyGain    = 0.34,
     strobeRadius  = 300, strobeGain = 0.45,
     throatRadius  = 250, throatGain = 0.50,
     moltenRadius  = 320, moltenGain = 0.75,
