@@ -11,6 +11,7 @@
 --   4  draft           a real three-chip draft over a populated dawn report
 --   5  pause           the pause menu over the island
 --   6  options         the options panel
+--   7  boss / defeat    the extraction readouts, and the losing screen
 --
 -- The island underneath stages 2-5 is a stand-in built here, not the real world:
 -- this file is a UI harness, and it must not depend on terrain, trees or the
@@ -70,6 +71,12 @@ local function buildStub()
     cycle = 3, phase = "dusk", phaseT = 7.4, phaseDur = 12,
     cutscene = false, bots = bots, enemies = {}, chips = chips, rng = rng,
     o2Debt = 5.2,
+    stats = { planted = 214, lost = 61, botsLost = 7, killed = 380 },
+    allLostNames = {
+      { name = "SEED-07" }, { name = "PYLON-11" }, { name = "THORN-04" },
+      { name = "LAMP-01" }, { name = "SCRAP-09" }, { name = "FRAME-02" },
+      { name = "SEED-12" },
+    },
     player = { hp = 2, maxHp = 3, state = "alive", x = 800, y = 470,
                vx = 0, vy = 0, faceX = 1, faceY = 0 },
     director = { sideVector = function() return 0, -1 end },
@@ -179,6 +186,7 @@ local STAGES = {
   { name = "DRAFT",   hud = true, scene = "src.scenes.draft", warm = 1.35 },
   { name = "PAUSE",   hud = true, scene = "src.scenes.pause" },
   { name = "OPTIONS", scene = "src.scenes.options" },
+  { name = "DEFEAT",  scene = "src.scenes.defeat", warm = 4.6 },
 }
 
 local REPORT = {
@@ -267,6 +275,8 @@ function S:setStage(n)
     Screen.push(scene, W, REPORT)
   elseif st.scene == "src.scenes.pause" then
     Screen.push(scene, { world = W })
+  elseif st.scene == "src.scenes.defeat" then
+    Screen.push(scene, W)
   else
     Screen.push(scene)
   end

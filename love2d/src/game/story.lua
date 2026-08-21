@@ -526,12 +526,10 @@ local function subscribe()
   Signal.on("world:heldDawn", function() react("hold") end, Story)
   Signal.on("o2:milestone",   function() react("grown") end, Story)
 
-  -- The rebellion goes in waves. The cutscene says it once; every cohort after
-  -- that says it in the world, on its way past, and then does not come back.
-  Signal.on("bots:cohort", function()
-    Story.reactT = 0
-    react("rebel")
-  end, Story)
+  -- Deliberately NOT subscribed: "bots:cohort". Bot:rebel already says a rebel
+  -- line for every bot that launches, so a cohort of eight arrives with its own
+  -- voices; adding a ninth here only competes with them for the three speech
+  -- slots. The work that beat needed was in the pool, not in the director.
 
   -- The rig drained the sky. There is about a second and a half before the
   -- screen goes black, and the last thing in it should be one of them.
@@ -735,8 +733,14 @@ local function drawHint(step, alpha, world)
     size = size * 300 / lw
     lw = 300
   end
-  local subH = 20 + ((action and words) and 16 or 0)
-  local wordW = words and (Text.measure(words, 10, HINT_TEXT) or 0) or 0
+  -- a step with both a button and a caption needs a third row of box
+  local both = (action and words) and true or false
+  local subH = 20 + (both and 32 or 0)
+  local wordW = 0
+  if words then
+    wordW = (UI.captionWidth and UI.captionWidth(words, 10))
+            or (Text.measure(words, 10, HINT_TEXT) or 0)
+  end
   local boxW = max(lw, wordW, 92) + 40
   local boxH = size + subH + 26
   local bx = floor(sx - boxW * 0.5)
@@ -758,7 +762,7 @@ local function drawHint(step, alpha, world)
   if action then
     UI.prompt(sx, by + 12 + size + 14, action, nil, 12, P.ink, e, "center")
     if words then
-      UI.caption(words, sx, by + 12 + size + 38, 10, P.inkDim, "center", e * 0.9)
+      UI.caption(words, sx, by + 12 + size + 44, 10, P.inkDim, "center", e * 0.9)
     end
   elseif words then
     UI.caption(words, sx, by + 14 + size + 8, 10, P.inkDim, "center", e * 0.95)

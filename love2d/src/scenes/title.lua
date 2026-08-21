@@ -482,7 +482,9 @@ function S:layout(interactive)
     -- a plate at 34% black is not enough on its own
     local mh = #MENU * (rowH + gap)
     Draw.softShadow(x0 + colW * 0.40, menuY + mh * 0.5 - gap * 0.5,
-                    colW * 1.15, mh * 0.95, 0.55)
+                    colW * 1.30, mh * 1.05, 0.72)
+    Draw.softShadow(x0 + colW * 0.45, menuY + mh * 0.5 - gap * 0.5,
+                    colW * 0.80, mh * 0.72, 0.55)
     for i = 1, #MENU do
       local m = MENU[i]
       local k = UI.stagger(t, i, SEQ.menu, SEQ.menuStep, SEQ.menuDur)
@@ -602,20 +604,26 @@ function S:drawFooter()
   local footY = h - UI.pad - 32
 
   -- device prompts, under the menu column
+  -- A wash under the footer baseline. The right end of it crosses the lit
+  -- horizon, where inkFaint measured 1.8:1 -- unreadable, and this is the line
+  -- that tells a returning player the game remembered their best run.
+  Draw.softShadow(w * 0.5, footY + 22, w * 0.62, 74, 0.45 * a)
+
   UI.promptRow(x0, footY, PROMPTS, UI.ts.micro, P.inkDim, 0.8 * a, "left")
   UI.caption(Input.schemeName():upper() .. " DETECTED", x0, footY + 26, UI.ts.micro,
-             UI.c(P.inkFaint, 0.55 * a), "left")
+             UI.c(P.inkDim, 0.8 * a), "left", nil, 1)
 
   -- best run, right-anchored, one cell per number so the numerals line up
   local cycles, trees, o2, runs = Settings.best()
   if runs <= 0 then
     UI.caption("NO RUN RECORDED", w - UI.pad, footY + 26, UI.ts.micro,
-               UI.c(P.inkFaint, 0.5 * a), "right")
+               UI.c(P.inkDim, 0.7 * a), "right", nil, 1)
     return
   end
   local cellW = 112
   local bx = w - UI.pad - cellW * 3
-  UI.caption("BEST RUN", w - UI.pad, footY - 30, UI.ts.micro, UI.c(P.inkFaint, 0.8 * a), "right")
+  UI.caption("BEST RUN", w - UI.pad, footY - 30, UI.ts.micro,
+             UI.c(P.inkDim, 0.9 * a), "right", nil, 1)
   UI.rule(bx, footY - 14, cellW * 3, P.ink, 0.12 * a, P.accent)
   local vals = { tostring(floor(cycles)), tostring(floor(trees)),
                  Text.format(o2, { decimals = 1, suffix = "%" }) }

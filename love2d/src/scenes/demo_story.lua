@@ -284,6 +284,11 @@ function D:enter()
   if (os.getenv("BOTS_DEMO") or "") == "ending" then
     Story.begin(self.world)
     self:seedLosses()
+    -- Screen.switch runs our leave() first, and leave() resets Story -- which
+    -- throws away the epitaphs and the sacrificed list the memorial is about
+    -- to read. The real game hands the world to the ending without resetting
+    -- Story, so the harness must not either.
+    self.handoff = true
     Screen.switch(require("src.scenes.ending"), self.world)
     return
   end
@@ -346,7 +351,7 @@ end
 
 function D:leave()
   Dialogue.abort()
-  Story.reset()
+  if not self.handoff then Story.reset() end
 end
 
 function D:goTo(i)

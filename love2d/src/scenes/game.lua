@@ -234,6 +234,7 @@ function Game:telemetry(dt)
          if w.bots[i].state == "rebel" then n = n + 1 end end return n end)(),
       tostring(w.botsRebelled)) or "-",
     w.stats.planted, w.stats.lost, w.stats.botsLost))
+
 end
 
 --- Map the world's phase clock onto the visual day/night cycle.

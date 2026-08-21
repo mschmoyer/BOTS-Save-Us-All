@@ -252,12 +252,16 @@ local function drawSlot(i, x, y, w, h, world, a)
                      ((afford and 0.16 or 0.08) + 0.3 * hov + 0.5 * deny) * a))
   Draw.roundRect("line", x + 0.5, y + 0.5, w - 1, h - 1, UI.r)
 
-  -- key chip, top-left
-  Draw.setColor(UI.c(P.black, 0.55 * a))
-  Draw.roundRect("fill", x + 5, y + 5, 17, 15, 3)
-  UI.text(itos(i), x + 13.5, y + 7, UI.ts.micro,
-          UI.c(afford and P.ink or P.inkFaint, (afford and 0.9 or 0.5) * a),
-          "center", a, 0.04)
+  -- Key chip, top-left -- and only on a keyboard. build1..build6 have no pad
+  -- binding, so on a controller these digits were six small lies; the wheel is
+  -- the pad's way in and the prompt beside the bar says so.
+  if Input.scheme ~= "pad" then
+    Draw.setColor(UI.c(P.black, 0.55 * a))
+    Draw.roundRect("fill", x + 5, y + 5, 17, 15, 3)
+    UI.text(itos(i), x + 13.5, y + 7, UI.ts.micro,
+            UI.c(afford and P.ink or P.inkFaint, (afford and 0.9 or 0.5) * a),
+            "center", a, 0.04)
+  end
 
   -- silhouette
   HUD.botGlyph(id, x + w * 0.5, y + 27, 13,
@@ -408,10 +412,12 @@ function BuildMenu.drawWheel(a)
             "center", aa, 0.02)
 
     -- the same digit the bar shows, inboard: the two ways in teach each other
-    local nx2 = cx + cos(mid) * (ri + 13)
-    local ny2 = cy + sin(mid) * (ri + 13)
-    UI.text(itos(i), nx2, ny2 - UI.ts.micro * 0.5, UI.ts.micro,
-            UI.c(P.ink, (0.3 + 0.5 * hov) * aa), "center", aa, 0.04)
+    if Input.scheme ~= "pad" then
+      local nx2 = cx + cos(mid) * (ri + 13)
+      local ny2 = cy + sin(mid) * (ri + 13)
+      UI.text(itos(i), nx2, ny2 - UI.ts.micro * 0.5, UI.ts.micro,
+              UI.c(P.ink, (0.3 + 0.5 * hov) * aa), "center", aa, 0.04)
+    end
   end
 
   -- hub: what you can spend

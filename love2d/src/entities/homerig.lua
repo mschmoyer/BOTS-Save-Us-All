@@ -31,12 +31,9 @@ end
 function Rig:update(dt)
   self:updateCommon(dt)
   self.spin = self.spin + dt * 0.55
-  self.smokeT = self.smokeT - dt
-  if self.smokeT <= 0 then
-    self.smokeT = self.rng:range(0.5, 1.4)
-    VFX.emit("mist", self.x + self.rng:range(-8, 8), self.y - self.radius * 0.8,
-             { count = 1, power = 0.4 })
-  end
+  -- No steam plume: `mist` is the island-scale ambient bank and emitting it from
+  -- a fixed point stacked nine-second, three-hundred-pixel clouds into a
+  -- permanent grey smear. The mast light is the rig's silhouette cue.
 end
 
 function Rig:drawShadow()

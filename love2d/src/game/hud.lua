@@ -53,6 +53,14 @@ local function itos(n)
   return s
 end
 
+-- "x3" badges on a coalesced feed row, memoised for the same reason.
+local XTOS = {}
+local function xtos(n)
+  local s = XTOS[n]
+  if s == nil then s = "x" .. tostring(n) XTOS[n] = s end
+  return s
+end
+
 local DEC1 = {}
 local function dec1(v)
   local k = floor(v * 10 + 0.5)
@@ -104,8 +112,8 @@ HUD.botCount  = 0
 HUD.o2Rate    = 0        -- smoothed %/s, signed
 HUD.o2Cause   = nil      -- why it is moving, when it is moving down
 HUD.o2Lag     = 0        -- a slow copy of the reading, for the trend sign
-HUD.o2Peak    = 0        -- high-water mark: the ghost tail on the arc
-HUD.o2Hold    = 0
+HUD.o2Mark    = 0        -- the sky as it stood when the night began
+HUD.lastPhase = nil
 
 local heartAnim = {}
 for i = 1, 8 do heartAnim[i] = 0 end
@@ -291,7 +299,7 @@ function HUD.init(world)
   HUD.o2Mile = 0
   HUD.duskK, HUD.threat = 0, 0
   HUD.o2Rate, HUD.o2Cause, HUD.o2Lag = 0, nil, HUD.o2Shown
-  HUD.o2Peak, HUD.o2Hold = HUD.o2Shown, 0
+  HUD.o2Mark, HUD.lastPhase = HUD.o2Shown, nil
   for i = 1, TOAST_MAX do toasts[i].live = false end
   HUD.clearSpeech()
 
@@ -388,19 +396,18 @@ function HUD.update(dt, world)
   HUD.o2Lag = U.damp(HUD.o2Lag, o2, 0.9, dt)
   HUD.o2Rate = U.damp(HUD.o2Rate, (HUD.o2Lag - prevLag) / dt, 3, dt)
 
-  -- The high-water mark, held and then bled off: a lagged copy of the reading
-  -- only ever showed two percent of arc, which is nothing. This is the damage
-  -- bar every fighting game uses, and it is the only thing on screen that says
-  -- how much sky this night has actually cost.
-  if HUD.o2Shown >= HUD.o2Peak - 0.01 then
-    HUD.o2Peak = HUD.o2Shown
-    HUD.o2Hold = 0
-  else
-    HUD.o2Hold = HUD.o2Hold + dt
-    if HUD.o2Hold > 1.4 then
-      HUD.o2Peak = max(HUD.o2Shown, HUD.o2Peak - TU.o2.target * 0.02 * dt)
-    end
+  -- Where the sky stood when the trouble started. A lagged copy of the reading
+  -- showed two percent of arc, which is nothing; a decaying high-water mark
+  -- vanished under a slow drain. Anchoring to the start of the night is the
+  -- only version that answers the question a player actually asks, which is
+  -- "how much has tonight cost me".
+  local ph = world.phase
+  if ph ~= HUD.lastPhase then
+    HUD.lastPhase = ph
+    -- morning wipes the ledger: last night's losses are last night's
+    if ph == "day" then HUD.o2Mark = HUD.o2Shown end
   end
+  if HUD.o2Shown > HUD.o2Mark then HUD.o2Mark = HUD.o2Shown end
   local debt = world.o2Debt or 0
   local drain = world.bossDrain or 0
   if drain > 0.05 then
@@ -610,18 +617,22 @@ local function drawOxygen(w, a)
   -- danger red, so a night that costs you sky *looks* like a night that cost
   -- you sky rather than a number quietly getting smaller.
   local ae = a0 + (a1 - a0) * t
-  local lag = U.saturate(HUD.o2Peak / TU.o2.target)
-  local losing = lag - t > 0.0015
-  if losing then
-    local al = a0 + (a1 - a0) * lag
-    Draw.ring(cx, cy, R, 6, ae, al, UI.c(P.danger, 0.7 * a), 4)
-    local gx, gy = cx + cos(al) * R, cy + sin(al) * R
-    Draw.glow(gx, gy, 13, P.danger, 0.5 * a, 2)
-  end
+  local mark = U.saturate(HUD.o2Mark / TU.o2.target)
+  local losing = mark - t > 0.0015
 
   -- fill
   if t > 0.004 then
     Draw.ring(cx, cy, R, 4 + pulse * 3, a0, ae, UI.c(P.o2, (0.85 + 0.15 * pulse) * a), 3)
+  end
+  -- ...then the stretch of sky this night has taken, over the top of it, so
+  -- the spark's own bloom cannot swallow it
+  if losing then
+    local al = a0 + (a1 - a0) * mark
+    Draw.ring(cx, cy, R, 6, ae, al, UI.c(P.danger, 0.8 * a), 4)
+    local gx, gy = cx + cos(al) * R, cy + sin(al) * R
+    Draw.setColor(UI.c(P.danger, 0.9 * a))
+    lg.setLineWidth(2)
+    lg.line(gx - cos(al) * 4, gy - sin(al) * 4, gx + cos(al) * 9, gy + sin(al) * 9)
   end
 
   -- milestone ticks, labelled at the quarters
@@ -860,10 +871,11 @@ local function drawFeed(a)
                            UI.c(P.ink, aa), "left", aa, 0.06)
         local sx = x + 12 + slide + tw + 10
         if t.count > 1 then
-          local cw = UI.captionWidth("x" .. itos(t.count), UI.ts.micro) + 10
+          local xs = xtos(t.count)
+          local cw = UI.captionWidth(xs, UI.ts.micro) + 10
           Draw.setColor(UI.c(t.color, 0.22 * aa))
           Draw.roundRect("fill", sx - 2, y + 5, cw, 15, 3)
-          UI.caption("x" .. itos(t.count), sx + cw * 0.5 - 2, y + 8, UI.ts.micro,
+          UI.caption(xs, sx + cw * 0.5 - 2, y + 8, UI.ts.micro,
                      UI.c(t.color, aa), "center")
           sx = sx + cw + 6
         end
@@ -1108,9 +1120,12 @@ local function drawBossBar(w, a)
   local aa = a * bossShown
   -- bottom centre, above the build bar: it must not fight the oxygen readout,
   -- and during the rebellion this is where the player is looking anyway
+  -- Nothing can be built once the rig arrives, so the build bar has faded out
+  -- by the time this is at full strength; the bar drops into the space it left
+  -- rather than floating above an empty band.
   local bw = min(sw * 0.52, 760)
   local bh = 13
-  local bx, by = (sw - bw) * 0.5, sh - 132
+  local bx, by = (sw - bw) * 0.5, sh - 108
 
   local frac = boss and (boss.hp / boss.maxHp) or 0
   HUD._bossFrac = U.damp(HUD._bossFrac or frac, frac, 9, love.timer.getDelta())
@@ -1136,11 +1151,13 @@ local function drawBossBar(w, a)
     end
   end
 
-  Text.display("HARVESTER PRIME", bx, by - 21, UI.ts.label, {
-    color = P.danger, alpha = 0.85 * aa, tracking = 0.3 })
+  -- Two table constructors per frame lived here, in the file whose contract is
+  -- "zero tables per frame", and they only ran during the boss fight where the
+  -- frame budget is tightest. UI.text reuses one shared options table.
+  UI.text("HARVESTER PRIME", bx, by - 21, UI.ts.label, P.danger, "left", 0.85 * aa, 0.3)
   if boss then
-    Text.display(tostring(math.ceil(boss.hp)), bx, by - 21, UI.ts.label, {
-      color = P.ink, alpha = 0.8 * aa, tracking = 0.16, align = "right", width = bw })
+    UI.text(itos(math.ceil(boss.hp)), bx + bw, by - 21, UI.ts.label,
+            P.ink, "right", 0.8 * aa, 0.16)
   end
 end
 

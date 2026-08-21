@@ -100,15 +100,17 @@ STAMP.acid_stain = function(x, y, r, ang, a)
 end
 
 STAMP.stump = function(x, y, r, ang, a)
-  -- the pale ring of disturbed ground left where a tree stood
-  pre(R.soil[2], a * 0.42)
-  blob("disc", x, y, r * 1.0, random() * TAU)
-  pre(R.sand[3], a * 0.34)
-  blob("annulus", x, y, r * 1.15, random() * TAU)
-  pre(R.bark[2], a * 0.55)
-  blob("blob", x, y, r * 0.46, random() * TAU)
-  pre(R.bark[3], a * 0.5)
-  blob("disc", x - r * 0.06, y - r * 0.06, r * 0.3, random() * TAU)
+  -- What a felled tree leaves: turned earth and a cut trunk. This used to put a
+  -- bright sand annulus around it, which over a night forest read as a glowing
+  -- ring - forty of them turned a shoreline into a field of pale doughnuts.
+  pre(R.soil[1], a * 0.34)
+  blob("blob", x, y, r * 0.95, random() * TAU, 0.9)
+  pre(R.soil[2], a * 0.22)
+  blob("blob", x, y, r * 0.62, random() * TAU, 1.1)
+  pre(R.bark[1], a * 0.5)
+  blob("blob", x, y, r * 0.4, random() * TAU)
+  pre(R.bark[3], a * 0.32)
+  blob("disc", x - r * 0.05, y - r * 0.05, r * 0.24, random() * TAU)
 end
 
 STAMP.footprint = function(x, y, r, ang, a)

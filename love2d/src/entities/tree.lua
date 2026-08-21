@@ -91,7 +91,7 @@ local TUNE = {
   shadowSquash  = 0.34,   -- vertical flattening of the projected canopy
   airDepth      = 0.34,   -- peak aerial-perspective blend at the top of the view
   xrayRadius    = 96,     -- world units around the focus a canopy must clear
-  xrayAlpha     = 0.78,   -- how much alpha an occluding canopy gives up
+  xrayAlpha     = 0.55,   -- how much alpha an occluding canopy gives up
   xrayRate      = 8.0,    -- fade in/out speed, 1/seconds
 
   chewSag       = 0.13,   -- radians of lean a fully chewed tree droops
@@ -132,7 +132,7 @@ local TUNE = {
 local SPECIES = {
   {
     key = "broadleaf", label = "Broadleaf",
-    height = 132, heightVar = 0.19, weight = 30,
+    height = 132, heightVar = 0.34, weight = 26,
     trunk = 0.082, trunkR = 0.050, root = 1.0,
     depth = 4, kids = { 2, 3, 2, 2 }, spread = 0.62, curl = 0.05, droop = -0.03,
     lenTaper = 0.74, widTaper = 0.60, at = { 0.62, 0.99 },
@@ -144,7 +144,7 @@ local SPECIES = {
   },
   {
     key = "conifer", label = "Conifer",
-    height = 196, heightVar = 0.16, weight = 22,
+    height = 196, heightVar = 0.30, weight = 20,
     trunk = 0.078, trunkR = 0.034, root = 1.0,
     depth = 3, kids = { 6, 3, 1 }, spread = 1.00, curl = 0.0, droop = 0.42,
     lenTaper = 0.54, widTaper = 0.42, at = { 0.22, 0.95 },
@@ -158,7 +158,7 @@ local SPECIES = {
   },
   {
     key = "scrub", label = "Scrub",
-    height = 66, heightVar = 0.24, weight = 20,
+    height = 66,  heightVar = 0.40, weight = 22,
     trunk = 0.110, trunkR = 0.068, root = 0.42,
     depth = 3, kids = { 4, 2, 2 }, spread = 1.02, curl = 0.0, droop = 0.12,
     lenTaper = 0.84, widTaper = 0.64, at = { 0.10, 0.58 },
@@ -171,7 +171,7 @@ local SPECIES = {
   },
   {
     key = "gnarl", label = "Gnarl",
-    height = 152, heightVar = 0.15, weight = 16,
+    height = 152, heightVar = 0.32, weight = 18,
     trunk = 0.145, trunkR = 0.086, root = 1.0,
     depth = 4, kids = { 2, 2, 3, 2 }, spread = 0.98, curl = 0.34, droop = -0.05,
     lenTaper = 0.73, widTaper = 0.70, at = { 0.40, 0.98 },
@@ -184,7 +184,7 @@ local SPECIES = {
   },
   {
     key = "slender", label = "Slender",
-    height = 162, heightVar = 0.14, weight = 12,
+    height = 162, heightVar = 0.28, weight = 14,
     trunk = 0.038, trunkR = 0.028, root = 1.0,
     depth = 3, kids = { 3, 2, 2 }, spread = 0.40, curl = 0.09, droop = -0.16,
     lenTaper = 0.66, widTaper = 0.54, at = { 0.54, 0.99 },

@@ -541,8 +541,10 @@ function UI.button(ctx, id, x, y, w, h, label, opts)
   local ly = y + (h - size) * 0.5 - (opts.sub and size * 0.42 or 0)
   UI.text(label, x + 20 + slide, ly, size, lc, "left", (enabled and 1 or 0.45) * a, 0.06)
   if opts.sub then
+    -- inkFaint at 0.55 was a whisper over the title's sunlit sky; a row's
+    -- subtitle is the only thing telling a new player what the row does
     UI.body(opts.sub, x + 21 + slide, ly + size + 7, UI.bs.small,
-            UI.c(P.inkFaint, (enabled and (0.55 + f * 0.4) or 0.3) * a))
+            UI.c(P.inkDim, (enabled and (0.72 + f * 0.28) or 0.35) * a))
   end
   if opts.badge then
     UI.caption(opts.badge, x + w - 18, y + (h - UI.ts.micro) * 0.5, UI.ts.micro,

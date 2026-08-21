@@ -98,7 +98,12 @@ function W.update(dt, world)
     W.emitT = (W.emitT or 0) - dt
     if W.emitT <= 0 then
       W.emitT = 0.05
-      VFX.emit("rain", 0, 0, { power = W.rain, count = math.floor(6 + W.rain * 22) })
+      -- Rain falls where the player is looking. Emitted at the world origin it
+      -- piled into a permanent grey smear in the island's top-left corner.
+      local cx, cy = 0, 0
+      local cam = world and world.camera
+      if cam and cam.focus then cx, cy = cam:focus() end
+      VFX.emit("rain", cx, cy, { power = W.rain, count = math.floor(6 + W.rain * 22) })
     end
     if W.state == "storm" and W.rng:chance(dt * 0.14) then
       W.strike = 0.5
