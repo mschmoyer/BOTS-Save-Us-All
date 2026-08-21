@@ -1,1 +1,4 @@
 love2d/build/
+# The baked sound bank: 2.2 MB of Ogg that tools/bake_audio.sh regenerates
+# from the specs, and that the game happily runs without.
+love2d/src/bake/

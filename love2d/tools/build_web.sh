@@ -20,6 +20,14 @@ TC=/home/user/.toolchain/node_modules
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+# 0. bake the sound bank into src/bake/audio, which is inside the tree the zip
+#    below already takes. The browser's interpreter needs the better part of
+#    half a minute to synthesize this bank and gets 2 ms a frame to do it in;
+#    baked, it is a stb_vorbis decode inside the wasm instead. It is a cache --
+#    BOTS_SKIP_BAKE=1 ships without it and the game synthesizes as it always
+#    has. See the note above BAKE_DIR in src/engine/audio.lua.
+[ -n "${BOTS_SKIP_BAKE:-}" ] || tools/bake_audio.sh
+
 # 1. zip the project into a .love (source only)
 zip -qr "$WORK/game.love" main.lua conf.lua src \
   -x 'src/scenes/demo_*' -x '*.md'

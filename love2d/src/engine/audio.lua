@@ -1,8 +1,12 @@
--- The game's sound API. Everything is synthesized at load into SoundData and
--- played through a small voice-pooled mixer with buses, ducking, variation and
--- world-positional panning.
+-- The game's sound API. Everything is synthesized -- from the specs below, by
+-- engine/synth -- into SoundData, and played through a small voice-pooled mixer
+-- with buses, ducking, variation and world-positional panning. A build may ship
+-- that bank pre-rendered as Ogg Vorbis and decode it instead of building it; see
+-- the note above BAKE_DIR. The synthesizer is still where the bank comes from
+-- and is still the fallback, so nothing else here changes either way.
 --
---   Audio.load()                      -- synthesize the bank (~2.6 s, 11.8 MB)
+--   Audio.load()                      -- build the bank (3.7 s synthesized,
+--                                     --  0.4 s decoded from a bake; 11.8 MB)
 --   Audio.play(name, opts)            -- opts: volume, pan, pitch (ratio),
 --                                     --       semitones, x/y, variation, loop
 --   Audio.playIn(delay, name, opts)   -- the same, a moment from now
@@ -2093,6 +2097,12 @@ local function mkSlot(sd, loopFlag)
   return slot
 end
 
+-- The bake tool taps the bank here: every buffer the synthesizer produces goes
+-- past this line exactly once, already in its final form, with the slot index it
+-- will occupy at play time. See Audio.renderAll.
+local bakeSink = nil
+local curJob = nil
+
 local function registerBuffer(entry, buf, loopFlag)
   local sd = buf:toSoundData()
   entry.data[#entry.data + 1] = sd
@@ -2102,6 +2112,117 @@ local function registerBuffer(entry, buf, loopFlag)
   Audio.stats.variants = Audio.stats.variants + 1
   Audio.stats.samples = Audio.stats.samples + buf.n * buf.ch
   Audio.stats.bytes = Audio.stats.bytes + buf.n * buf.ch * 2
+  if bakeSink and curJob then
+    bakeSink(curJob.name, #entry.data, buf, loopFlag and true or false,
+             entry.env[#entry.env])
+  end
+end
+
+------------------------------------------------------------------ baked bank
+-- WHY THERE IS A CACHE IN FRONT OF THE SYNTHESIZER
+--
+-- The streaming path below fixed the twenty-one second dead tab; it did not fix
+-- the thirty seconds of DSP that caused it. It only spread that cost over the
+-- game, at STREAM_MIN = 2 ms a frame once the browser's frame is already over
+-- budget (main.lua:264) -- which is minutes of play before the late tiers exist,
+-- and the boss and the rig are in the late tier. A cue that is not built yet
+-- plays silence. The finale is the wrong place to discover that.
+--
+-- The bank is a pure function of the specs in this file and the code in
+-- engine/synth: jobSeed(name, i) fixes the parameter RNG, Synth.resetSeq fixes
+-- the noise stream per buffer, and the note above Audio.prepare promises that
+-- reordering the queue cannot change a sound. So the bank can be rendered once,
+-- offline, and shipped -- which is what tools/bake_audio.sh does. Ogg Vorbis,
+-- decoded by stb_vorbis inside the wasm runtime instead of by interpreted Lua.
+--
+-- This is a *cache*, not a replacement. The synthesizer is how the bank is
+-- authored and is the fallback for every case below:
+--
+--   no manifest        -> synthesize, silently (a source checkout has no bake)
+--   stale fingerprint  -> synthesize, loudly (the specs moved, the bake did not)
+--   a cue missing      -> synthesize that cue only; the rest still comes from disk
+--   a file that will not decode -> synthesize that variant only
+--
+-- BOTS_AUDIO_BAKE=0 forces synthesis (that is how the A/B harness renders both
+-- banks in one process); BOTS_AUDIO_BAKE=1 makes a missing or stale bake an
+-- error instead of a fallback, which is what the build script wants.
+local BAKE_DIR     = "src/bake/audio"
+local BAKE_VERSION = 2          -- bump when the manifest layout changes
+local bake = nil                -- cue name -> { rec, rec, ... } in slot order
+
+local function envcfg(name)
+  local f = _G.BOTS_CFG         -- main.lua's env-or-argv reader, if we are in the game
+  if f then return f(name) end
+  if os and os.getenv then
+    local v = os.getenv(name)
+    if v ~= nil and v ~= "" then return v end
+  end
+  return nil
+end
+
+--- What the bank sounds like is decided by exactly two files. Hash them, store
+--- the hash in the manifest, and a bake that no longer matches the code that
+--- produced it can be spotted at load instead of shipped. love.data.hash is
+--- native in both runtimes, so this is a fraction of a millisecond and not the
+--- 200 KB byte loop that doing it in Lua would be.
+function Audio.bakeFingerprint()
+  if not (love and love.filesystem and love.data) then return "no-filesystem" end
+  local a = safe(love.filesystem.read, "src/engine/synth.lua")
+  local b = safe(love.filesystem.read, "src/engine/audio.lua")
+  if not a or not b then return "no-source" end
+  local h = safe(love.data.hash, "md5", a .. b)
+  if not h then return "no-hash" end
+  return safe(love.data.encode, "string", "hex", h) or "no-hex"
+end
+
+--- Read the manifest, or leave `bake` nil and let the synthesizer do its job.
+local function bakeLoad()
+  bake = nil
+  local want = Audio.useBake                -- set by tooling; nil means "decide"
+  local flag = envcfg("BOTS_AUDIO_BAKE")
+  if want == nil and flag then want = (flag ~= "0") end
+  if want == false then return end
+  local required = (want == true)
+  local path = BAKE_DIR .. "/manifest.lua"
+  local function reject(why)
+    if required then error("baked sound bank required but " .. why, 0) end
+    print("AUDIO: baked bank ignored (" .. why .. "); synthesizing instead")
+  end
+  if not (love and love.filesystem and love.sound) then
+    if required then reject("there is no love.filesystem") end
+    return
+  end
+  if not love.filesystem.getInfo(path) then
+    if required then reject("there is no " .. path) end
+    return                                   -- a plain source checkout: not news
+  end
+  local chunk = safe(love.filesystem.load, path)
+  local m = chunk and safe(chunk)
+  if type(m) ~= "table" then return reject("the manifest would not load") end
+  if m.version ~= BAKE_VERSION then
+    return reject("it is layout v" .. tostring(m.version) .. ", this is v" .. BAKE_VERSION)
+  end
+  if m.rate ~= Audio.rate then return reject("it was baked at " .. tostring(m.rate) .. " Hz") end
+  if m.fingerprint ~= Audio.bakeFingerprint() then
+    return reject("the synth or the sound definitions changed since it was baked")
+  end
+  bake = m.cues
+end
+
+--- One baked variant into the slot the synthesizer would have filled. Returns
+--- false if the file will not decode, and the caller falls back to rendering it.
+local function registerBaked(entry, rec, loopFlag)
+  local sd = safe(love.sound.newSoundData, BAKE_DIR .. "/" .. rec.f)
+  if not sd then return false end
+  entry.data[#entry.data + 1] = sd
+  entry.env[#entry.env + 1] = rec.env
+  entry.len[#entry.len + 1] = rec.dur
+  entry.src[#entry.src + 1] = { mkSlot(sd, loopFlag) }
+  Audio.stats.variants = Audio.stats.variants + 1
+  Audio.stats.samples = Audio.stats.samples + rec.n * rec.ch
+  Audio.stats.bytes = Audio.stats.bytes + rec.n * rec.ch * 2
+  Audio.stats.baked = (Audio.stats.baked or 0) + 1
+  return true
 end
 
 ------------------------------------------------------------------- streaming
@@ -2169,10 +2290,30 @@ local function jobSeed(name, i)
   return (h * 8191 + i * 7919 + 1) % 2147483647
 end
 
+--- The bookkeeping every finished variant shares, however it was made.
+local function jobDone(j)
+  local e = j.entry
+  if j.warm then warmLeft = warmLeft - 1 end
+  if #e.data >= e.expect then
+    e.ready = true
+    e.anchors = nil
+  end
+end
+
 local function runJob(j)
   local e = j.entry
+  -- A baked job is a decode, not a render: same slot, same queue, same tier
+  -- ordering, one or two orders of magnitude less work. If the file will not
+  -- decode the job turns back into a render and nothing downstream notices.
+  if j.bake then
+    curJob = nil
+    if registerBaked(e, j.bake, j.loop) then jobDone(j) return end
+    print("AUDIO: " .. j.name .. " variant " .. (#e.data + 1) .. " would not decode; rendering it")
+    j.bake = nil
+  end
   local d = e.def
   local r = U.rng(j.seed)
+  curJob = j
   Synth.rate = Audio.rate
   Synth.resetSeq(j.seed)
   if j.kind == "sfx" then
@@ -2207,11 +2348,8 @@ local function runJob(j)
     end
     registerBuffer(e, buf, false)
   end
-  if j.warm then warmLeft = warmLeft - 1 end
-  if #e.data >= e.expect then
-    e.ready = true
-    e.anchors = nil
-  end
+  curJob = nil
+  jobDone(j)
 end
 
 --- Move every unbuilt job of `entry` to the head of the queue. Called when
@@ -2228,12 +2366,49 @@ local function promote(entry)
   end
 end
 
+--- Attach the baked bank to the queue. A job with a file waiting for it keeps
+--- its place, its tier and its slot -- it just becomes a decode instead of a
+--- render. Anything the bake does not cover is left alone and is synthesized in
+--- turn, so a bank that gained a cue since it was baked still comes up complete.
+local function consumeBake()
+  if not bake then return end
+  local slots, hit, miss = {}, 0, 0
+  for i = 1, #Q do
+    local j = Q[i]
+    local list = bake[j.name]
+    local slot = (slots[j.entry] or 0) + 1
+    slots[j.entry] = slot
+    local rec = list and list[slot]
+    if rec then
+      j.bake = rec
+      j.loop = list.loop and true or false
+      hit = hit + 1
+    else
+      miss = miss + 1
+    end
+  end
+  Audio.stats.bakeJobs = hit
+  if miss > 0 then
+    print(string.format("AUDIO: the bake covers %d of %d variants; synthesizing the rest",
+                        hit, hit + miss))
+  end
+  -- Down the same stdout channel main.lua's boot stages use, so a page or a
+  -- BOTS_BOOTLOG run says what it loaded and a plain native run stays quiet.
+  -- (Measured caveat: this line reaches the console under BOTS_BOOTLOG but was
+  -- never seen in the browser's console, while ?dev=audio_bake:0 demonstrably
+  -- changes the boot -- so trust the timing, not the absence of this line.)
+  if envcfg("BOTS_WEB") or envcfg("BOTS_BOOTLOG") then
+    print(string.format("AUDIO|bake|%d of %d variants from disk", hit, hit + miss))
+  end
+end
+
 --- Register the whole bank without synthesizing any of it. Cheap enough to sit
 --- in love.load: it allocates one table per cue and one job per variant.
 function Audio.prepare()
   if Audio.prepared then return end
   Audio.prepared = true
   Synth.rate = Audio.rate
+  bakeLoad()
 
   Q, Qi = {}, 1
   warmTotal, warmLeft = 0, 0
@@ -2311,6 +2486,7 @@ function Audio.prepare()
     local b = bucket[t]
     for k = 1, #b do Q[#Q + 1] = b[k] end
   end
+  consumeBake()
   Audio.stats.jobs = #Q
   Audio.stats.warmJobs = warmTotal
   Audio.loaded = true          -- the API is live; `complete` says the DSP is done
@@ -2381,6 +2557,21 @@ function Audio.load()
   if not Audio.prepared then Audio.prepare() end
   if not Audio.complete then Audio.stream(math.huge) end
   return Audio.stats.loadTime
+end
+
+--- Build the entire bank and hand every buffer to
+--- `sink(name, slot, buf, loop, env)` as it is made. tools/bakescene.lua is the
+--- only caller: this is the bake's view of the synthesizer, and it goes through
+--- the same queue, the same seeds and the same order as a live run, so what
+--- lands on disk is what the game would have built for itself.
+function Audio.renderAll(sink)
+  if Audio.prepared then error("Audio.renderAll has to run before the bank is prepared", 0) end
+  Audio.useBake = false          -- bake from the specs, never from an older bake
+  bakeSink = sink
+  local ok, err = pcall(Audio.load)
+  bakeSink = nil
+  if not ok then error(err, 0) end
+  return Audio.stats
 end
 
 --------------------------------------------------------------------- playback

@@ -88,6 +88,9 @@ See [`../docs/PERFORMANCE_SPEC.md`](../docs/PERFORMANCE_SPEC.md) for the measure
 | `BOTS_SPEED=8` | Runs the simulation faster (juice is disabled so the trace stays honest). |
 | `BOTS_JUMP=night\|extraction` | Starts a session late, with `BOTS_JUMP_TREES` / `BOTS_JUMP_BOTS`. |
 | `tools/webshot.js` | Loads a built HTML file in headless Chromium and screenshots it. |
+| `tools/bake_audio.sh` | Renders the sound bank offline into `src/bake/audio` as Ogg Vorbis. `tools/build_web.sh` runs it; the game loads it if it is there and synthesizes if it is not. |
+| `BOTS_AUDIO_BAKE=0\|1` | Force synthesis, or make a missing or stale bake an error instead of a fallback. |
+| `BOTS_SCENE=tools.abaudio tools/shot.sh 1 1 …` | A/Bs the baked bank against the synthesized one and prints the coding error per cue. |
 
 ## Layout
 
