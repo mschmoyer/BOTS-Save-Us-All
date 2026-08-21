@@ -27,7 +27,17 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  #stage { position: fixed; inset: 0; display: grid; place-items: center; background: var(--vac); }
+  /* The safe area, honoured as padding: with viewport-fit=cover the page runs
+     under the notch and the home indicator, and in landscape on a phone that
+     is exactly where the oxygen readout and the build bar live. Letterboxing
+     inside the padding costs a few pixels and keeps the instrument panel out
+     from under the hardware. */
+  #stage {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    background: var(--vac);
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+             env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  }
   canvas#canvas {
     display: block; background: var(--vac); outline: none; touch-action: none;
     box-shadow: 0 0 0 1px var(--rule), 0 30px 90px -30px #000;
@@ -200,9 +210,29 @@
   /* --- canvas: LOVE owns the backing store, we only letterbox it ---------- */
   var canvas = $('canvas');
   canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); }, false);
+
+  // Without this an iPhone renders the page into a 980px virtual viewport and
+  // scales it down: the game boots at a quarter size with mismatched touch
+  // coordinates. It is set from script because this file is served inside a
+  // wrapper that owns the document head.
+  (function () {
+    var mv = document.querySelector('meta[name=viewport]');
+    if (!mv) { mv = document.createElement('meta'); mv.name = 'viewport'; }
+    mv.content = 'width=device-width, initial-scale=1, maximum-scale=1, ' +
+                 'user-scalable=no, viewport-fit=cover';
+    (document.head || document.documentElement).appendChild(mv);
+  })();
+
   var ASPECT = 16 / 9;
+  var stage = $('stage');
   function resize() {
+    // the stage's *content* box: clientWidth includes the safe-area padding
     var vw = window.innerWidth, vh = window.innerHeight;
+    if (stage) {
+      var cs = getComputedStyle(stage);
+      vw = stage.clientWidth  - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
+      vh = stage.clientHeight - parseFloat(cs.paddingTop || 0)  - parseFloat(cs.paddingBottom || 0);
+    }
     var w = vw, h = vw / ASPECT;
     if (h > vh) { h = vh; w = vh * ASPECT; }
     canvas.style.width = Math.round(w) + 'px';
