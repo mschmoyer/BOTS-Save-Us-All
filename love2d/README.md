@@ -32,6 +32,10 @@ all supported; the UI re-glyphs itself live when you change device.
 
 `F3` toggles the performance readout, `F5` restarts, `F11` is fullscreen.
 
+The native window opens fullscreen. Setting `BOTS_W`/`BOTS_H` (or running the headless
+harness) opens a plain window of that size instead. In the browser the canvas fills the page,
+and pressing **Begin** asks for browser fullscreen -- the bottom-right control toggles it.
+
 ## Building the web version
 
 The game ships as **one self-contained HTML file** — LÖVE compiled to WebAssembly, with the
@@ -41,7 +45,20 @@ runtime and the game data inlined, so it runs from a single URL with no server:
 tools/build_web.sh build/index.html
 ```
 
-Requires `node` with the `love.js` package available (see `tools/inline_web.js`).
+Requires `node` with the `love.js` package available (see `tools/inline_web.js`). The build
+script finds it in `node_modules/love.js` -- `npm install` at the repository root -- or
+wherever `LOVEJS` points.
+
+This build is what the repository hosts. From the repository root:
+
+```bash
+npm run build            # -> public/index.html
+vercel deploy --prod     # https://bots-save-us-all.vercel.app
+```
+
+Vercel runs the same `npm run build`, so a git-connected deploy produces the same file.
+Nothing else in this repository is hosted -- the 2019 GameMaker project is excluded by
+`.vercelignore`.
 
 ## Tools
 

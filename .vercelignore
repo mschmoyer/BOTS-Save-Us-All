@@ -1,0 +1,17 @@
+# Only the Love2D rebuild is hosted. The 2019 GameMaker project at the
+# repository root is not part of the deployment, and its assets are large.
+bots.yyp
+objects/
+rooms/
+scripts/
+sprites/
+sounds/
+fonts/
+tilesets/
+timelines/
+views/
+options/
+Soundtrack/
+docs/
+love2d/build/
+public/

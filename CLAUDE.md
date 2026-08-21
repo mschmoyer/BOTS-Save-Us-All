@@ -116,6 +116,13 @@ tools/build_web.sh build/index.html               # the single-file WebAssembly 
 NODE_PATH=/home/user/.toolchain/node_modules node tools/webshot.js build/index.html out.png 14000
 ```
 
+### Hosting
+
+The Love2D web build is the only thing this repository hosts. `vercel.json` at the root runs
+`npm run build` (which is `love2d/tools/build_web.sh public/index.html`) and serves `public/`;
+`.vercelignore` keeps the GameMaker project out of the deployment. It is live at
+<https://bots-save-us-all.vercel.app>.
+
 `tools/shot.sh` only renders the frames it photographs, so a full 20-minute session captures in
 seconds. **Read the PNGs.** Nothing about this game can be judged from the source alone.
 

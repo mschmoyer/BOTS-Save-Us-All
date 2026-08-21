@@ -1,1 +1,4 @@
 love2d/build/
+.vercel
+node_modules/
+public/

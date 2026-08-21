@@ -40,7 +40,6 @@
   }
   canvas#canvas {
     display: block; background: var(--vac); outline: none; touch-action: none;
-    box-shadow: 0 0 0 1px var(--rule), 0 30px 90px -30px #000;
   }
 
   /* ---------------------------------------------------------------- loader */
@@ -136,6 +135,12 @@
 
 <div id="stage"><canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas></div>
 <button id="fsbtn" type="button" onclick="goFullScreen()">Fullscreen</button>
+<script>
+  document.addEventListener('fullscreenchange', function () {
+    document.getElementById('fsbtn').textContent =
+      document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+  });
+</script>
 
 <div id="loader">
   <canvas id="motes" aria-hidden="true"></canvas>
@@ -253,9 +258,15 @@
     (document.head || document.documentElement).appendChild(mv);
   })();
 
-  var ASPECT = 16 / 9;
   var stage = $('stage');
   function resize() {
+    // The canvas takes the whole stage. It used to be letterboxed to a fixed
+    // 16:9 box, which left black bars on every window that was not that shape
+    // -- including a maximised desktop browser, which is where this is played.
+    // Every screen in the game already lays itself out from love.resize (that
+    // is what BOTS_W/BOTS_H exist to test), so handing it the real window
+    // shape costs nothing and fills it.
+    //
     // the stage's *content* box: clientWidth includes the safe-area padding
     var vw = window.innerWidth, vh = window.innerHeight;
     if (stage) {
@@ -263,20 +274,37 @@
       vw = stage.clientWidth  - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight || 0);
       vh = stage.clientHeight - parseFloat(cs.paddingTop || 0)  - parseFloat(cs.paddingBottom || 0);
     }
-    var w = vw, h = vw / ASPECT;
-    if (h > vh) { h = vh; w = vh * ASPECT; }
-    canvas.style.width = Math.round(w) + 'px';
-    canvas.style.height = Math.round(h) + 'px';
+    canvas.style.width = Math.round(Math.max(1, vw)) + 'px';
+    canvas.style.height = Math.round(Math.max(1, vh)) + 'px';
   }
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', function () { setTimeout(resize, 140); });
   resize();
 
+  function inFullScreen() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+  function enterFullScreen() {
+    // Only ever called from inside a click or key handler: every browser
+    // requires a user gesture, and a request made outside one is rejected.
+    var el = document.documentElement;
+    var req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!req || inFullScreen()) return;
+    try {
+      var r = req.call(el, { navigationUI: 'hide' });
+      if (r && r.catch) r.catch(function () {});   // denied: the page still fills the window
+    } catch (e) {}
+  }
   window.goFullScreen = function () {
-    var el = $('stage');
-    if (document.fullscreenElement) { document.exitFullscreen(); return; }
-    (el.requestFullscreen || el.webkitRequestFullscreen || function () {}).call(el);
+    if (inFullScreen()) {
+      (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+      return;
+    }
+    enterFullScreen();
   };
+  // the canvas is sized from the viewport, which changes when fullscreen does
+  document.addEventListener('fullscreenchange', function () { setTimeout(resize, 60); });
+  document.addEventListener('webkitfullscreenchange', function () { setTimeout(resize, 60); });
 
   window.addEventListener('keydown', function (e) {
     if ([32, 37, 38, 39, 40, 9].indexOf(e.keyCode) > -1) e.preventDefault();
@@ -508,6 +536,7 @@
     if (started) return;
     started = true;
     canvas.focus();
+    enterFullScreen();
     // wake anything already made, and anything made from here on -- see the
     // audio-context note above for why the old one-shot resume never fired
     try { window.__botsAudioPump(); } catch (e) {}
