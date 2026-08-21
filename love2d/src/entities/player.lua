@@ -62,6 +62,7 @@ function Player:speedMul()
   if self.carrying then m = m * T.carry.speedMul end
   if self.charging then m = m * 0.45 end
   if self.world and self.world.chips then m = m * (self.world.chips:get("moveSpeed", 1)) end
+  if self.lastLightOn then m = m * 1.35 end
   return m
 end
 
@@ -159,7 +160,7 @@ function Player:update(dt, camera)
   end
 
   ------------------------------------------------------------------ pulse
-  if canAct and Input.down("pulse") and self:cobalt() >= T.pulse.cost then
+  if canAct and Input.down("pulse") and self:cobalt() >= self:pulseCost() then
     if not self.charging then
       self.charging = true
       self.chargeT = 0
@@ -173,7 +174,13 @@ function Player:update(dt, camera)
 
   ------------------------------------------------------------------ plant
   self.plantCd = math.max(0, self.plantCd - dt)
-  if canAct and self:wants("plant") and self.plantCd <= 0 then self:handPlant() end
+  -- The plant key doubles as pick-up. If there is someone to carry, carrying
+  -- always wins: nobody means to plant a tree over a bot that is still beeping.
+  local rescuee = (canAct and self.world and not self.carrying)
+                  and self.world:nearestDownedBot(self.x, self.y, T.carry.pickupRange) or nil
+  if canAct and self:wants("plant") and self.plantCd <= 0 and not rescuee then
+    self:handPlant()
+  end
 
   ------------------------------------------------------------------ carry
   if canAct and self.world and not self.agent then self:updateCarry(dt) end
@@ -182,6 +189,15 @@ function Player:update(dt, camera)
   end
 
   ------------------------------------------------------------------ cosmetic
+  -- LAST LIGHT: on your final heart the world slows and you get quicker
+  if self:chips() and self:chips():has("lastLight") then
+    local low = self.hp <= 1 and self.state == "alive"
+    if low ~= self.lastLightOn then
+      self.lastLightOn = low
+      J.dilate(low and 0.72 or 1, low and 999 or 0.4)
+    end
+  end
+
   local sp = U.len(self.vx, self.vy) / T.maxSpeed
   self.lean = U.damp(self.lean, U.clamp(self.vx / T.maxSpeed, -1, 1) * 0.22, 9, dt)
   self.squash = U.damp(self.squash, 1, 10, dt)
@@ -245,17 +261,25 @@ function Player:cancelCharge()
   Audio.stop("pulse_charge")
 end
 
+function Player:chips() return self.world and self.world.chips or nil end
+function Player:chip(k, d) local c = self:chips() return c and c:get(k, d) or d end
+
+function Player:pulseCost()
+  return math.max(2, T.pulse.cost + self:chip("pulseCost", 0))
+end
+
 function Player:pulse()
   self.charging = false
   self.chargeT = 0
   Audio.stop("pulse_charge")
-  if not self:spend(T.pulse.cost) then return end
+  if not self:spend(self:pulseCost()) then return end
+  local radius = T.pulse.radius * self:chip("pulseRadius", 1)
   Audio.play("pulse_release")
-  VFX.emit("pulse_ring", self.x, self.y, { scale = T.pulse.radius / 200 })
+  VFX.emit("pulse_ring", self.x, self.y, { scale = radius / 200 })
   if self.world then
-    self.world:areaShove(self.x, self.y, T.pulse.radius, T.pulse.force, T.pulse.damage, T.pulse.stun)
+    self.world:areaShove(self.x, self.y, radius, T.pulse.force, T.pulse.damage, T.pulse.stun)
     if self.world.post then
-      self.world.post.addShockwave(self.x, self.y, T.pulse.radius, 0.9, 0.55)
+      self.world.post.addShockwave(self.x, self.y, radius, 0.9, 0.55)
     end
   end
   J.stop(T.pulse.hitstop)
@@ -291,10 +315,8 @@ function Player:updateCarry(dt)
   if self.carrying then
     local b = self.carrying
     b.x, b.y = self.x - self.faceX * 4, self.y - 26
-    if Input.pressed("plant") or Input.pressed("shove") then
-      -- dropping is implicit: putting a bot down inside a beacon revives it
-      self.world:dropCarried(self)
-    end
+    -- carrying is ended deliberately, on its own key, so a shove never fumbles
+    if Input.pressed("plant") then self.world:dropCarried(self) end
     return
   end
   local bot = self.world:nearestDownedBot(self.x, self.y, T.carry.pickupRange)
@@ -315,7 +337,7 @@ end
 
 ------------------------------------------------------------------------- damage
 function Player:onDamage(n, sx, sy)
-  self.invuln = T.invuln
+  self.invuln = T.invuln * self:chip("invuln", 1)
   if sx then self:push(self.x - sx, self.y - sy, T.knockback) end
   J.shake(0.55) J.stop(0.07)
   J.flashScreen(0.3, P.danger[1], P.danger[2], P.danger[3])

@@ -101,15 +101,21 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   vec3 col = mix(cShallow, cMid, smoothstep(0.02, 0.42, dep));
   col = mix(col, cDeep, smoothstep(0.38, 1.0, dep));
   col *= 0.94 + 0.12 * n3;
+  // sandy bottom showing through the last few metres: warms and lifts the very
+  // shallowest water so the ring is a gradient into the beach, not a flat stripe
+  float bottom = 1.0 - smoothstep(0.0, 0.16, dep);
+  col = mix(col, mix(col, cFoam, 0.34) * 1.06, bottom * 0.55);
 
   // swell shading: gentle, and it fades out in the deep so the open sea reads
-  // as one calm mass instead of camouflage
-  float calm = 1.0 - smoothstep(0.35, 0.90, dep);
-  float swell = (n1 - 0.5) + (n2 - 0.5) * 0.45;
+  // as one calm mass instead of camouflage. Isotropic fbm alone gives blotches;
+  // a long directional swell riding on top is what makes it read as water.
+  float calm = 1.0 - smoothstep(0.30, 0.82, dep);
+  float roll = sin(dot(w, vec2(0.0068, 0.0031)) + uTime * 0.30 + n1 * 3.4);
+  float swell = ((n1 - 0.5) + (n2 - 0.5) * 0.45) * 0.62 + roll * 0.16;
   // multiplicative, so the near-black deep does not turn into camouflage
-  col *= 1.0 + swell * 0.30 * (0.30 + 0.70 * calm);
+  col *= 1.0 + swell * 0.26 * (0.18 + 0.82 * calm);
   float crest = smoothstep(0.56, 0.94, n1 + (n2 - 0.5) * 0.35);
-  col = mix(col, cSky, crest * 0.055 * calm);
+  col = mix(col, cSky, crest * 0.05 * calm);
 
   // foam bands parallel to the coast, riding on the swell
   float nearShore = 1.0 - smoothstep(0.0, 190.0, -sdw);
@@ -122,18 +128,20 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float surge = 0.55 + 0.45 * sin(uTime * 1.05 + fbm3(w * 0.0045) * 6.2);
   float lip = edge * edge * surge;
 
-  float foam = clamp(bands * 0.42 + lip * 0.92, 0.0, 1.0);
+  float foam = clamp(bands * 0.38 + lip * 0.88, 0.0, 1.0);
   foam *= step(0.0, -sdw + 2.0);
-  col = mix(col, cFoam, foam * 0.78);
+  // the foam is bright but it is still water: hold it under the clipping point
+  // so the whole shore band does not fuse into one blown-out white halo
+  col = mix(col, cFoam * 0.90, foam * 0.70);
 
   // sparkle: two slowly drifting noise fields multiplied and hard-thresholded,
   // so only a scattering of crests catches the sun
   vec2 sp = w * 0.075;
   float s1 = vn(sp + vec2(uTime * 0.09, -uTime * 0.05));
   float s2 = vn(sp * 1.73 - vec2(uTime * 0.07, uTime * 0.11));
-  float spark = smoothstep(0.90, 1.0, s1 * s2 * 2.30);
+  float spark = smoothstep(0.92, 1.0, s1 * s2 * 2.30);
   spark *= smoothstep(0.55, 0.86, n1) * (1.0 - foam * 0.85) * calm;
-  col += cFoam * spark * 0.35;
+  col += cFoam * spark * 0.22;
 
   // hide the land under a fully transparent-to-the-ground colour: the terrain
   // canvases are drawn on top, this only shows through their antialiased edge

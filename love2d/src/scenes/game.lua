@@ -76,9 +76,12 @@ end
 
 --- Populate the world as if a run had already been played.
 function Game:devJump(what)
+  local _ = what
   local w = self.world
   local rng = w.rng
-  local trees = tonumber(os.getenv("BOTS_JUMP_TREES") or "") or 260
+  -- the extraction only makes sense with a full sky behind it
+  local defaultTrees = (what == "extraction") and 900 or 260
+  local trees = tonumber(os.getenv("BOTS_JUMP_TREES") or "") or defaultTrees
   local bots = tonumber(os.getenv("BOTS_JUMP_BOTS") or "") or 34
   for _ = 1, trees * 6 do
     if w.treeCount >= trees then break end
@@ -98,6 +101,10 @@ function Game:devJump(what)
     w:spawnBot(x, y, TU.bots.order[(i % #TU.bots.order) + 1], true)
   end
   w.cobalt = 120
+  -- the meter is normally full when the rig arrives; the jump has to match or
+  -- the extraction clock starts already expired
+  w.o2 = 100
+  w.o2Step = 4
   if what == "extraction" then
     w.cycle = 5
     w:beginExtraction()
@@ -121,6 +128,13 @@ function Game:bindSignals()
     -- the draft sits on top of the world, which keeps breathing behind it
     Timer.global:after(1.1, function()
       Screen.push(require("src.scenes.draft"), self.world, report)
+    end)
+  end, self)
+  Signal.on("world:failed", function()
+    Timer.global:after(1.6, function()
+      Screen.transition(0.9, function()
+        Screen.switch(require("src.scenes.defeat"), self.world)
+      end)
     end)
   end, self)
   Signal.on("boss:died", function()

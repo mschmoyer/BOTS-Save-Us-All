@@ -44,6 +44,7 @@ local U     = require("src.core.util")
 local P     = require("src.engine.palette")
 local Class = require("src.core.class")
 local Wind  = require("src.world.wind")
+local DayNight = require("src.engine.daynight")
 local T     = require("src.game.tuning").tree
 
 local sin, cos, floor, sqrt, abs, min, max, exp =
@@ -84,8 +85,9 @@ local TUNE = {
   rimPower      = 1.00,
   rimAlpha      = 0.42,
   rimElder      = 1.55,   -- elders take a golden rim
-  shadowAlpha   = 0.52,
+  shadowAlpha   = 0.60,
   shadowSquash  = 0.34,   -- vertical flattening of the projected canopy
+  airDepth      = 0.34,   -- peak aerial-perspective blend at the top of the view
 
   chewSag       = 0.13,   -- radians of lean a fully chewed tree droops
   chewRecover   = 0.22,   -- damage healed per second once the chomper leaves
@@ -215,6 +217,7 @@ local TREE_SHADER = SHARED_VS .. [[
 uniform vec4 uSun;         // xy: direction to the sun  z: contrast  w: rim power
 uniform vec4 uRim;         // rim colour, a = intensity
 uniform vec4 uDeath;       // rgb: dead tint  a: desaturation amount
+uniform vec4 uAir;         // rgb: atmosphere colour  a: how much of it depth buys
 varying vec3 vShade;
 varying float vRim;
 #ifdef VERTEX
@@ -238,6 +241,13 @@ vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
   vec3 c = color.rgb * vShade + uRim.rgb * (vRim * uRim.a);
   float g = dot(c, vec3(0.34, 0.50, 0.16));
   c = mix(c, vec3(g) * uDeath.rgb, uDeath.a);
+  // Aerial perspective. uT.w is this tree's depth up the screen; without it a
+  // forest of 900 identical greens has no near and no far and reads as carpet.
+  // Depth desaturates toward the atmosphere and lifts the darks, exactly as air
+  // does, so the far canopy sits behind the near one.
+  float air = uT.w * uAir.a;
+  float gl = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(c, uAir.rgb * (0.45 + 1.10 * gl), air);
   return vec4(c, color.a);
 }
 #endif
@@ -499,21 +509,35 @@ end
 
 --- One organic canopy blob: a fan whose radius is modulated by three harmonics,
 --- with a vertical light gradient baked in and the rim flagged for the shader.
-local function emitBlob(V, I, cx, cy, r, blob, invY, segs, cr, cg, cb, alpha, lag, rimW)
+---
+--- The gradient is a *ramp walk*, not a brightness multiply: a shadowed leaf is
+--- a deeper, cooler green, not the same green turned down. Multiplying is what
+--- made the canopy read as flat plastic lozenges.
+local function emitBlob(V, I, cx, cy, r, blob, invY, segs, cr, cg, cb, alpha, lag, rimW,
+                        ramp, tone, hue)
   local base = #V
   local hC = U.saturate(-cy * invY)
+  local invR = 1 / max(r, 1e-5)
   pushV(V, cx, cy, cr, cg, cb, alpha, hC, lag, blob.id, 0, 0, 0)
   for i = 0, segs - 1 do
     local a = i / segs * TAU
-    local rr = r * (0.87
-                    + 0.10 * sin(a * 2 + blob.p1)
-                    + 0.055 * sin(a * 3 + blob.p2)
-                    + 0.035 * sin(a * 5 + blob.p3))
+    -- deeper harmonics: a blob wants a lobed, clustered silhouette. At the old
+    -- amplitudes every blob was a clean ellipse and the canopy read as pebbles.
+    local rr = r * (0.83
+                    + 0.145 * sin(a * 2 + blob.p1)
+                    + 0.085 * sin(a * 3 + blob.p2)
+                    + 0.050 * sin(a * 5 + blob.p3))
     local ox = cos(a) * rr
     local oy = sin(a) * rr * blob.sq
-    -- vertical gradient: lighter on top, denser underneath
-    local k = 0.90 - (oy / max(r, 1e-5)) * 0.15
-    pushV(V, cx + ox, cy + oy, cr * k, cg * k, cb * k, alpha,
+    local vr, vg, vb
+    if ramp then
+      local rt, gt, bt = rampAt(ramp, tone - oy * invR * 0.95)
+      vr, vg, vb = rt * hue[1], gt * hue[2], bt * hue[3]
+    else
+      local k = 0.90 - oy * invR * 0.15
+      vr, vg, vb = cr * k, cg * k, cb * k
+    end
+    pushV(V, cx + ox, cy + oy, vr, vg, vb, alpha,
           U.saturate(-(cy + oy) * invY), lag, blob.id, rimW, ox, oy)
   end
   local n = #I
@@ -542,9 +566,12 @@ local function emitContact(V, I, rx, ry, segs)
 end
 
 local LAYER_LAG   = { 0.62, 0.80, 1.00 }
-local LAYER_SHADE = { 1.05, 2.10, 2.92 }
+-- A wider tonal spread between the back, middle and front canopy layers is what
+-- gives a crown depth. At 1.05/2.10/2.92 the three layers were near enough in
+-- value that the canopy read as one mass.
+local LAYER_SHADE = { 0.80, 2.05, 3.15 }
 local LAYER_ALPHA = { 1.00, 1.00, 1.00 }
-local LAYER_RIM   = { 0.10, 0.50, 1.00 }
+local LAYER_RIM   = { 0.12, 0.62, 1.15 }
 local LAYER_PUSH  = { -0.14, 0.0, 0.09 }   -- parallax: back layer up, front layer down
 
 --- Lay the skeleton out at growth `g` and bake it into a mesh.
@@ -616,12 +643,13 @@ local function buildMesh(sk, g, kind)
                          1, 1, 1, 0.55, LAYER_LAG[layer], 0)
               end
             else
-              local tone = LAYER_SHADE[layer] + (b.tone - 0.5) * 0.55
+              local tone = LAYER_SHADE[layer] + (b.tone - 0.5) * 1.00
               local cr, cg, cb = rampAt(sp.ramp, tone)
               cr, cg, cb = cr * sp.hue[1], cg * sp.hue[2], cb * sp.hue[3]
               emitBlob(V, Ilayer[layer == 1 and 1 or (layer == 2 and 3 or 4)],
                        bx, by, br_, b, invY, segs, cr, cg, cb,
-                       LAYER_ALPHA[layer], LAYER_LAG[layer], LAYER_RIM[layer])
+                       LAYER_ALPHA[layer], LAYER_LAG[layer], LAYER_RIM[layer],
+                       sp.ramp, tone, sp.hue)
             end
           end
         end
@@ -657,10 +685,11 @@ local function buildMesh(sk, g, kind)
             emitBlob(V, Ilayer[3], bx, by, br_ * 0.94, b, invY, segs,
                      1, 1, 1, 0.6, LAYER_LAG[1], 0)
           else
-            local cr_, cg_, cb_ = rampAt(sp.ramp, LAYER_SHADE[1] + b.tone * 0.5)
+            local ctone = LAYER_SHADE[1] + b.tone * 0.8
+            local cr_, cg_, cb_ = rampAt(sp.ramp, ctone)
             emitBlob(V, Ilayer[1], bx, by, br_, b, invY, segs,
                      cr_ * sp.hue[1], cg_ * sp.hue[2], cb_ * sp.hue[3],
-                     1, LAYER_LAG[1], LAYER_RIM[1])
+                     1, LAYER_LAG[1], LAYER_RIM[1], sp.ramp, ctone, sp.hue)
           end
         end
       end
@@ -743,6 +772,7 @@ local cur = {
   rimKey = nil, deathKey = nil,
 }
 local uT   = { 0, 0, 0, 0 }
+local uAir = { 1, 1, 1, 0 }
 local uSun = { 0, 0, 0, 0 }
 local uPrj = { 0, 0, 0, 0 }
 local uRimC = { 0, 0, 0, 0 }
@@ -762,6 +792,12 @@ function Tree.setViewFromCamera(cam)
   local x, y, w, h = cam:viewRect(0)
   Tree.setView(x, y, w, h)
   Tree.zoom = cam.zoom or 1
+  -- keep the aerial-perspective air in step with the atmosphere, so a forest at
+  -- dusk recedes into the bruise and a forest at noon recedes into blue haze
+  local DN = DayNight
+  if DN then
+    Tree.setAir(DN.fogColor, TUNE.airDepth * (0.55 + 0.90 * (DN.fogStrength or 0)))
+  end
 end
 
 Tree.zoom = 1
@@ -821,11 +857,15 @@ function Tree:init(x, y, seed, opts)
   self.phase     = r:angle()
   self.o2Mul     = sp.o2 * (0.9 + r:next() * 0.2)
 
-  -- per-tree hue: a gentle multiply on top of the baked species colour
-  local hj = r:gauss()
-  self.tintR = U.clamp(1 + hj * 0.075, 0.82, 1.12)
-  self.tintG = U.clamp(1 - abs(hj) * 0.030 + r:gauss() * 0.025, 0.86, 1.10)
-  self.tintB = U.clamp(1 - hj * 0.085 + r:gauss() * 0.030, 0.80, 1.14)
+  -- Per-tree colour. The old spread was +-7% on one channel, which at forest
+  -- scale is invisible: 900 trees all read as one yellow-green. Two independent
+  -- axes -- a warm/cool hue rotation and a plain value offset -- are what turn a
+  -- carpet back into a canopy of individuals.
+  local hj = r:gauss()                 -- + warm ochre  /  - cool blue-green
+  local br = U.clamp(1 + r:gauss() * 0.115, 0.78, 1.20)   -- some trees are darker
+  self.tintR = U.clamp((1 + hj * 0.20) * br, 0.64, 1.32)
+  self.tintG = U.clamp((1 + hj * 0.045 + r:gauss() * 0.035) * br, 0.76, 1.24)
+  self.tintB = U.clamp((1 - hj * 0.20 + r:gauss() * 0.05) * br, 0.58, 1.32)
 
   self.growth   = opts.startGrown and 1 or (opts.growth or 0)
   self.growthMul = 1
@@ -1119,8 +1159,17 @@ local function sendTreeUniform(shader, tr)
   uT[1] = tr.swayNow
   uT[2] = tr.swayLag
   uT[3] = tr.death * 0.85
-  uT[4] = 0
+  -- depth up the screen: 0 at the bottom edge (near), 1 at the top (far)
+  uT[4] = U.saturate((view.y + view.h - tr.y) / view.h) ^ 1.6
   shader:send("uT", uT)
+end
+
+--- The colour and strength of the air trees recede into. Drive this from the
+--- day/night atmosphere; `amount` 0 disables aerial perspective entirely.
+function Tree.setAir(color, amount)
+  uAir[1], uAir[2], uAir[3] = color[1], color[2], color[3]
+  uAir[4] = amount or 0
+  cur.airKey = nil
 end
 
 --- Ground shadow pass. Draw every tree's shadow before any entity so nothing
@@ -1207,7 +1256,13 @@ function Tree:draw(sunDirX, sunDirY)
       uSun[3] = TUNE.sunContrast
       uSun[4] = TUNE.rimPower
       shTree:send("uSun", uSun)
+      shTree:send("uAir", uAir)
       cur.sunX, cur.sunY, cur.mode = sunDirX, sunDirY, "tree"
+      cur.airKey = uAir[4]
+    end
+    if cur.airKey ~= uAir[4] then
+      shTree:send("uAir", uAir)
+      cur.airKey = uAir[4]
     end
     -- elders take a warm golden rim; everything else a cool sky rim.
     -- Both of these are the same for almost every tree in the forest, so they

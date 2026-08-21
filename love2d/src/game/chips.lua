@@ -62,6 +62,28 @@ local C = {
   { id = "steadyHand", f = F.PLAYER, r = 1, name = "STEADY HAND", desc = "Invulnerability after a hit lasts 60% longer.", mod = { invuln = 1.6 } },
   { id = "greenThumb", f = F.PLAYER, r = 2, name = "GREEN THUMB", desc = "Hand-planted trees start half grown.", flag = true },
   { id = "lastLight",  f = F.PLAYER, r = 3, name = "LAST LIGHT",  desc = "Below one heart, time slows and you move faster.", flag = true },
+
+  ---------------------------------------------------------------- trade-offs
+  -- Every card above is pure upside, which makes a draft arithmetic rather than
+  -- a decision. These cost you something real.
+  { id = "monoculture", f = F.GROWTH, r = 2, name = "MONOCULTURE",
+    desc = "Trees grow 60% faster. They will only seed ground already touching the wood.",
+    mod = { growRate = 1.6, frontierMax = 99 } },
+  { id = "scrapDoctrine", f = F.BOTS, r = 2, name = "SCRAP DOCTRINE",
+    desc = "Bots cost 35% less. Every one of them is made of tin.",
+    mod = { botCost = 0.65, botHp = -2 } },
+  { id = "deepWinter", f = F.COMBAT, r = 2, name = "DEEP WINTER",
+    desc = "Nights are a quarter shorter. Twice as much comes out of them.",
+    mod = { nightLen = 0.75, budget = 2.0 } },
+  { id = "clearCut", f = F.LOGISTICS, r = 2, name = "CLEAR CUT",
+    desc = "Felling a tree yields 4 cobalt. The Blight knows it, and prefers your forest.",
+    mod = { fellYield = 4, blightFocus = 1.35 } },
+  { id = "glassLungs", f = F.PLAYER, r = 3, name = "GLASS LUNGS",
+    desc = "Everything you do is 25% faster. One hit puts you down.",
+    mod = { moveSpeed = 1.25, dashCd = 0.75 } },
+  { id = "tallOrder", f = F.GROWTH, r = 3, name = "TALL ORDER",
+    desc = "Elders count double again. Saplings count for nothing at all.",
+    mod = { elderWeight = 2.0, saplingWeight = 0 } },
 }
 
 Chips.catalogue = C

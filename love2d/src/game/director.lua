@@ -12,7 +12,9 @@ local CURVE = { 0.25, 0.5, 0.85, 1.0, 0.55, 0.4, 0.7, 0.95, 1.0, 0.6 }
 
 function Director:init(world)
   self.world = world
-  self.rng = U.rng(919)
+  -- Seeded from the world, not a constant: otherwise every playthrough on every
+  -- machine gets byte-identical waves forever.
+  self.rng = U.rng((world and world.seed or 1) * 7919 + 919)
   self.active = false
   self.budget, self.spent = 0, 0
   self.t, self.dur = 0, 1
@@ -24,8 +26,14 @@ end
 
 function Director:beginNight(cycle, duration)
   self.cycle = cycle
+  -- The night's pressure scales with the forest, so a big wood is a big target.
+  -- A fixed budget against an exponential forest is a threat that shrinks.
+  local trees = self.world and self.world.treeCount or 0
   self.budget = TU.cycle.budget[math.min(cycle, #TU.cycle.budget)]
-  self.maxAlive = TU.cycle.maxAlive[math.min(cycle, #TU.cycle.maxAlive)]
+                + trees * TU.cycle.budgetPerTree
+  self.budget = self.budget * (self.world.chips and self.world.chips:get("budget", 1) or 1)
+  self.maxAlive = math.floor(TU.cycle.maxAlive[math.min(cycle, #TU.cycle.maxAlive)]
+                             + trees * TU.cycle.maxAlivePerTree)
   self.spent = 0
   self.t = 0
   self.dur = duration
@@ -47,10 +55,12 @@ function Director:pickCard(left)
   for name, def in pairs(TU.enemy) do
     if type(def) == "table" and def.from and def.from <= self.cycle and def.cost <= left then
       if name ~= "maw" or (not self.mawSpawned and self.t / self.dur > 0.3) then
+        -- siphons attack the win condition directly; they deserve to show up
         local weight = 1
         if name == "chomper" then weight = 4 end
         if name == "skitter" then weight = 2.5 end
         if name == "maw" then weight = 0.5 end
+        if name == "siphon" then weight = 2 end
         for _ = 1, math.max(1, math.floor(weight * 2)) do opts[#opts + 1] = name end
       end
     end

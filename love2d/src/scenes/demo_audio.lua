@@ -371,6 +371,14 @@ function S:enter()
   Music.load()
   print(string.format("Audio.load() %.3f s | %d sounds, %d variants, %.2f MB",
         self.loadTime, Audio.stats.sounds, Audio.stats.variants, Audio.stats.bytes / 1048576))
+  if (os.getenv("BOTS_AUDIO_COST") or "") ~= "" then
+    local rows = {}
+    for k, v in pairs(Audio.stats.cost) do rows[#rows + 1] = { k, v } end
+    table.sort(rows, function(a, b) return a[2] > b[2] end)
+    for i = 1, min(#rows, 20) do
+      print(string.format("  cost %-18s %6.0f ms", rows[i][1], rows[i][2] * 1000))
+    end
+  end
 
   if (os.getenv("BOTS_AUDIO_RENDER") or "") ~= "" then
     renderAll()

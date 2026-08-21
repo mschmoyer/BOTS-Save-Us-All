@@ -62,6 +62,8 @@ function Timer:update(dt)
   local w = 1
   for i = 1, n do
     local it = items[i]
+    -- a callback may have cleared the timer out from under us
+    if it == nil then break end
     local keep = not it.dead
     if keep then
       it.t = it.t + dt
@@ -92,7 +94,17 @@ function Timer:update(dt)
     end
     if keep then items[w] = it w = w + 1 end
   end
-  for i = w, n do items[i] = nil end
+  -- callbacks routinely schedule more work; anything appended past the original
+  -- end slides down into the space the finished items left, or the array keeps a
+  -- hole and the next tick indexes nil
+  if items == self.items then
+    local total = #items
+    for i = n + 1, total do
+      items[w] = items[i]
+      w = w + 1
+    end
+    for i = w, total do items[i] = nil end
+  end
 end
 
 Timer.global = Timer.new()

@@ -549,6 +549,188 @@ function Buf:svf(opts)
   return self
 end
 
+--- Parallel bank of tuned 2-pole resonators -- the material of a sound.
+--- opts: modes = { {hz, q, amp, decay}, ... }, mix (0..1, 1 = wet only), gain.
+---
+--- This is how a sound gets a *material* instead of a waveform. Excite the bank
+--- with a click and you get struck metal; excite it with noise and you get the
+--- body of the thing that is making the noise. The mode ratios are the identity:
+--- brass bar ratios for the bots, low wide-Q ratios for the wet Blight, tight
+--- high modes for glass UI. Nothing else in this library can do that.
+function Buf:resonate(opts)
+  local modes = opts.modes or { { 400, 12, 1 } }
+  local mix = opts.mix
+  if mix == nil then mix = 1 end
+  local gain = opts.gain or 1
+  local rate = self.rate
+  local nyq = rate * 0.48
+  local function run(ch)
+    local n = self.n
+    local wet = {}
+    for i = 1, n do wet[i] = 0 end
+    for k = 1, #modes do
+      local md = modes[k]
+      local f = min(md[1], nyq)
+      local q = max(0.5, md[2] or 10)
+      local a = md[3] or 1
+      -- RBJ constant-peak-gain bandpass
+      local w = TAU * f / rate
+      local alpha = sin(w) / (2 * q)
+      local cw = cos(w)
+      local b0, b1, b2 = alpha, 0, -alpha
+      local a0, a1, a2 = 1 + alpha, -2 * cw, 1 - alpha
+      b0, b1, b2 = b0 / a0, b1 / a0, b2 / a0
+      a1, a2 = a1 / a0, a2 / a0
+      local x1, x2, y1, y2 = 0, 0, 0, 0
+      for i = 1, n do
+        local x = ch[i]
+        local y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+        if y ~= y then y = 0 y1 = 0 y2 = 0 end
+        x2 = x1 x1 = x
+        y2 = y1 y1 = y
+        wet[i] = wet[i] + y * a
+      end
+    end
+    for i = 1, n do ch[i] = ch[i] * (1 - mix) + wet[i] * mix * gain end
+  end
+  run(self.L)
+  if self.R then run(self.R) end
+  return self
+end
+
+--- One-pole shelving EQ. type "low"|"high", `db` is the shelf gain.
+--- Cheap tone control: lift the air on the UI, pull the mud out of the bass.
+function Buf:shelf(opts)
+  local kind = opts.type or "high"
+  local db = opts.db or 0
+  local g = 10 ^ (db / 20)
+  local fc = U.clamp(opts.freq or 3000, 20, self.rate * 0.45)
+  local a = 1 - exp(-TAU * fc / self.rate)
+  local function run(ch)
+    local z = 0
+    for i = 1, self.n do
+      z = z + (ch[i] - z) * a
+      local lowPart = z
+      local highPart = ch[i] - z
+      if kind == "high" then ch[i] = lowPart + highPart * g
+      else ch[i] = lowPart * g + highPart end
+    end
+  end
+  run(self.L)
+  if self.R then run(self.R) end
+  return self
+end
+
+--- Look-ahead peak limiter. Keeps transients intact instead of squashing the
+--- whole buffer down to fit one sample, which is what plain normalising does.
+function Buf:limit(ceiling, lookSec)
+  ceiling = ceiling or 0.95
+  local look = max(1, floor((lookSec or 0.003) * self.rate))
+  local n = self.n
+  local L, R = self.L, self.R
+  -- nothing over the ceiling: the whole stage is a no-op, and most of the bank
+  -- lands here, so check before allocating anything
+  local pk = 0
+  for i = 1, n do
+    local v = abs(L[i])
+    if v > pk then pk = v end
+    if R then local vr = abs(R[i]) if vr > pk then pk = vr end end
+  end
+  if pk <= ceiling then return self end
+
+  -- required gain per sample, then a running minimum over the look-ahead window
+  -- via a monotonic wedge: O(n) rather than O(n * window), which matters because
+  -- every sound in the bank passes through here at load time
+  local need = {}
+  for i = 1, n do
+    local v = abs(L[i])
+    if R then local vr = abs(R[i]) if vr > v then v = vr end end
+    need[i] = (v > ceiling) and (ceiling / v) or 1
+  end
+  local g = {}
+  local dq, head, tail = {}, 1, 0        -- indices, values increasing
+  local fill = min(n, look)
+  for j = 1, fill do
+    while tail >= head and need[dq[tail]] >= need[j] do tail = tail - 1 end
+    tail = tail + 1
+    dq[tail] = j
+  end
+  for i = 1, n do
+    local j = i + look
+    if j <= n then
+      while tail >= head and need[dq[tail]] >= need[j] do tail = tail - 1 end
+      tail = tail + 1
+      dq[tail] = j
+    end
+    while dq[head] < i do head = head + 1 end
+    g[i] = need[dq[head]]
+  end
+  local cur = 1
+  local atk = 1 - exp(-1 / max(1, look))
+  local rel = 1 - exp(-1 / max(1, look * 8))
+  for i = 1, n do
+    local t = g[i]
+    cur = cur + (t - cur) * ((t < cur) and atk or rel)
+    L[i] = L[i] * cur
+    if R then R[i] = R[i] * cur end
+  end
+  return self
+end
+
+--- Loudness-match: scale so the loudest `win`-second window reaches `target`
+--- RMS, then limit to `ceiling`. Peak-normalising makes a click quiet and a
+--- drone loud; this makes two sounds sit at the same *perceived* level, which
+--- is the only reason a bank of forty sounds can share one mix.
+function Buf:loudness(target, win, ceiling)
+  target = target or 0.16
+  local w = max(64, floor((win or 0.3) * self.rate))
+  local L, R = self.L, self.R
+  local n = self.n
+  local best = 0
+  if n <= w then
+    best = self:rms()
+  else
+    local s = 0
+    for i = 1, w do
+      s = s + L[i] * L[i]
+      if R then s = s + R[i] * R[i] end
+    end
+    local scale = R and (w * 2) or w
+    best = sqrt(s / scale)
+    for i = w + 1, n do
+      s = s + L[i] * L[i] - L[i - w] * L[i - w]
+      if R then s = s + R[i] * R[i] - R[i - w] * R[i - w] end
+      local v = sqrt(max(0, s) / scale)
+      if v > best then best = v end
+    end
+  end
+  if best > 1e-7 then self:gain(target / best) end
+  return self:limit(ceiling or 0.96, 0.004)
+end
+
+--- Turn a decaying buffer into a seamless loop by crossfading its tail over its
+--- head and trimming. Without this a "looping" source ticks or breathes once per
+--- period, which is exactly the tell that a drone was faked.
+function Buf:loopify(xfade)
+  local xf = max(2, floor((xfade or 0.25) * self.rate))
+  if xf * 2 >= self.n then return self end
+  local n = self.n - xf
+  local function run(ch)
+    for i = 1, xf do
+      local f = (i - 1) / (xf - 1)
+      -- equal-power so the sum keeps its level through the splice
+      local a = cos(f * pi * 0.5)
+      local b = sin(f * pi * 0.5)
+      ch[i] = ch[i] * b + ch[n + i] * a
+    end
+    for i = n + 1, self.n do ch[i] = nil end
+  end
+  run(self.L)
+  if self.R then run(self.R) end
+  self.n = n
+  return self
+end
+
 --- Soft saturation. drive > 1 pushes into the knee.
 function Buf:softclip(drive, mix)
   drive = drive or 2
@@ -852,6 +1034,11 @@ local FX = {
   highpass  = function(b, o) o.type = "hp" return b:svf(o) end,
   bandpass  = function(b, o) o.type = "bp" return b:svf(o) end,
   softclip  = function(b, o) return b:softclip(o.drive, o.mix) end,
+  resonate  = function(b, o) return b:resonate(o) end,
+  shelf     = function(b, o) return b:shelf(o) end,
+  limit     = function(b, o) return b:limit(o.ceiling, o.look) end,
+  loudness  = function(b, o) return b:loudness(o.rms, o.win, o.ceiling) end,
+  loopify   = function(b, o) return b:loopify(o.xfade) end,
   bitcrush  = function(b, o) return b:bitcrush(o.bits, o.rateDiv) end,
   delay     = function(b, o) return b:delay(o) end,
   reverb    = function(b, o) return b:reverb(o) end,
@@ -896,7 +1083,20 @@ function Synth.render(spec)
   end
   b:dcBlock()
   if spec.trim ~= false then b:trim(0.0006, spec.tail or 0.015) end
-  if spec.normalize ~= false then b:normalize(spec.normalize or 0.88) end
+  if spec.loop then
+    -- a loop must not be faded or trimmed at its edges, only spliced
+    b:loopify(spec.xfade or 0.3)
+    if spec.loudness then b:loudness(spec.loudness, spec.loudWin, spec.ceiling)
+    elseif spec.normalize ~= false then b:normalize(spec.normalize or 0.88) end
+    b:dcBlock()
+    return b
+  end
+  if spec.loudness then
+    -- perceived-loudness match, the only way a bank of forty sounds shares a mix
+    b:loudness(spec.loudness, spec.loudWin, spec.ceiling)
+  elseif spec.normalize ~= false then
+    b:normalize(spec.normalize or 0.88)
+  end
   b:fade(spec.fadeIn or 0.0015, spec.fadeOut or 0.006)
   return b
 end

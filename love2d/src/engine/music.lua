@@ -60,7 +60,7 @@ local STATES = {
   boss = {
     mode = "phrygianDominant", root = 1, bpm = 104, barsPerChord = 1,
     prog = { 1, 2, 1, 7 },      -- the b2 leaning on the tonic: threat, not menace-by-volume
-    layers = { pad = 0.5, bass = 1.0, arp = 0.3, bell = 0.2, perc = 1.0, choir = 0.7 },
+    layers = { pad = 0.5, bass = 0.9, arp = 0.7, bell = 0.45, perc = 0.9, choir = 0.75 },
     density = 1.0,
   },
   draft = {
@@ -70,17 +70,66 @@ local STATES = {
     density = 0.5,
   },
   ending = {
-    -- one voice. Nothing under it. This is the whole point of the game.
-    mode = "ionian", root = 2, bpm = 52, barsPerChord = 4,
+    -- One voice. Nothing under it. This is the whole point of the game.
+    --
+    -- The 2019 pass read "quiet" as the instruction and produced four notes in
+    -- thirty seconds at -45 dBFS: not loneliness, an outage. Loneliness is not
+    -- the absence of sound, it is a phrase that gets no answer. So the ending
+    -- plays the theme's *call* in full, at a level you can actually hear, and
+    -- then leaves the four bars where the answer lives completely empty except
+    -- for one low tonic holding the floor. Then it asks again.
+    mode = "ionian", root = 2, bpm = 54, barsPerChord = 4,
     prog = { 1, 6, 4, 1 },
     layers = { pad = 0, bass = 0, arp = 0, bell = 1.0, perc = 0, choir = 0 },
-    density = 0.3,
+    density = 1.0,
   },
 }
 
 -- How bright the day/dusk material is allowed to be, per cycle. The music
 -- forgets how to be hopeful at roughly the rate the player does.
 local CYCLE_MODES = { "lydian", "lydian", "ionian", "ionian", "mixolydian", "dorian", "aeolian" }
+
+------------------------------------------------------------------- the theme
+-- The tune. Fixed pitches on a fixed rhythm, four bars long, in two halves: a
+-- CALL that climbs to the octave and settles back on the third, and an ANSWER
+-- that climbs one step further and comes to rest on the fifth.
+--
+-- This is the one thing the 2019 sequencer did not have. Its "melody" was eight
+-- scale degrees fired at whichever of three slots per bar happened to win a coin
+-- toss, so the pitches recurred but the rhythm never did, and the phrase drifted
+-- out of phase with the harmony after two and a half bars. A player cannot hum a
+-- melody whose rhythm is random. Everything else in the score can be generative;
+-- the tune cannot be.
+--
+-- The same eight bars carry the whole game: weightless in Lydian on the title,
+-- darkening a mode per cycle, fragmented under the night, in augmentation on the
+-- choir at the boss -- and alone, unanswered, at the end.
+--
+-- Entries are { step within the phrase (0..63), scale degree, length in 16ths,
+-- velocity }. Degrees are relative to the key, not the chord: a melody sits
+-- above a progression, it does not follow it around.
+local THEME = {
+  -- call: bars 1-2
+  { 0,  5, 6, 1.00 }, { 6,  6, 2, 0.68 }, { 8,  8, 4, 0.92 }, { 12, 7, 4, 0.74 },
+  { 16, 6, 6, 0.86 }, { 22, 5, 2, 0.62 }, { 24, 3, 8, 0.80 },
+  -- answer: bars 3-4
+  { 32, 5, 6, 0.92 }, { 38, 6, 2, 0.64 }, { 40, 8, 4, 0.88 }, { 44, 9, 4, 0.82 },
+  { 48, 8, 6, 0.90 }, { 54, 6, 2, 0.60 }, { 56, 5, 10, 0.95 },
+}
+local PHRASE = 64             -- four bars of sixteenths
+
+-- step -> the theme notes that start on it, built once.
+local THEME_AT = {}
+for i = 1, #THEME do
+  local t = THEME[i]
+  THEME_AT[t[1]] = THEME_AT[t[1]] or {}
+  table.insert(THEME_AT[t[1]], t)
+end
+
+-- Per-layer output trim. The score used to run 12 dB louder at the boss than in
+-- the day purely because the bass and kick were sub-heavy; these keep the states
+-- inside a range one music-bus fader can serve.
+local TRIM = { pad = 1.0, bass = 0.6, arp = 0.95, bell = 1.15, perc = 0.72, choir = 0.9 }
 
 --------------------------------------------------------------------- state
 local M = {
@@ -97,15 +146,15 @@ local M = {
   bar = 0, beatInBar = 0, stepInBar = 0,
   chordIndex = 1, barsSinceChord = 0,
   gains = {}, targets = {}, fade = 0.25,
-  motif = { 1, 3, 5, 3, 6, 5, 3, 2 }, motifPos = 1,
   pending = nil,
   lastNotes = {},
+  armed = {},         -- a layer only starts playing on a bar line, never mid-phrase
 }
 Music.M = M
 
 local rng = U.rng(0x5EED)
 
-for _, l in ipairs(LAYERS) do M.gains[l] = 0 M.targets[l] = 0 end
+for _, l in ipairs(LAYERS) do M.gains[l] = 0 M.targets[l] = 0 M.armed[l] = false end
 
 ------------------------------------------------------------------- harmony
 local function semisOf(deg) return Synth.degree(M.mode, deg) end
@@ -191,7 +240,7 @@ function Music.setState(name, opts)
   M.fade = (opts.fadeBars or 3) * barSeconds()
   setTargetsFromDef()
   if M.snap then
-    for _, l in ipairs(LAYERS) do M.gains[l] = M.targets[l] end
+    for _, l in ipairs(LAYERS) do M.gains[l] = M.targets[l] M.armed[l] = true end
     M.snap = nil
   end
   Signal.emit("music:state", name)
@@ -219,6 +268,13 @@ end
 function Music.isPlaying() return M.playing end
 
 ------------------------------------------------------------------ note firing
+--- Is a layer allowed to make a sound this step? A layer must be both audible
+--- and *armed* -- armed happens on a bar line, so a layer that fades up in the
+--- middle of a phrase still waits for the downbeat to come in.
+local function live(layer)
+  return M.gains[layer] > 0.05 and M.armed[layer]
+end
+
 local function note(inst, semis, opts)
   semis = U.clamp(floor(semis + 0.5), -30, 32)
   local v = Audio.playMusic(inst, semis, opts)
@@ -231,89 +287,139 @@ end
 --- One 16th step of the sequencer.
 local function stepTick(step)
   local sib = step % 16                     -- step in bar
-  local beat = floor(sib / 4)
+  local sip = step % PHRASE                 -- step in the four-bar phrase
+  local barInPhrase = floor(sip / 16)       -- 0..3
   local g = M.gains
   local d = M.def
   local dens = d.density or 0.7
   local it = M.intensity
-  local tones = chordTones(M.prog[M.chordIndex], (M.state == "boss") and 7 or 9)
+  local st = M.state
+  local ending = (st == "ending")
+  local boss = (st == "boss")
+  local tones = chordTones(M.prog[M.chordIndex], boss and 7 or 9)
 
   ---------------------------------------------------------------- pad bed
-  if g.pad > 0.02 and sib == 0 then
+  if live("pad") and sib == 0 then
     for i = 1, 3 do
       local pan = (i - 2) * 0.45
-      note("pad", tones[i] + 12, { volume = g.pad * (i == 1 and 0.9 or 0.7), pan = pan })
+      note("pad", tones[i] + 12, { volume = g.pad * TRIM.pad * (i == 1 and 0.9 or 0.7),
+                                   pan = pan })
     end
-    if M.state == "boss" or M.state == "night" then
-      note("pad", tones[1], { volume = g.pad * 0.5, pan = 0 })
+    if boss or st == "night" then
+      note("pad", tones[1], { volume = g.pad * TRIM.pad * 0.5, pan = 0 })
     end
   end
 
   ---------------------------------------------------------------- choir
-  if g.choir > 0.02 and sib == 0 then
-    note("choir", tones[2] + 12, { volume = g.choir * 0.8, pan = -0.25 })
-    if M.state == "boss" then
-      note("choir", tones[1], { volume = g.choir * 0.7, pan = 0.3 })
+  -- At the boss the choir does not simply switch on: it enters on the second
+  -- half of the phrase and answers with the theme in augmentation, so the
+  -- tension arrives as a voice joining rather than as a fader moving.
+  if live("choir") and sib == 0 then
+    if boss then
+      if barInPhrase >= 2 then
+        note("choir", tones[2] + 12, { volume = g.choir * TRIM.choir * 0.8, pan = -0.25 })
+        note("choir", tones[1], { volume = g.choir * TRIM.choir * 0.7, pan = 0.3 })
+      end
+    else
+      note("choir", tones[2] + 12, { volume = g.choir * TRIM.choir * 0.8, pan = -0.25 })
+    end
+  end
+  -- the theme, at half speed, on the choir: the boss cue's actual argument
+  if boss and live("choir") and sip % 8 == 0 then
+    local idx = floor(sip / 8) + 1
+    local t = THEME[idx]
+    if t and t[4] > 0.8 then
+      note("choir", M.root + semisOf(t[2]) + 12,
+           { volume = g.choir * TRIM.choir * 0.5 * t[4], pan = 0.15 })
     end
   end
 
   ---------------------------------------------------------------- bass pulse
-  if g.bass > 0.02 then
+  if live("bass") then
     local hit = (sib == 0) or (sib == 8)
     if it > 0.35 and sib == 6 then hit = true end
     if it > 0.6 and (sib == 11 or sib == 14) then hit = rng:chance(0.45 + it * 0.3) end
-    if M.state == "boss" and (sib % 4 == 0) then hit = true end
+    if boss and (sib % 4 == 0) then hit = true end
     if hit then
       local n = tones[1] - 12
       if sib ~= 0 and rng:chance(0.25) then n = tones[3] - 12 end
-      note("bass", n, { volume = g.bass * (sib == 0 and 0.95 or 0.7), pan = 0 })
+      -- the boss climbs chromatically through the last bar of every phrase:
+      -- pressure you can hear coming rather than pressure that is simply loud
+      if boss and barInPhrase == 3 then n = n + floor(sib / 4) end
+      note("bass", n, { volume = g.bass * TRIM.bass * (sib == 0 and 0.95 or 0.7), pan = 0 })
     end
   end
 
   ---------------------------------------------------------------- arpeggio
-  if g.arp > 0.02 then
-    local every = (M.o2 > 0.55) and 2 or 4          -- opens from 8ths to 16ths
-    if sib % every == 0 and rng:chance(0.55 + dens * 0.4) then
-      local reach = 3 + floor(M.o2 * 4)             -- and reaches further up
-      local idx = 1 + (floor(step / every) % reach)
-      local semis = M.root + semisOf(M.prog[M.chordIndex] + (idx - 1) * 2) + 12
+  if live("arp") then
+    local every = (M.o2 > 0.55 or boss) and 2 or 4    -- opens from 8ths to 16ths
+    if sib % every == 0 and (boss or rng:chance(0.55 + dens * 0.4)) then
+      local semis
+      if boss then
+        -- a relentless pedal alternating the tonic and the flat second: the
+        -- interval the whole boss mode is built on, hammered
+        semis = M.root + semisOf(1) + ((floor(step / 2) % 2 == 1) and 1 or 0) + 12
+      else
+        local reach = 3 + floor(M.o2 * 4)             -- and reaches further up
+        local idx = 1 + (floor(step / every) % reach)
+        semis = M.root + semisOf(M.prog[M.chordIndex] + (idx - 1) * 2) + 12
+      end
       note("pluck", semis, {
-        volume = g.arp * (0.45 + 0.3 * M.o2) * (sib % 4 == 0 and 1 or 0.72),
+        volume = g.arp * TRIM.arp * (0.45 + 0.3 * M.o2) * (sib % 4 == 0 and 1 or 0.72),
         pan = ((step % 5) - 2) * 0.22,
       })
     end
   end
 
-  ---------------------------------------------------------------- melody bell
-  if g.bell > 0.02 then
-    local slot = (M.state == "ending") and (sib == 0 or sib == 10)
-              or (sib == 0 or sib == 6 or sib == 12)
-    if slot and rng:chance(dens * 0.75 + 0.15) then
-      local deg = M.motif[M.motifPos]
-      M.motifPos = M.motifPos % #M.motif + 1
-      local semis = M.root + semisOf(M.prog[M.chordIndex] + deg - 1) + 12
-      note("bell", semis, {
-        volume = g.bell * (sib == 0 and 0.8 or 0.6),
-        pan = ((M.motifPos % 3) - 1) * 0.3,
-      })
+  ---------------------------------------------------------------- the theme
+  if live("bell") then
+    local notes = THEME_AT[sip]
+    if notes then
+      for i = 1, #notes do
+        local t = notes[i]
+        local isAnswer = (t[1] >= 32)
+        -- the ending asks and is not answered
+        local play = not (ending and isAnswer)
+        -- under a night, only the strong bones of the tune survive
+        if st == "night" and t[4] < 0.8 then play = false end
+        if play then
+          local semis = M.root + semisOf(t[2]) + 12
+          note("bell", semis, {
+            volume = g.bell * TRIM.bell * (0.55 + 0.45 * t[4]) * (ending and 1.25 or 1),
+            pan = ((t[2] % 3) - 1) * 0.22,
+          })
+        end
+      end
+    end
+    -- the ending's empty half: one low tonic under four bars of nothing, so the
+    -- silence is a room the phrase is standing in rather than a dropout
+    if ending and sip == 32 then
+      note("bell", M.root + semisOf(1) - 12, { volume = g.bell * TRIM.bell * 0.5, pan = 0 })
     end
   end
 
   ---------------------------------------------------------------- percussion
-  if g.perc > 0.02 then
+  if live("perc") then
+    local vol = g.perc * TRIM.perc
     if sib == 0 or sib == 8 or (it > 0.5 and sib == 11 and rng:chance(0.5)) then
-      note("kick", 0, { volume = g.perc * 0.9 })
+      note("kick", 0, { volume = vol * 0.9 })
+    end
+    if boss and barInPhrase == 3 and sib % 4 == 2 then
+      note("kick", 0, { volume = vol * 0.7 })
     end
     if sib % 2 == 0 and rng:chance(0.35 + it * 0.55) then
-      note("hat", 0, { volume = g.perc * (sib % 4 == 0 and 0.5 or 0.32),
+      note("hat", 0, { volume = vol * (sib % 4 == 0 and 0.5 or 0.32),
                        pan = rng:range(-0.35, 0.35) })
     end
     if sib % 4 == 2 and rng:chance(0.3 + it * 0.3) then
-      note("shaker", 0, { volume = g.perc * 0.3, pan = rng:range(-0.5, 0.5) })
+      note("shaker", 0, { volume = vol * 0.3, pan = rng:range(-0.5, 0.5) })
     end
-    if sib == 14 and M.bar % 4 == 3 and rng:chance(0.6) then
-      note("tom", rng:int(-3, 3), { volume = g.perc * 0.6, pan = -0.3 })
-      note("tom", rng:int(-5, 0), { volume = g.perc * 0.5, pan = 0.3 })
+    -- fills land at the end of a phrase, where the ear is already expecting one
+    if barInPhrase == 3 and sib >= 12 and (boss or rng:chance(0.5)) then
+      if sib % 2 == 0 then
+        note("tom", rng:int(-5, 3) - (sib - 12), { volume = vol * 0.55,
+                                                   pan = ((sib % 4) - 1.5) * 0.3 })
+      end
     end
   end
 end
@@ -322,6 +428,10 @@ end
 local function barTick()
   M.bar = M.bar + 1
   M.barsSinceChord = M.barsSinceChord + 1
+  for i = 1, #LAYERS do
+    local l = LAYERS[i]
+    M.armed[l] = (M.gains[l] > 0.05) or (M.targets[l] > 0.05 and M.gains[l] > 0.02)
+  end
   if M.pending then
     -- harmony only ever changes on a bar line, so a state change is felt as a
     -- modulation rather than heard as a seam. Layer gains keep crossfading.

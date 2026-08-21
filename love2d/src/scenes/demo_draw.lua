@@ -104,7 +104,7 @@ function S:drawType()
   local wl = { 0.065, 0.09, 0.115, 0.15 }
   for i, ww in ipairs(wl) do
     Text.display("GROWTH", cx + (i - 1) * 148, 440, 30, { weight = ww, tracking = 0.04, color = P.ink })
-    Text.display(string.format("%.3F", ww), cx + (i - 1) * 148, 478, 10,
+    Text.display(string.format("%.3f", ww), cx + (i - 1) * 148, 478, 10,
                  { color = P.inkFaint, tracking = 0.16 })
   end
 

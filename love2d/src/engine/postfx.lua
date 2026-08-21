@@ -34,20 +34,23 @@ Post.settings = {
 }
 
 Post.tuning = {
-  threshold   = 0.80,   -- bright-pass knee centre
-  knee        = 0.22,
+  threshold   = 0.70,   -- bright-pass knee centre
+  knee        = 0.26,
   brightGain  = 1.0,
-  bloomAmount = 0.55,   -- multiplied by the day/night bloom response
-  wide        = 0.60,   -- how much of the 1/4 level survives into the mix
-  caAmount    = 0.0022,
-  vigStrength = 0.52,
-  vigSoft     = 0.28,
-  grainAmount = 0.024,
+  bloomAmount = 0.42,   -- multiplied by the day/night bloom response
+  wide        = 0.62,   -- how much of the 1/4 level survives into the mix
+  -- CA and grain are seasoning. At the old values the corners carried a visible
+  -- red/cyan fringe on HUD text, which reads as a bug rather than as a lens.
+  caAmount    = 0.0011,
+  vigStrength = 0.34,
+  vigSoft     = 0.42,
+  grainAmount = 0.015,
   shockPx     = 16,     -- peak displacement of a shockwave ring, in pixels
   shockThick  = 34,
-  tintAmount  = 0.55,
+  tintAmount  = 0.52,
   fogAmount   = 0.13,   -- how much of the atmosphere colour washes the frame
-  tonemap     = 0.9,
+  tonemap     = 0.82,
+  toe         = 0.055,  -- filmic toe: how hard the deepest shadows are crushed
 }
 
 Post.stats = { passes = 0, ms = 0 }
@@ -128,6 +131,7 @@ extern float saturation;
 extern float tintAmount;
 extern float splitAmount;
 extern float tonemapAmount;
+extern float toe;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
@@ -160,10 +164,16 @@ vec4 effect(vec4 vc, Image tex, vec2 tc, vec2 sc) {
   // atmosphere: a thin wash of the phase's own air over everything
   c = mix(c, fogColor * (0.35 + 1.3 * dot(c, LUMA)), fogAmount);
 
-  // lift: the sky's colour bleeds into the shadows, strongest where it is dark
-  c += lift * (1.0 - c);
-
   c = (c - 0.5) * contrast + 0.5;
+
+  // filmic toe *before* the lift: the toe exists to kill the grey veil the
+  // tonemap leaves behind, and the lift exists to put a coloured floor back.
+  // In the other order the toe eats the lift and night goes to pure black.
+  c = max(c - toe, vec3(0.0)) / (1.0 - toe);
+
+  // lift: the sky's colour bleeds into the shadows, strongest where it is dark.
+  // This is the floor the frame sits on, so a night shadow is blue, not empty.
+  c += lift * (1.0 - c);
 
   return vec4(max(c, 0.0), 1.0);
 }
@@ -479,6 +489,7 @@ function Post.render(opts)
   snd(S.grade, "fogColor", gFog)
   snd(S.grade, "fogAmount", gFogAmount * T.fogAmount)
   snd(S.grade, "tonemapAmount", T.tonemap)
+  snd(S.grade, "toe", T.toe)
   g.draw(scene, 0, 0)
   Post.stats.passes = Post.stats.passes + 1
 

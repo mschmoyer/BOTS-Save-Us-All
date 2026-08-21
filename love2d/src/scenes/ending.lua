@@ -104,7 +104,10 @@ local function fallenNames(world)
     if n and not seen[n] then seen[n] = true names[#names + 1] = n end
   end
   if world.allLostNames then
-    for i = 1, #world.allLostNames do push(world.allLostNames[i]) end
+    for i = 1, #world.allLostNames do
+      local e = world.allLostNames[i]
+      push(type(e) == "table" and e.name or e)
+    end
   end
   if world.lostNames then
     for i = 1, #world.lostNames do push(world.lostNames[i]) end

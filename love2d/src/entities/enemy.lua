@@ -95,7 +95,12 @@ end
 function Enemy:update_chomper(dt)
   local w = self.world
   if not self.target or not self.target.alive then
-    self.target = w and w:nearestTree(self.x, self.y, 2200, true)
+    -- A short search radius is what makes a Chomper dangerous: once the trees
+    -- nearby are already spoken for it comes for your bots, and then for you.
+    self.target = w and w:nearestTree(self.x, self.y, self.def.treeSearch or 480, true)
+    if not self.target and w then
+      self.target = w:nearestBot(self.x, self.y, 600) or w.player
+    end
     if self.target then
       self.target.markedBy = self
       Signal.emit("enemy:targeted", self, self.target)
@@ -105,6 +110,16 @@ function Enemy:update_chomper(dt)
   local t = self.target
   if not t then
     if w and w.player then self:seek(w.player.x, w.player.y, dt, 0.7) end
+    return
+  end
+  -- it went for a bot or the player instead: bite, do not chew
+  if t.kind ~= "tree" and not t.startChew then
+    local d = self:seek(t.x, t.y, dt)
+    if d < (t.radius or 12) + self.radius then
+      if type(t.damage) == "function" then t:damage(self.def.damage, self.x, self.y) end
+      self:push(self.x - t.x, self.y - t.y, 240)
+      self.stun = 0.5
+    end
     return
   end
   local d = self:seek(t.x, t.y, dt)
@@ -119,7 +134,8 @@ function Enemy:update_chomper(dt)
       Audio.play("chomp", { pitch = self.rng:range(0.9, 1.15), volume = 0.5, x = self.x, y = self.y })
       VFX.emit("leaf_litter", t.x, t.y - t.radius, { count = 2 })
     end
-    if self.chewT >= TU.tree.chewTime then
+    local chew = TU.tree.chewTime * (w.chips and w.chips:get("chewTime", 1) or 1)
+    if self.chewT >= chew then
       if w then w:fellTree(t, self) end
       self.target = nil
       self.chewT = 0
@@ -139,7 +155,7 @@ function Enemy:update_skitter(dt)
   if not t then return end
   local d = self:seek(t.x, t.y, dt, 1)
   if d < t.radius + self.radius then
-    if t.damage then t:damage(self.def.damage, self.x, self.y) end
+    if type(t.damage) == "function" then t:damage(self.def.damage, self.x, self.y) end
     self:push(self.x - t.x, self.y - t.y, 260)
     self.stun = 0.35
   end
@@ -206,7 +222,7 @@ function Enemy:update_bulwark(dt)
     self.slamT = (self.slamT or 0) + dt
     if self.slamT > 1.1 then
       self.slamT = 0
-      if t.damage then t:damage(self.def.damage, self.x, self.y) end
+      if type(t.damage) == "function" then t:damage(self.def.damage, self.x, self.y) end
       if t.startChew then t:startChew(self) end
       VFX.emit("slam_dust", self.x, self.y)
       J.shake(0.1)
@@ -239,8 +255,13 @@ function Enemy:shove(dx, dy, force, damage, stun)
       if self.shovesLeft <= 0 then self:damage(999, dx, dy) end
       return true
     end
+    -- Armour reduces the hit; it no longer cancels it. A Pulse should always be
+    -- a legitimate answer to a Bulwark, just an inefficient one.
     self.flash = 0.12
     VFX.emit("hit_spark", self.x, self.y, { color = P.warn })
+    if damage and damage > 0 then
+      self:damage(math.max(1, damage * (1 - (self.def.armour or 0.5))), self.x - dx, self.y - dy)
+    end
     return false
   end
   self:push(dx, dy, force)

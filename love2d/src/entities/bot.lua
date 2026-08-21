@@ -43,7 +43,7 @@ function Bot:init(x, y, botType, world, rng)
 
   self.state       = "boot"           -- boot | work | down | dead | rebel
   self.stateT      = 0
-  self.bootT       = T.bootTime
+  self.bootT       = T.bootTime * ((world and world.chips and world.chips:has("quickBoot")) and 0.12 or 1)
   self.mood        = "normal"         -- normal | confused | love
   self.eyeX, self.eyeY = 0, 1
   self.actionT     = self.rng:range(0.3, 1.4)
@@ -210,10 +210,11 @@ function Bot:update_builder(dt)
     end
   end
   if self.actionT <= 0 and self.carry > 0 then
+    -- "half" still walks the escalation curve, so builder-spam is not free
     if self.world and self.world:spawnBot(self.x + self.rng:range(-20, 20),
-                                          self.y + self.rng:range(10, 26), "planter", true) then
+                                          self.y + self.rng:range(10, 26), "planter", "half") then
       self.carry = self.carry - 1
-      self.actionT = self.def.buildEvery
+      self.actionT = self.def.buildEvery / (self.world.chips and self.world.chips:get("buildRate", 1) or 1)
       self.squashT = 0.4
       Audio.play("build_done", { x = self.x, y = self.y })
     else
@@ -229,7 +230,8 @@ function Bot:update_repulsor(dt)
     self.charges = self.charges - 1
     self.pulseAnim = 1
     if self.world then
-      self.world:areaShove(self.x, self.y, self.def.radius_pulse, self.def.force, 0, self.def.stun)
+      self.world:areaShove(self.x, self.y, self.def.radius_pulse, self.def.force,
+                           self.def.damage or 0, self.def.stun)
     end
     VFX.emit("pulse_ring", self.x, self.y, { scale = self.def.radius_pulse / 200, color = P.accentCool })
     Audio.play("pulse_release", { pitch = 1.25, volume = 0.6, x = self.x, y = self.y })
@@ -244,12 +246,14 @@ end
 
 function Bot:update_sentry(dt)
   self.actionT = self.actionT - dt * self:workRate()
-  local target = self.world and self.world:nearestEnemy(self.x, self.y, self.def.range)
+  local chips = self.world and self.world.chips
+  local range = self.def.range * (chips and chips:get("sentryRange", 1) or 1)
+  local target = self.world and self.world:nearestEnemy(self.x, self.y, range)
   if target then
     self:lookAt(target.x, target.y)
     self.aimAngle = U.dampAngle(self.aimAngle, math.atan2(target.y - self.y, target.x - self.x), 10, dt)
     if self.actionT <= 0 then
-      self.actionT = self.def.fireEvery
+      self.actionT = self.def.fireEvery / (chips and chips:get("sentryRate", 1) or 1)
       -- lead the target so darts actually connect
       local d = U.dist(self.x, self.y, target.x, target.y)
       local tt = d / self.def.dartSpeed
@@ -267,7 +271,8 @@ function Bot:update_sentry(dt)
 end
 
 function Bot:update_harvester(dt)
-  if self.cargo >= self.def.capacity then
+  local cap = self.def.capacity + (self.world.chips and self.world.chips:get("harvestBonus", 0) or 0) * 3
+  if self.cargo >= cap then
     local w = self.world
     local tx, ty = w.player.x, w.player.y
     if w.homeX and U.dist2(self.x, self.y, w.homeX, w.homeY) < U.dist2(self.x, self.y, tx, ty) then
@@ -284,6 +289,7 @@ function Bot:update_harvester(dt)
     return
   end
   local node = self.world and self.world:nearestCobalt(self.x, self.y, self.def.seekRange)
+  local tithe = self.world.chips and self.world.chips:has("tithe")
   if node then
     if self:moveToward(node.x, node.y, dt) or U.dist(self.x, self.y, node.x, node.y) < 26 then
       if self.world:consumeCobaltNear(self.x, self.y, 30) then
@@ -353,7 +359,7 @@ function Bot:onDeath()
     return
   end
   self.state = "down"
-  self.downT = T.downedTime
+  self.downT = T.downedTime * (self.world and self.world.chips and self.world.chips:get("downedTime", 1) or 1)
   self.reviveT = 0
   self.vx, self.vy = 0, 0
   Audio.play("bot_down", { x = self.x, y = self.y })
@@ -573,8 +579,9 @@ function Bot:emitLight(Lighting)
     Lighting.addLight(self.x, self.y - self.radius * 1.4, self.def.radius_field, P.eye,
                       1.15 * pulse, { flicker = 0.03 })
   else
-    Lighting.addLight(self.x, self.y - self.radius * 0.3, self.radius * 3.4, self:eyeColor(),
-                      self.state == "down" and 0.18 or 0.34)
+    local k = self.world and self.world.chips and self.world.chips:get("botLight", 1) or 1
+    Lighting.addLight(self.x, self.y - self.radius * 0.3, self.radius * 3.4 * k, self:eyeColor(),
+                      (self.state == "down" and 0.18 or 0.34) * k)
   end
 end
 

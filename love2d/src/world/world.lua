@@ -131,6 +131,10 @@ function World:addEntity(list, hash, e)
   return e
 end
 
+--- Update a list, compacting out anything that died. An entity's update may
+--- append to the same list (a builder building, a maw spawning), so anything
+--- added past the original end is slid down into the gap the dead left behind -
+--- otherwise the array keeps a hole and the next sweep indexes nil.
 local function sweep(list, hash, dt)
   local n = #list
   local w = 1
@@ -146,7 +150,12 @@ local function sweep(list, hash, dt)
       if hash then hash:remove(e) end
     end
   end
-  for i = w, n do list[i] = nil end
+  local total = #list
+  for i = n + 1, total do
+    list[w] = list[i]
+    w = w + 1
+  end
+  for i = w, total do list[i] = nil end
 end
 
 ------------------------------------------------------------------------ queries
@@ -286,6 +295,8 @@ function World:fellTree(t, by)
   self.treeCount = math.max(0, self.treeCount - 1)
   self.stats.lost = self.stats.lost + 1
   Audio.play("tree_fall", { x = t.x, y = t.y })
+  local yield = self.chips:get("fellYield", 0)
+  if yield > 0 then self:addCobalt(yield, t.x, t.y) end
   VFX.emit("leaf_litter", t.x, t.y, { count = 14, power = 1.4 })
   if self.decals and self.decals.add then self.decals.add("stump", t.x, t.y) end
   J.shake(0.16)
@@ -314,13 +325,23 @@ end
 function World:spawnBot(x, y, botType, free)
   local def = TU.bots[botType]
   if not def then return false end
+  -- Once the rig arrives there is no more building. The workforce you have is
+  -- the workforce that decides the fight, which is the whole point of it.
+  if self.phase == "extraction" and not free then
+    Audio.play("ui_back")
+    Signal.emit("ui:denied", "extraction")
+    return false
+  end
   if self.terrain and self.terrain.isLand and not self.terrain:isLand(x, y) then
     if self.terrain.nearestLand then
       local lx, ly = self.terrain:nearestLand(x, y)
       if lx then x, y = lx, ly else return false end
     else return false end
   end
-  if not free then
+  if free == "half" then
+    local cost = math.ceil(self:botCost(botType) * 0.5)
+    if not self:spendCobalt(cost) then return false end
+  elseif not free then
     local cost = self:botCost(botType)
     if not self:spendCobalt(cost) then
       Audio.play("ui_back")
@@ -460,7 +481,10 @@ function World:beamSweep(x, y, angle, len, dt)
          and U.pointSegDist2(t.x, t.y, x, y, ex, ey) < 34 * 34 then
         t.burnFrame = frame
         t.burn = (t.burn or 0) + dt
-        if t.burn > 1.8 then self:fellTree(t, "beam") end
+        -- Saplings burn away; anything grown survives, scorched. The forest has
+        -- to still be standing at the ending or the ending means nothing.
+        if t.burn > 1.8 and (t.growth or 1) < 0.98 then self:fellTree(t, "beam") end
+        if t.hit then t:hit(math.cos(angle), math.sin(angle), 0.4) end
       end
     end)
     self.hBot:each(px, py, 40, function(b)
@@ -482,7 +506,10 @@ function World:dropCarried(player)
   player.carrying = nil
   b.carried = false
   b.x, b.y = player.x, player.y + 18
-  if self:beaconAt(b.x, b.y) then
+  -- A Beacon revives in the field; the Home Rig always can. Carrying someone
+  -- home is meant to be a real option, not one that needs prior planning.
+  local atRig = self.homeX and U.dist(b.x, b.y, self.homeX, self.homeY) < TU.world.homeRadius
+  if atRig or self:beaconAt(b.x, b.y) then
     b:revive()
     self.stats.rescued = self.stats.rescued + 1
   end
@@ -491,7 +518,7 @@ end
 --- Siphons do not remove oxygen directly - they add a debt against the forest's
 --- reading, so killing them restores what they took.
 function World:drainO2(rate, dt)
-  self.o2Debt = math.min(TU.o2.debtCap, (self.o2Debt or 0) + rate * dt)
+  self.o2Debt = math.min(self.o2DebtCap or TU.o2.debtCap, (self.o2Debt or 0) + rate * dt)
 end
 
 local SPEECH_MAX = 3
@@ -525,7 +552,9 @@ function World:phaseLength(phase, cycle)
   cycle = math.min(cycle, TU.cycle.count)
   if phase == "day" then return TU.cycle.dayLen[cycle] end
   if phase == "dusk" then return TU.cycle.duskLen end
-  if phase == "night" then return TU.cycle.nightLen[cycle] end
+  if phase == "night" then
+    return TU.cycle.nightLen[cycle] * self.chips:get("nightLen", 1)
+  end
   return 0
 end
 
@@ -589,6 +618,15 @@ function World:buildDawnReport()
   return r
 end
 
+--- The rig finished what it came for.
+function World:fail()
+  self.failed = true
+  self.phase = "ending"
+  J.shake(1)
+  Audio.play("player_down", { pitch = 0.6 })
+  Signal.emit("world:failed", self)
+end
+
 function World:beginExtraction()
   self.phase = "extraction"
   self.phaseT = 0
@@ -613,11 +651,21 @@ function World:beginExtraction()
   Timer.global:after(TU.boss.rebelDelay, function()
     if not self.boss or not self.boss.alive then return end
     self.botsRebelled = true
-    for i = 1, #self.bots do
-      local b = self.bots[i]
-      if b.state == "work" or b.mood == "confused" then b:rebel(self.boss) end
-    end
     Signal.emit("bots:rebel")
+    -- in cohorts, so the sacrifice is a drumbeat you have time to feel rather
+    -- than a health bar emptying in one frame
+    Timer.global:every(TU.boss.rebelEvery, function()
+      if not self.boss or not self.boss.alive then return end
+      local sent = 0
+      for i = 1, #self.bots do
+        local b = self.bots[i]
+        if (b.state == "work" or b.mood == "confused") and sent < TU.boss.rebelCohort then
+          b:rebel(self.boss)
+          sent = sent + 1
+        end
+      end
+      if sent > 0 then Signal.emit("bots:cohort", sent) end
+    end)
   end)
 end
 
@@ -691,7 +739,9 @@ function World:update(dt)
     self.nodeTopUp = 3
     local nodes = 0
     for i = 1, #self.cobalts do if self.cobalts[i].node then nodes = nodes + 1 end end
-    if nodes < TU.cobalt.nodeFloor then self:spawnCobaltNode() end
+    for _ = nodes + 1, TU.cobalt.nodeFloor + (self.extraNodes or 0) do
+      self:spawnCobaltNode()
+    end
   end
 
   if Decals.update then Decals.update(dt) end
@@ -709,17 +759,27 @@ function World:updateOxygen(dt)
     local t = self.trees[i]
     if t.alive and t.stage ~= "dead" and t.stage ~= "dying" then
       local s = t.stage
-      if s == "elder" then elders = elders + 1 points = points + O2W.elder
+      if s == "elder" then elders = elders + 1
+        points = points + O2W.elder * self.chips:get("elderWeight", 1)
       elseif s == "mature" then mature = mature + 1 points = points + O2W.mature
       elseif s == "young" then points = points + O2W.young
-      else points = points + O2W.sapling end
+      else points = points + O2W.sapling * self.chips:get("saplingWeight", 1) end
     end
   end
   self.matureTrees, self.elderTrees, self.forestPoints = mature, elders, points
 
-  self.o2Debt = math.max(0, (self.o2Debt or 0) - TU.o2.debtRecover * dt)
+  local raw = TU.o2.target * U.saturate(points / TU.o2.fullForest)
+  -- Siphon debt is capped relative to the reading, so a bad night is a real bite
+  -- out of your progress but can never erase the whole run's work.
+  self.o2DebtCap = math.min(TU.o2.debtCap, math.max(6, raw * 0.4))
+  self.o2Debt = math.min(self.o2DebtCap,
+                         math.max(0, (self.o2Debt or 0) - TU.o2.debtRecover * dt))
 
-  local ideal = TU.o2.target * U.saturate(points / TU.o2.fullForest) - self.o2Debt
+  if self.phase == "extraction" and self.boss and self.boss.alive then
+    self.extractionT = (self.extractionT or 0) + dt
+    self.bossDrain = (self.bossDrain or 0) + TU.boss.o2Drain * dt
+  end
+  local ideal = raw - self.o2Debt - (self.bossDrain or 0)
   ideal = U.clamp(ideal, 0, TU.o2.target)
   local rate = ideal > self.o2 and TU.o2.rise or TU.o2.fall
   self.o2 = U.damp(self.o2, ideal, rate, dt)
@@ -737,6 +797,12 @@ function World:updateOxygen(dt)
   if self.o2 >= TU.o2.target - 0.3 and self.phase ~= "extraction"
      and self.phase ~= "ending" then
     self:beginExtraction()
+  end
+
+  -- ...and if the rig empties the sky before you bring it down, that is the run.
+  if self.phase == "extraction" and self.o2 <= 0.05 and not self.failed
+     and (self.extractionT or 0) > 10 then
+    self:fail()
   end
 end
 
@@ -768,7 +834,18 @@ function World:updateSpread(dt)
       end
       t.growthMul = m
 
+      -- Only trees on the edge of the wood seed new ground. A tree ringed by
+      -- neighbours has nowhere to put a sapling, and letting it try anyway is
+      -- what turned the island into a uniform mat.
+      local onFrontier = true
       if t.stage == "mature" or t.stage == "elder" then
+        local near = 0
+        self.hTree:each(t.x, t.y, TU.tree.frontierRadius, function(o)
+          if o ~= t and o.alive then near = near + 1 end
+        end)
+        onFrontier = near < self.chips:get("frontierMax", TU.tree.frontierMax)
+      end
+      if onFrontier and (t.stage == "mature" or t.stage == "elder") then
         if not t.nextSpread then
           t.nextSpread = self.time + rng:range(TU.tree.spreadEvery[1], TU.tree.spreadEvery[2])
         elseif self.time >= t.nextSpread then
@@ -952,13 +1029,20 @@ Signal.on("bot:lost", function(bot, peaceful)
   end
 end)
 
--- Old Growth retro-fits the forest you already have; that is what makes it a
--- late-draft prize rather than a slow burn.
+-- Old Growth applies to what you plant next, not to the wood you already have:
+-- retro-fitting it doubled the whole oxygen reading the moment it was drafted.
 Signal.on("chip:added", function(chip)
-  if chip.id ~= "oldGrowth" then return end
   local w = chip._world
   if not w then return end
-  for i = 1, #w.trees do w.trees[i].canElder = true end
+  if chip.id == "glassLungs" and w.player then
+    w.player.maxHp = 1
+    w.player.hp = 1
+  elseif chip.id == "heldBreath" and w.player then
+    w.player.maxHp = w.player.maxHp + 1
+    w.player.hp = w.player.hp + 1
+  elseif chip.id == "richSeam" then
+    w.extraNodes = (w.extraNodes or 0) + 4
+  end
 end)
 
 Signal.on("enemy:killed", function(e)

@@ -20,7 +20,7 @@ function Boss:init(x, y, world, botCount)
   self.kind   = "boss"
   self.world  = world
   self.radius = 62
-  self.maxHp  = math.floor(U.clamp(botCount * T.hpPerBot, T.hpFloor, T.hpCap))
+  self.maxHp  = math.floor(math.max(T.hpFloor, botCount * T.hpPerBot))
   self.hp     = self.maxHp
   self.phase  = 1
   self.state  = "arrive"
@@ -32,7 +32,7 @@ function Boss:init(x, y, world, botCount)
   self.droneT = T.droneEvery
   self.plates = 6
   self.coreOpen = 0
-  self.rng = U.rng(4242)
+  self.rng = U.rng((world and world.seed or 1) * 104729 + 4242)
   self.hover = 0
   Signal.emit("boss:spawned", self)
 end
@@ -51,10 +51,14 @@ function Boss:update(dt)
     return
   end
 
-  -- phase transitions
+  -- Phase transitions, but never two inside `phaseGap` seconds: the beam sweep
+  -- and the ground slam each need a moment on screen or they never happen.
   local f = self:hpFrac()
-  if self.phase == 1 and f <= T.phase2At then self:enterPhase(2) end
-  if self.phase == 2 and f <= T.phase3At then self:enterPhase(3) end
+  self.sincePhase = (self.sincePhase or T.phaseGap) + dt
+  if self.sincePhase >= T.phaseGap then
+    if self.phase == 1 and f <= T.phase2At then self:enterPhase(2)
+    elseif self.phase == 2 and f <= T.phase3At then self:enterPhase(3) end
+  end
 
   if self.state == "beam" then self:updateBeam(dt) return end
   if self.state == "slam" then self:updateSlam(dt) return end
@@ -101,6 +105,7 @@ end
 
 function Boss:enterPhase(n)
   self.phase = n
+  self.sincePhase = 0
   self.state, self.stateT = "hunt", 0
   J.shake(0.8) J.stop(0.12)
   J.flashScreen(0.25, P.ramp.blight[4][1], P.ramp.blight[4][2], P.ramp.blight[4][3])

@@ -33,6 +33,7 @@ const path = require('path');
       await page.keyboard.up(k);
     }
   }
+  if (process.env.POSTWAIT) await page.waitForTimeout(+process.env.POSTWAIT);
   await page.screenshot({ path: out });
   console.log(logs.slice(-40).join('\n'));
   await browser.close();

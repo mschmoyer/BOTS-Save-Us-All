@@ -34,7 +34,7 @@ T.player = {
     charge = 0.85, radius = 200, force = 900, cost = 8,
     stun = 1.2, hitstop = 0.11, trauma = 0.75, damage = 2,
   },
-  plant  = { cost = 3, cooldown = 0.45 },
+  plant  = { cost = 3, cooldown = 2.4 },
   carry  = { speedMul = 0.66, pickupRange = 34 },
   lamp   = { radius = 190, warm = 0.85 },
 }
@@ -67,9 +67,9 @@ T.bots = {
     desc = "Builds new Planters from cobalt it finds.",
   },
   repulsor = {
-    label = "REPULSOR", prefix = "PYLON", cost = 5, hp = 4, radius = 14, speed = 0,
-    pulseEvery = 3.4, radius_pulse = 200, force = 620, charges = 10, stun = 0.6,
-    desc = "Static. Ten shockwaves, then it powers down.",
+    label = "REPULSOR", prefix = "PYLON", cost = 12, hp = 4, radius = 14, speed = 0,
+    pulseEvery = 1.2, radius_pulse = 230, force = 900, charges = 4, stun = 0.9, damage = 1,
+    desc = "Four hard shockwaves, fast, then it is gone. Throw it in front of a wave.",
   },
   sentry = {
     label = "SENTRY", prefix = "THORN", cost = 25, hp = 6, radius = 14, speed = 0,
@@ -101,14 +101,19 @@ T.bots = {
 T.tree = {
   growTime      = 26,          -- sapling -> mature
   elderTime     = 110,         -- mature -> elder (only with the Old Growth chip)
-  spreadEvery   = { 88, 155 }, -- seconds between seedling attempts
+  spreadEvery   = { 70, 128 }, -- seconds between seedling attempts
+  -- Only trees on the edge of the wood put out seedlings. That is what turns the
+  -- forest into an advancing front with a defensible line instead of a mat.
+  frontierRadius = 130,
+  frontierMax    = 4,          -- neighbours within that radius before it stops
   spreadRange   = { 70, 190 },
   spreadReject  = 46,          -- min distance to another tree
-  chewTime      = 9.0,         -- seconds a chomper needs to fell a tree
+  chewTime      = 5.0,         -- seconds a chomper needs to fell a tree
+  chewTelegraph = 1.4,         -- warning bite before the timer starts
   o2Sapling     = 0.35,
   o2Mature      = 1.0,
   o2Elder       = 2.0,
-  maxTrees      = 1100,
+  maxTrees      = 1900,
   windSway      = 0.055,
 }
 
@@ -118,13 +123,13 @@ T.tree = {
 -- falls. That is what makes defending trees legible.
 T.o2 = {
   target      = 100,            -- percent
-  fullForest  = 980,            -- tree-points that read as a fully restored sky
+  fullForest  = 950,            -- tree-points that read as a fully restored sky
   rise        = 0.42,           -- how fast the reading climbs toward the forest
   fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
-  weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 2.0 },
-  siphonDrain = 0.9,            -- debt added per second per feeding siphon
-  debtCap     = 22,             -- a swarm of siphons cannot zero you out
-  debtRecover = 1.1,            -- debt bled off per second once they stop
+  weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 1.5 },
+  siphonDrain = 1.4,            -- debt added per second per feeding siphon
+  debtCap     = 45,             -- a swarm of siphons cannot zero you out
+  debtRecover = 0.35,           -- debt bled off per second once they stop
 }
 
 ------------------------------------------------------------------------ cycles
@@ -133,19 +138,23 @@ T.cycle = {
   dayLen     = { 78, 84, 90, 94, 98, 104, 110 },
   duskLen    = 12,
   nightLen   = { 52, 62, 70, 78, 86, 94, 104 },
-  budget     = { 26, 46, 74, 108, 150, 200, 262 },   -- director spend per night
+  budget     = { 26, 46, 74, 108, 150, 200, 262 },   -- floor for the night's spend
+  budgetPerTree = 0.42,        -- ...plus this much for every tree you have grown
   maxAlive   = { 14, 20, 26, 32, 38, 44, 52 },
+  maxAlivePerTree = 0.016,
 }
 
 ----------------------------------------------------------------------- enemies
 T.enemy = {
-  chomper = { cost = 4,  hp = 3,  speed = 74,  radius = 14, damage = 1, from = 1 },
+  chomper = { cost = 4,  hp = 3,  speed = 74,  radius = 14, damage = 1, from = 1,
+              treeSearch = 480 },   -- past this it comes for your bots instead
   skitter = { cost = 5,  hp = 2,  speed = 168, radius = 11, damage = 1, from = 2 },
   spitter = { cost = 9,  hp = 4,  speed = 62,  radius = 14, damage = 1, from = 3,
               range = 280, fireEvery = 2.6, projSpeed = 330, puddle = 6 },
   siphon  = { cost = 11, hp = 5,  speed = 52,  radius = 16, damage = 0, from = 3, float = true },
-  bulwark = { cost = 18, hp = 14, speed = 44,  radius = 22, damage = 2, from = 4, armoured = true },
-  maw     = { cost = 34, hp = 22, speed = 0,   radius = 30, damage = 0, from = 5,
+  bulwark = { cost = 18, hp = 14, speed = 44,  radius = 22, damage = 2, from = 3, armoured = true,
+              armour = 0.5 },   -- fraction of incoming damage it shrugs off
+  maw     = { cost = 34, hp = 22, speed = 0,   radius = 30, damage = 0, from = 4,
               spawnEvery = 4.5, shovesToClose = 6 },
   spawnEdgePad = 90,
   fleeOnDawn   = 8,             -- seconds to retreat and despawn at dawn
@@ -156,14 +165,17 @@ T.boss = {
   -- The size of your workforce is the difficulty of the fight, exactly as in the
   -- 2019 original - but the bots only carry about three quarters of it, so the
   -- last stretch is always yours.
-  hpPerBot     = 1.35,
-  hpFloor      = 30,
-  hpCap        = 150,
+  hpPerBot     = 2.6,
+  hpFloor      = 60,
+  rebelCohort  = 8,            -- bots charge in waves, so the sacrifice has rhythm
+  rebelEvery   = 2.5,
+  phaseGap     = 6.0,          -- a phase always gets its moment before the next
   speed        = 108,
   contactDmg   = 1,
   phase2At     = 0.66,
   phase3At     = 0.33,
   rebelDelay   = 5.0,
+  o2Drain      = 0.42,         -- % of sky the rig takes every second it lives
   beamCharge   = 1.5,
   beamSweep    = 3.2,
   slamEvery    = 6.0,

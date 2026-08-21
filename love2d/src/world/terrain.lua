@@ -108,6 +108,7 @@ extern vec3  cMoss[4];
 extern vec3  cRock[4];
 extern vec3  cSoil[4];
 extern vec3  cBlight[4];
+extern vec3  cAsh[4];
 extern vec3  cWater[4];
 extern vec3  cFlora;
 
@@ -212,7 +213,12 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
                  0.40 + lush * 1.60 + (d2 - 0.5) * 0.60);
   // large slow drift between a warm sunlit sward and cool deep moss, so the
   // island has regions rather than one uniform green
-  vec3 col = mix(gA, gB, smoothstep(0.30, 0.78, drift));
+  vec3 col = mix(gA, gB, smoothstep(0.36, 0.64, drift));
+  // Macro value composition. Without this the meadow is one flat field of green
+  // with confetti on it: no shapes, nowhere for the eye to land. Broad sunlit
+  // rises and damp hollows give the ground a read from across the screen.
+  float macroV = fbm3(w * 0.00058 + 311.0);
+  col *= 0.78 + 0.46 * smoothstep(0.24, 0.80, macroV);
   col *= 0.93 + 0.16 * fbm3(w * 0.00072 + 47.0);
   // sun-bleached dry grass, in broad regions where the moisture runs out
   float dry = smoothstep(0.60, 0.26, moist)
@@ -256,9 +262,19 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float rk = rockMask(slope, elev);
   float rockT = smoothstep(0.42, 0.66, rk + (d2 - 0.5) * 0.34 + (d1 - 0.5) * 0.30);
   rockT *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);   // sand wins at the tideline
-  float strata = rdg3(w * 0.0165 + vec2(0.0, elev * 9.0));
+  // Faceted stone. A continuous fracture field, however many octaves it has,
+  // renders as combed brushstrokes -- grey fur on the headland. Quantising it
+  // into discrete bedding planes is what turns it into flat-vector rock with
+  // planes you can read the light on.
+  float strata = rdg3(w * 0.0225 + vec2(0.0, elev * 14.0));
+  float joints = rdg3(w * 0.0700 + 7.0);
+  float band   = strata * 5.0 + joints * 0.9 + (d3 - 0.5) * 0.30;
+  float terr   = floor(band) * 0.2;
   vec3 rockC = ramp(cRock[0], cRock[1], cRock[2], cRock[3],
-                    0.35 + strata * 2.1 + elev * 0.85 + (d3 - 0.5) * 0.35);
+                    0.20 + terr * 2.20 + elev * 0.72);
+  // a lit lip along the top of each plane and a dark seam beneath it
+  float bf = fract(band);
+  rockC *= 1.0 + smoothstep(0.18, 0.0, bf) * 0.36 - smoothstep(0.82, 1.0, bf) * 0.32;
 
   // sun-side rim and down-sun drop shadow, sampled from the neighbouring field
   vec4 As = Texel(fieldA, fuv(w + uSun * 30.0));
@@ -267,7 +283,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float rkNs = smoothstep(0.40, 0.60, rkN);
   float shadow = clamp(rkNs - rockT, 0.0, 1.0);
   float rim    = clamp(rockT - rkNs, 0.0, 1.0);
-  rockC = mix(rockC, cRock[3], rim * 0.42);
+  rockC = mix(rockC, cRock[3], smoothstep(0.22, 0.90, rim) * 0.55);
   col = mix(col, rockC, rockT);
   col *= 1.0 - shadow * 0.42 * (1.0 - rockT * 0.5);
 
@@ -277,21 +293,33 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   col *= 1.0 - (1.0 - smoothstep(0.02, 0.26, elev)) * 0.10 * (1.0 - beachT);
 
   // ---- blight scar -----------------------------------------------------
-  float scarT = smoothstep(0.06, 0.62, scar) * (1.0 - beachT * 0.55);
-  if (scarT > 0.002) {
-    float veins = rdg3(w * 0.0215 + 131.0);
-    float grey = dot(col, vec3(0.30, 0.59, 0.11));
-    // ash and dead soil first: the ground reads poisoned, not painted purple
-    vec3 dead = mix(vec3(grey * 0.80), ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3],
-                                            0.25 + d2 * 1.1), 0.50);
-    dead = mix(dead, cBlight[0], 0.40);
-    float crack = smoothstep(0.66, 0.93, veins + (d3 - 0.5) * 0.20);
-    dead = mix(dead, cBlight[1], crack * 0.65);
-    dead += cBlight[3] * smoothstep(0.90, 0.995, veins) * 0.22;
-    // a bruised rim where the blight is still eating into living ground
-    col = mix(col, mix(col, cBlight[1], 0.35),
-              smoothstep(0.02, 0.30, scar) * (1.0 - smoothstep(0.30, 0.55, scar)));
+  // `scar` is a smooth low-frequency field. Sampled straight it dissolves into
+  // the grass as an airbrushed gradient over hundreds of pixels -- the single
+  // ugliest thing on screen. Bite its edge with the same pixel-scale noise the
+  // coastline uses, so the blight *eats* into living ground on a crinkled front.
+  float scarN = scar + (d1 - 0.5) * 0.34 + (d2 - 0.5) * 0.20 + (d3 - 0.5) * 0.09;
+  float scarT = smoothstep(0.30, 0.50, scarN) * (1.0 - beachT * 0.75);
+  float scarEdge = smoothstep(0.15, 0.33, scarN) * (1.0 - smoothstep(0.29, 0.45, scarN));
+  if (scarT > 0.002 || scarEdge > 0.002) {
+    // Dead ground is *ash over cinder*, and carries the whole value structure.
+    // The violet is a stain down in the fissures; it is never the local colour
+    // of the dirt, because poisoned earth is not a sweet.
+    float plates = rdg3(w * 0.0335 + 131.0);        // cracked-earth crazing
+    float coarse = fbm3(w * 0.0074 + 57.0);
+    vec3 dead = ramp(cAsh[0], cAsh[1], cAsh[2], cAsh[3],
+                     0.40 + coarse * 1.75 + (d2 - 0.5) * 0.95 + (d3 - 0.5) * 0.35);
+    dead = mix(dead, ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.45 + d2 * 1.2), 0.34);
+    float fis = smoothstep(0.50, 0.80, plates);     // fissures between the plates
+    dead *= 1.0 - fis * 0.50;
+    dead += cAsh[3] * smoothstep(0.85, 0.99, plates) * 0.16;  // dust on the lips
+    float core = smoothstep(0.40, 0.88, scarN);
+    dead = mix(dead, mix(dead, cBlight[1], 0.72), fis * core);
+    dead += cBlight[3] * smoothstep(0.93, 0.999, plates) * core * 0.34;
     col = mix(col, dead, scarT);
+    // a narrow rot rim: grass going grey-violet a few metres before it dies,
+    // tight enough to read as an edge rather than as a wash
+    vec3 rot = mix(col * 0.70, cBlight[1], 0.45);
+    col = mix(col, rot, scarEdge * 0.85);
   }
 
   // ---- macro value composition -----------------------------------------
@@ -899,6 +927,7 @@ function Terrain:_makeShaders()
   sendRamp("cRock", R.rock)
   sendRamp("cSoil", R.soil)
   sendRamp("cBlight", R.blight)
+  sendRamp("cAsh", R.ash)
   sendRamp("cWater", R.water)
   put(g, "cFlora", { R.leaf[2][1], R.leaf[2][2], R.leaf[2][3] })
 
@@ -1084,7 +1113,13 @@ function Terrain:_scatterMarks(tile, part, parts)
         local shade = 0.75 + 0.5 * rng:next()
 
         if b == B_MEADOW or (b == B_MARSH and rng:chance(0.35)) then
+          -- Uniform scatter reads as television static. Gate the density on a
+          -- slow field so ground cover grows in drifts and leaves bare clearings.
+          local clump = N.fbm(wx * 0.0038 + 811.0, wy * 0.0038 - 411.0, 3,
+                              self.seed % 307 + 11)
+          clump = U.saturate((clump - 0.34) * 2.6)
           local roll = rng:next()
+          if roll < 0.62 and rng:next() > 0.22 + clump * 0.92 then roll = 0.995 end
           -- flowers grow in drifts, not evenly sprinkled
           local bloom = N.fbm(wx * 0.0055 + 301.0, wy * 0.0055 - 77.0, 3, self.seed % 401 + 60)
           if roll >= 0.62 and roll < 0.80 and bloom < 0.56 then roll = 0.30 end
@@ -1191,18 +1226,33 @@ function Terrain:_scatterMarks(tile, part, parts)
           end
 
         elseif b == B_SCAR and sc > 0.2 then
-          if rng:chance(0.5) then
-            -- dead twig
-            local a = rng:angle()
-            local l = 4 + rng:next() * 12
-            love.graphics.setColor(P.alpha(P.darken(R.bark[1], 0.3), 0.6 * sc))
-            love.graphics.setLineWidth(1 + rng:next())
-            love.graphics.line(lx, ly, lx + cos(a) * l, ly + sin(a) * l)
-            love.graphics.line(lx + cos(a) * l * 0.6, ly + sin(a) * l * 0.6,
-                               lx + cos(a + 0.9) * l * 0.9, ly + sin(a + 0.9) * l * 0.9)
+          -- Two crossed strokes per mark read as a scattering of little letters,
+          -- not as debris. One stroke, combed by a slow flow field so the litter
+          -- lies the way the wind left it, reads as a dead place instead.
+          local roll = rng:next()
+          if roll < 0.30 then
+            local flow = N.fbm(wx * 0.0021 + 17.0, wy * 0.0021 - 9.0, 2, 71) * U.TAU
+            local a = flow + rng:gauss() * 0.34
+            local l = 5 + rng:next() * 11
+            local dx, dy = cos(a) * l, sin(a) * l * 0.7
+            love.graphics.setLineWidth(1)
+            love.graphics.setColor(P.alpha(P.darken(R.ash[1], 0.25), 0.34 * sc))
+            love.graphics.line(lx - dx * 0.5 + 1, ly - dy * 0.5 + 1,
+                               lx + dx * 0.5 + 1, ly + dy * 0.5 + 1)
+            love.graphics.setColor(P.alpha(P.shade(R.ash, 2.6 + rng:next() * 1.2), 0.42 * sc))
+            love.graphics.line(lx - dx * 0.5, ly - dy * 0.5, lx + dx * 0.5, ly + dy * 0.5)
+          elseif roll < 0.72 then
+            -- soot: a soft dark fleck that breaks up the ash without adding hue
+            love.graphics.setColor(P.alpha(R.ash[1], 0.13 * sc * shade))
+            love.graphics.ellipse("fill", lx, ly, 2 + rng:next() * 7, 1.4 + rng:next() * 4, 8)
+          elseif roll < 0.94 then
+            -- pale grit catching the light on the raised lips of the crazing
+            love.graphics.setColor(P.alpha(R.ash[3], 0.20 * sc * shade))
+            love.graphics.circle("fill", lx, ly, 0.8 + rng:next() * 1.9, 5)
           else
-            love.graphics.setColor(P.alpha(R.blight[2], 0.16 * sc * shade))
-            love.graphics.circle("fill", lx, ly, 1 + rng:next() * 3, 5)
+            -- the only violet allowed at mark scale: a rare live spore bead
+            love.graphics.setColor(P.alpha(R.blight[3], 0.30 * sc * shade))
+            love.graphics.circle("fill", lx, ly, 0.9 + rng:next() * 1.4, 5)
           end
         end
       end

@@ -276,7 +276,7 @@ end
 
 function BuildMenu.drawBar(a)
   local world = BuildMenu.world
-  a = (a or 1) * BuildMenu.barAlpha * (1 - BuildMenu.open * 0.75)
+  a = (a or 1) * BuildMenu.barAlpha * (1 - BuildMenu.open * 0.75) * (BuildMenu.lockFade or 1)
   if a <= 0.01 then return end
   layout()
   for i = 1, N do
@@ -425,7 +425,15 @@ function BuildMenu.drawWheel(a)
 end
 
 ----------------------------------------------------------------------- draw
+--- Nothing is built once the rig arrives; the bar fades out rather than
+--- offering six purchases the world will refuse.
+local lockFade = 1
 function BuildMenu.draw(cam)
+  local w = BuildMenu.world
+  local locked = w and (w.phase == "extraction" or w.phase == "ending")
+  lockFade = require("src.core.util").damp(lockFade, locked and 0 or 1, 5,
+                                           love.timer.getDelta())
+  BuildMenu.lockFade = lockFade
   BuildMenu.camera = cam or BuildMenu.camera
   local prev = lg.getLineWidth()
   BuildMenu.drawBar(1)

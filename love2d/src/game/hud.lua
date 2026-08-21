@@ -53,7 +53,7 @@ local function dec1(v)
   local k = floor(v * 10 + 0.5)
   local s = DEC1[k]
   if s == nil then
-    s = string.format("%.1F", k / 10)
+    s = string.format("%.1f", k / 10)
     if k >= 0 and k <= 2000 then DEC1[k] = s end
   end
   return s
@@ -486,9 +486,18 @@ local function drawCycleDial(w, a)
   local cx, cy, R = L.dialX, L.dialY, L.dialR
   local phase = w.phase or "day"
   local pc = phaseColor(phase)
-  local p = U.saturate(w.phaseDur and w.phaseDur > 0 and (w.phaseT / w.phaseDur) or 0)
-  local left = max(0, (w.phaseDur or 0) - (w.phaseT or 0))
-  local urgent = (phase == "dusk") or (phase ~= "night" and left < 10 and w.phaseDur and w.phaseDur > 0)
+  local extracting = phase == "extraction"
+  local p, left
+  if extracting then
+    -- the rig's own clock: how much of the sky it has left to take
+    p = 1 - U.saturate((w.o2 or 0) / TU.o2.target)
+    left = nil
+  else
+    p = U.saturate(w.phaseDur and w.phaseDur > 0 and (w.phaseT / w.phaseDur) or 0)
+    left = max(0, (w.phaseDur or 0) - (w.phaseT or 0))
+  end
+  local urgent = extracting or (phase == "dusk")
+                 or (phase ~= "night" and left and left < 10 and w.phaseDur and w.phaseDur > 0)
 
   -- cycle pips: seven segments of the run, arranged as a broken outer ring
   local n = TU.cycle.count
@@ -514,17 +523,21 @@ local function drawCycleDial(w, a)
               urgent and 3 or 0)
   end
 
-  -- seconds remaining, punched on each tick
+  -- seconds remaining, punched on each tick. During the extraction there is no
+  -- countdown to show, so the dial reads the sky the rig is taking instead.
   local punch = U.ease.outQuad(HUD.tickPunch)
   local secSize = UI.ts.h3 * (1 + punch * (urgent and 0.24 or 0.08))
-  UI.text(itos(math.ceil(left)), cx, cy - secSize * 0.5 + 1, secSize,
+  local centre = left and itos(math.ceil(left)) or (itos(math.floor(w.o2 or 0)) .. "%")
+  if extracting then secSize = UI.ts.h4 end
+  UI.text(centre, cx, cy - secSize * 0.5 + 1, secSize,
           UI.mix(P.ink, pc, urgent and 1 or 0.25), "center", a, 0.0)
 
   -- phase name + cycle, to the left of the dial, right-aligned to it
   local tx = cx - R - 16
   UI.text(PHASE_LABEL[phase] or "--", tx, cy - 17, UI.ts.h4,
           UI.mix(P.ink, pc, urgent and 0.8 or 0.15), "right", a, 0.14)
-  UI.caption("CYCLE " .. itos(w.cycle or 1) .. " OF " .. itos(TU.cycle.count),
+  UI.caption(extracting and "THE SKY THEY HAVE TAKEN"
+             or ("CYCLE " .. itos(w.cycle or 1) .. " OF " .. itos(TU.cycle.count)),
              tx, cy + 6, UI.ts.micro, UI.c(P.inkDim, 0.8 * a), "right")
 
   if urgent then
@@ -590,7 +603,7 @@ local function drawHearts(w, a)
 
   -- reboot timer, if the player is down
   if p.state == "down" then
-    local left = max(0, (p.rebootT or 0))
+    local left = max(0, (p.downTimer or 0))
     UI.text("REBOOT " .. itos(math.ceil(left)), x, y - 30, UI.ts.label,
             UI.c(P.warn, a), "left", a, 0.12)
   end
@@ -750,6 +763,55 @@ function HUD.speechBubble(x, y, text, alpha)
 end
 
 ----------------------------------------------------------------------- draw
+--------------------------------------------------------------------- boss bar
+-- The most affecting readout in the game: during the rebellion this drops one
+-- notch per bot, and the player can watch what each of them bought.
+local bossShown = 0
+local function drawBossBar(w, a)
+  local boss = w.boss
+  local want = (boss and boss.alive and w.phase == "extraction") and 1 or 0
+  bossShown = U.damp(bossShown, want, 6, love.timer.getDelta())
+  if bossShown < 0.01 then return end
+  local sw, sh = lg.getDimensions()
+  local aa = a * bossShown
+  -- bottom centre, above the build bar: it must not fight the oxygen readout,
+  -- and during the rebellion this is where the player is looking anyway
+  local bw = min(sw * 0.52, 760)
+  local bh = 13
+  local bx, by = (sw - bw) * 0.5, sh - 132
+
+  local frac = boss and (boss.hp / boss.maxHp) or 0
+  HUD._bossFrac = U.damp(HUD._bossFrac or frac, frac, 9, love.timer.getDelta())
+
+  Draw.setColor(P.black, 0.55 * aa)
+  Draw.roundRect("fill", bx - 3, by - 3, bw + 6, bh + 6, 5)
+  Draw.setColor(P.ramp.rift[1], 0.9 * aa)
+  Draw.roundRect("fill", bx, by, bw, bh, 3)
+
+  -- the ghost tail lags the real value, so a burst of damage reads as a lurch
+  Draw.setColor(P.warn, 0.35 * aa)
+  Draw.roundRect("fill", bx, by, bw * HUD._bossFrac, bh, 3)
+  Draw.setColor(P.danger, 0.95 * aa)
+  Draw.roundRect("fill", bx, by, bw * frac, bh, 3)
+
+  -- one notch per bot of health: the rebellion is legible as a countdown
+  if boss then
+    local notches = min(boss.maxHp, 60)
+    Draw.setColor(P.black, 0.35 * aa)
+    for i = 1, notches - 1 do
+      local x = bx + bw * (i / notches)
+      lg.rectangle("fill", x, by, 1, bh)
+    end
+  end
+
+  Text.display("HARVESTER PRIME", bx, by - 21, UI.ts.label, {
+    color = P.danger, alpha = 0.85 * aa, tracking = 0.3 })
+  if boss then
+    Text.display(tostring(math.ceil(boss.hp)), bx, by - 21, UI.ts.label, {
+      color = P.ink, alpha = 0.8 * aa, tracking = 0.16, align = "right", width = bw })
+  end
+end
+
 function HUD.draw(w, cam)
   w = w or HUD.world
   if not w or HUD.hidden then return end
@@ -771,6 +833,7 @@ function HUD.draw(w, cam)
   drawCycleDial(w, a)
   drawHearts(w, a)
   drawRoster(w, a)
+  drawBossBar(w, a)
   drawFeed(a)
 
   lg.setLineWidth(prevLW)

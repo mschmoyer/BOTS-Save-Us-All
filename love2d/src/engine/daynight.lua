@@ -15,6 +15,10 @@
 local U = require("src.core.util")
 local P = require("src.engine.palette")
 
+-- Resolved lazily: postfx pulls in the palette, and this file is required from
+-- places that have no graphics context yet.
+local Post
+
 local DN = {}
 
 ------------------------------------------------------------------ cycle layout
@@ -25,17 +29,21 @@ local START = { day = 0.00,   dusk = 0.40,    night = 0.52,   dawn = 0.88 }
 
 -- Scalar lighting response per phase. The *colours* all come from P.tod; these
 -- are the numbers the palette does not carry.
-local AMB    = { day = 1.00, dusk = 0.50, night = 0.38, dawn = 0.66 } -- ambient strength
-local CONTR  = { day = 1.05, dusk = 1.12, night = 1.16, dawn = 1.06 } -- grade contrast
+local AMB    = { day = 1.06, dusk = 0.52, night = 0.40, dawn = 0.70 } -- ambient strength
+local CONTR  = { day = 1.06, dusk = 1.12, night = 1.20, dawn = 1.06 } -- grade contrast
 -- How much of the phase's hue goes into the *ambient* (which multiplies albedo)
 -- rather than into the grade. Pushing a saturated hue through a multiply is what
 -- makes a sunset look like mud, so the warm phases keep the ambient near-neutral
 -- and let the grade carry the colour; night keeps its blue, because moonlight
 -- really does recolour everything it touches.
-local AMBTINT = { day = 0.30, dusk = 0.55, night = 0.92, dawn = 0.50 }
-local SATU   = { day = 1.00, dusk = 0.66, night = 0.58, dawn = 0.78 } -- grade saturation
-local GAIN   = { day = 0.04, dusk = 0.11, night = 0.17, dawn = 0.08 } -- additive light gain
-local BLOOM  = { day = 0.50, dusk = 0.80, night = 1.00, dawn = 0.70 } -- bloom response
+local AMBTINT = { day = 0.26, dusk = 0.55, night = 0.96, dawn = 0.50 }
+-- Saturation is the main thing that separates the phases. Day is *more*
+-- saturated than the raw albedo, so noon reads as a bright stylised frame and
+-- not as a photograph; night keeps enough chroma to stay blue rather than grey,
+-- and leans on the ambient hue and the warm pools to say "night".
+local SATU   = { day = 1.22, dusk = 0.94, night = 0.86, dawn = 1.04 } -- grade saturation
+local GAIN   = { day = 0.03, dusk = 0.14, night = 0.30, dawn = 0.09 } -- additive light gain
+local BLOOM  = { day = 0.55, dusk = 0.90, night = 1.15, dawn = 0.78 } -- bloom response
 
 -- The transition occupies the tail of each phase, so a phase reads as itself for
 -- most of its length and then turns. smootherstep keeps the first and second
@@ -125,33 +133,38 @@ local function recompute()
   mixInto(DN.sunColor, DN.ambient, P.ramp.ember[4], low * 0.45 * (1 - night))
   mixInto(DN.sunColor, DN.sunColor, P.ramp.metal[4], night * 0.55)
 
-  -- oxygen: a dead sky is brown, hazy and flat; a healthy one is clean and blue
+  -- oxygen: a dead sky is brown, hazy and flat; a healthy one is clean and blue.
+  -- The *floor* of this ramp matters more than the ceiling: cycle 1 is the first
+  -- impression, so a dead sky may only ever be slightly hazier and slightly
+  -- flatter than a live one, never dingy.
   local o2 = DN.o2
   mixInto(DN.fogColor, DN.fogColor, P.ramp.cobalt[3], 0.18 * o2)
-  DN.fogStrength = DN.fogStrength * lerp(1.10, 0.62, o2)
-  DN.saturation  = DN.saturation * lerp(0.90, 1.08, o2)
-  DN.exposure    = DN.exposure * lerp(0.97, 1.05, o2)
+  DN.fogStrength = DN.fogStrength * lerp(1.06, 0.66, o2)
+  DN.saturation  = DN.saturation * lerp(0.97, 1.08, o2)
+  DN.exposure    = DN.exposure * lerp(1.00, 1.05, o2)
 
   -- the grade tint: mostly the atmosphere, pulled toward the ambient so lit
   -- surfaces do not turn to fog.
   mixInto(DN.skyTint, DN.fogColor, DN.ambient, 0.45)
   mixInto(DN.skyTint, DN.skyTint, P.ramp.cobalt[4], 0.06 * o2)
 
-  -- shadows take the sky's colour, strongest when the ambient is weakest
-  local liftAmt = 0.20 * (1 - DN.ambientStrength) + 0.02
+  -- shadows take the sky's colour, strongest when the ambient is weakest. This
+  -- is the *floor* of the frame: at night it is the difference between a scene
+  -- you can read the silhouettes in and a black rectangle with lamps on it.
+  local liftAmt = 0.30 * U.saturate(1 - DN.ambientStrength) + 0.018
   DN.lift[1] = DN.skyTint[1] * liftAmt
   DN.lift[2] = DN.skyTint[2] * liftAmt
   DN.lift[3] = DN.skyTint[3] * liftAmt
 
   -- sky bodies ---------------------------------------------------------------
-  if os.getenv("BOTS_DBG") then
-    print(string.format("DBG phase=%s t=%.2f amb=%.2f,%.2f,%.2f x%.2f exp=%.2f con=%.2f sat=%.2f fog=%.2f,%.2f,%.2f x%.3f sky=%.2f,%.2f,%.2f lift=%.3f,%.3f,%.3f o2=%.3f gain=%.2f",
-      DN.phase, DN.t, DN.ambient[1],DN.ambient[2],DN.ambient[3], DN.ambientStrength, DN.exposure, DN.contrast, DN.saturation,
-      DN.fogColor[1],DN.fogColor[2],DN.fogColor[3], DN.fogStrength, DN.skyTint[1],DN.skyTint[2],DN.skyTint[3],
-      DN.lift[1],DN.lift[2],DN.lift[3], DN.o2, DN.lightGain))
-  end
   DN.starAlpha = U.saturate((0.70 - DN.ambientStrength) / 0.40) ^ 1.4
   DN.moonAlpha = U.saturate((0.96 - DN.ambientStrength) / 0.58)
+
+  -- The split-tone highlight is the other half of the grade, and the scenes that
+  -- drive setGrade() by hand have no reason to know that. Push it from here so
+  -- the key-light colour is never silently left at white.
+  if Post == nil then Post = require("src.engine.postfx") end
+  if Post.setSplit then Post.setSplit(DN.sunColor, 0.78) end
 end
 DN.recompute = recompute
 
