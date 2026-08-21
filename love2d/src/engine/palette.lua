@@ -70,6 +70,16 @@ P.o2         = hex "#6fe4ff"
 -- Sun-bleached sage. The only thing that lives on bare rock, and deliberately
 -- outside every green ramp so a lichen patch never reads as grass or moss.
 P.lichen     = hex "#7f8f68"
+-- Necrosis. A bruise is plum at its heart and goes olive-yellow at the margins
+-- as it dies down, and that pair is the only hue a blight scar's wide areas get
+-- (the plum is `blight`'s second stop). Barely a hue at all on purpose: a scar
+-- reads by value and texture, and anything more saturated over that much of the
+-- screen turns dead ground into a colour swatch.
+P.necrosis   = hex "#6b6a44"
+-- Dying grass, for the few metres of living ground a scar has already reached.
+-- Grass does not go grey when it dies, it goes straw and lies down; a scar that
+-- fades out through neutral grey wears a halo, and the halo is the tell.
+P.wither     = hex "#8a7c4a"
 
 --------------------------------------------------------- time-of-day ambients
 -- Each entry: ambient light colour, exposure, and the fog/atmosphere tint.

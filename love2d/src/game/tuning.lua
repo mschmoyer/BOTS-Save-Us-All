@@ -424,7 +424,7 @@ T.boss = {
     -- rather than a graded tan disc. The crack field turns slowly, each crack
     -- breathes on its own clock and a bright pulse travels up it, so the
     -- fissure network moves without a frame of it being authored.
-    coreCracks    = 8,      -- fissures walking out of the vent through the crust
+    coreCracks    = 7,      -- fissures out of the vent; a finer set again between
     coreDriftRps  = 0.026,  -- the whole crack field turns at this, revs/sec
     coreCrack     = 0.017,  -- crack width, in rig radii, with the core sealed
     coreCrackOpen = 0.014,  -- ...added on top once it is open
