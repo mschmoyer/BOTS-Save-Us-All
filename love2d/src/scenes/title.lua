@@ -28,7 +28,7 @@ local Music    = Opt.require("src.engine.music")
 
 local lg = love.graphics
 local floor, min, max = math.floor, math.min, math.max
-local cos, sin, pi = math.cos, math.sin, math.pi
+local cos, sin, pi = math.cos, math.sin, math.pi  -- backdrop maths
 local TAU = U.TAU
 
 local S = {}
@@ -367,11 +367,9 @@ local BOPT = { size = UI.ts.h3 }
 
 local function rebuildMenu()
   for i = #MENU, 1, -1 do MENU[i] = nil end
-  if Settings.hasRun() then
-    local c = Settings.best()
-    MENU[#MENU + 1] = { id = "continue", label = "CONTINUE",
-                        sub = "Return to the island.", badge = "CYCLE " .. tostring(c) }
-  end
+  -- No CONTINUE row: runs are not resumable yet, and a menu item that does not
+  -- do what it says is worse than one that is missing. The best-run strip in the
+  -- corner is where a returning player is told the game remembers them.
   MENU[#MENU + 1] = { id = "begin", label = "BEGIN",
                       sub = "Seven cycles. One island. No help coming." }
   MENU[#MENU + 1] = { id = "options", label = "OPTIONS" }
@@ -468,6 +466,11 @@ function S:layout(interactive)
 
   if interactive then
     local ctx = self.ctx
+    -- a wash under the column: the rows cross the brightest band of the sky and
+    -- a plate at 34% black is not enough on its own
+    local mh = #MENU * (rowH + gap)
+    Draw.softShadow(x0 + colW * 0.40, menuY + mh * 0.5 - gap * 0.5,
+                    colW * 1.15, mh * 0.95, 0.55)
     for i = 1, #MENU do
       local m = MENU[i]
       local k = UI.stagger(t, i, SEQ.menu, SEQ.menuStep, SEQ.menuDur)
@@ -571,8 +574,6 @@ function S:drawLogo()
     if k3 > 0.45 then
       local a = U.saturate((k3 - 0.45) / 0.5)
       UI.caption("REFOREST", x0, y + 14, UI.ts.label, UI.c(P.accent, a), "left")
-      UI.caption("SEVEN CYCLES  ONE ISLAND", x0 + colW, y + 18, UI.ts.micro,
-                 UI.c(P.inkDim, 0.55 * a), "right")
     end
   end
 end

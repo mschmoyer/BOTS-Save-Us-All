@@ -23,13 +23,12 @@ local Screen   = require("src.engine.screen")
 local J        = require("src.engine.juice")
 local Opt      = require("src.core.optional")
 local Audio    = Opt.require("src.engine.audio")
-local VFX      = Opt.require("src.engine.vfx")
 local HUD      = Opt.require("src.game.hud")
 local BuildMenu = Opt.require("src.game.buildmenu")
 
 local lg = love.graphics
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
-local cos, sin, pi = math.cos, math.sin, math.pi
+local pi = math.pi
 
 local S = {}
 
@@ -160,8 +159,6 @@ function S:update(dt, realDt)
 end
 
 ------------------------------------------------------------------- the tally
-local STATS = {}      -- reused: { label, value, colour } triples, rebuilt on draw
-
 --- Two hues carry meaning here and the rest is ink: green is the forest, red is
 --- what it cost. Oxygen keeps its own cyan because it is cyan everywhere.
 local function statColor(key, v)
@@ -382,8 +379,10 @@ function S:draw()
     UI.promptRow(w * 0.5, fy, PROMPTS, UI.ts.micro, P.inkDim, 0.85 * a * fk, "center")
     UI.caption("ONE CHIP. THE OTHER TWO ARE GONE.", w - UI.pad * 3, fy + 4,
                UI.ts.micro, UI.c(P.inkFaint, 0.55 * a * fk), "right")
-    UI.caption("1  2  3", UI.pad * 3, fy + 4, UI.ts.micro,
-               UI.c(P.inkFaint, 0.55 * a * fk), "left")
+    if Input.scheme == "kb" then
+      UI.caption("OR PRESS 1  2  3", UI.pad * 3, fy + 4, UI.ts.micro,
+                 UI.c(P.inkFaint, 0.55 * a * fk), "left")
+    end
   end
 
   if top and not self.chosen then ctx:endFrame() end

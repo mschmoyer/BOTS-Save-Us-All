@@ -63,7 +63,8 @@ function M.draw(world, cam)
   local scale = U.lerp(1, math.min(sw * 0.62 / M.w, sh * 0.68 / M.h), k)
   local w, h = M.w * scale, M.h * scale
   local cx = U.lerp(sw - PAD - M.w, (sw - w) / 2, k)
-  local cy = U.lerp(sh - PAD - M.h - 96, (sh - h) / 2, k)
+  -- sits above the build bar and clear of the workforce cluster in the corner
+  local cy = U.lerp(sh - PAD - M.h - 168, (sh - h) / 2, k)
   local a = U.lerp(0.72, 0.97, k)
 
   if k > 0.02 then

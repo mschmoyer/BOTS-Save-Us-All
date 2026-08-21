@@ -954,6 +954,32 @@ mdef("choir", { gain = 0.5, dur = 2.2, rate = 11025, sparse = 4, build = functio
   }, normalize = 0.75, trim = false, fadeIn = 0.03, fadeOut = 0.3 }
 end })
 
+-- Percussion (pitchless, so it lives in the music bank with 3 variants each).
+local PERC = {
+  kick = { gain = 0.85, rate = 11025, spec = function(r) return { dur = 0.7, layers = {
+    { osc = "sine", freq = { from = 150 * r:range(0.95, 1.05), to = 42, tau = 0.035 },
+      env = { type = "perc", a = 0.001, d = 0.42, curve = 1.8 }, amp = 0.9 },
+    { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.012, curve = 5 }, amp = 0.2 },
+  }, fx = { { "softclip", drive = 1.7, mix = 0.6 }, { "svf", type = "lp", cutoff = 2600, q = 0.8 } },
+    normalize = 0.85, trim = false } end },
+  hat = { gain = 0.3, spec = function(r) return { dur = 0.28, layers = {
+    { osc = "noise", env = { type = "perc", a = 0.0004, d = r:range(0.03, 0.09), curve = 4 },
+      amp = 0.5 } },
+    fx = { { "svf", type = "hp", cutoff = 5200, q = 1.1 }, { "bitcrush", bits = 7 } },
+    normalize = 0.6, trim = false } end },
+  shaker = { gain = 0.3, spec = function(r) return { dur = 0.3, layers = {
+    { osc = "pink", env = { type = "bp", points = { { 0, 0 }, { 0.012, 1 }, { 0.1, 0 } } },
+      amp = 0.5 } },
+    fx = { { "svf", type = "bp", cutoff = r:range(3600, 5200), q = 1.4 } },
+    normalize = 0.55, trim = false } end },
+  tom = { gain = 0.55, rate = 11025, spec = function(r) return { dur = 0.6, layers = {
+    { osc = "sine", freq = { from = 200 * r:range(0.9, 1.15), to = 78, tau = 0.09 },
+      env = { type = "perc", a = 0.001, d = 0.35, curve = 2 }, amp = 0.8 },
+    { osc = "noise", env = { type = "perc", a = 0.001, d = 0.05, curve = 4 }, amp = 0.12 },
+  }, fx = { { "svf", type = "lp", cutoff = 3000, q = 0.9 }, { "reverb", mix = 0.18 } },
+    normalize = 0.8, trim = false } end },
+}
+
 --------------------------------------------------------------------- loading
 -- Sources are userdata, so each one lives in a small slot table that carries the
 -- "is this voice using it" flag.
@@ -1032,30 +1058,7 @@ function Audio.load()
   end
 
   -- percussion (pitchless, so it lives in the music bank with 3 variants each)
-  local perc = {
-    kick = { gain = 0.85, rate = 11025, spec = function(r) return { dur = 0.7, layers = {
-      { osc = "sine", freq = { from = 150 * r:range(0.95, 1.05), to = 42, tau = 0.035 },
-        env = { type = "perc", a = 0.001, d = 0.42, curve = 1.8 }, amp = 0.9 },
-      { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.012, curve = 5 }, amp = 0.2 },
-    }, fx = { { "softclip", drive = 1.7, mix = 0.6 }, { "svf", type = "lp", cutoff = 2600, q = 0.8 } },
-      normalize = 0.85, trim = false } end },
-    hat = { gain = 0.3, spec = function(r) return { dur = 0.28, layers = {
-      { osc = "noise", env = { type = "perc", a = 0.0004, d = r:range(0.03, 0.09), curve = 4 },
-        amp = 0.5 } },
-      fx = { { "svf", type = "hp", cutoff = 5200, q = 1.1 }, { "bitcrush", bits = 7 } },
-      normalize = 0.6, trim = false } end },
-    shaker = { gain = 0.3, spec = function(r) return { dur = 0.3, layers = {
-      { osc = "pink", env = { type = "bp", points = { { 0, 0 }, { 0.012, 1 }, { 0.1, 0 } } },
-        amp = 0.5 } },
-      fx = { { "svf", type = "bp", cutoff = r:range(3600, 5200), q = 1.4 } },
-      normalize = 0.55, trim = false } end },
-    tom = { gain = 0.55, rate = 11025, spec = function(r) return { dur = 0.6, layers = {
-      { osc = "sine", freq = { from = 200 * r:range(0.9, 1.15), to = 78, tau = 0.09 },
-        env = { type = "perc", a = 0.001, d = 0.35, curve = 2 }, amp = 0.8 },
-      { osc = "noise", env = { type = "perc", a = 0.001, d = 0.05, curve = 4 }, amp = 0.12 },
-    }, fx = { { "svf", type = "lp", cutoff = 3000, q = 0.9 }, { "reverb", mix = 0.18 } },
-      normalize = 0.8, trim = false } end },
-  }
+  local perc = PERC
   for name, p in pairs(perc) do
     local entry = { def = { name = name, gain = p.gain, pitchVar = 0.04, gainVar = 0.12,
                             bus = "music", variants = 3 },
@@ -1366,5 +1369,6 @@ end
 -- exposed for the demo scene and for tooling
 Audio.defs = D
 Audio.musicDefs = MUSIC
+Audio.percDefs = PERC
 
 return Audio

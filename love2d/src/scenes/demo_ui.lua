@@ -21,11 +21,9 @@
 local U        = require("src.core.util")
 local P        = require("src.engine.palette")
 local Draw     = require("src.engine.draw")
-local Text     = require("src.engine.text")
 local UI       = require("src.engine.ui")
 local Input    = require("src.engine.input")
 local Screen   = require("src.engine.screen")
-local Signal   = require("src.core.signal")
 local TU       = require("src.game.tuning")
 local Chips    = require("src.game.chips")
 local HUD      = require("src.game.hud")
@@ -35,7 +33,7 @@ local VFX      = Opt.require("src.engine.vfx")
 
 local lg = love.graphics
 local floor, min, max = math.floor, math.min, math.max
-local cos, sin, pi = math.cos, math.sin, math.pi
+local sin = math.sin
 local TAU = U.TAU
 
 local S = {}

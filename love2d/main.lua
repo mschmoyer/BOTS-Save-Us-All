@@ -84,7 +84,7 @@ function love.load()
     Audio.setBusVolume("master", Settings.get("volMaster", 0.9))
     Audio.setBusVolume("sfx",    Settings.get("volSfx", 1.0))
     Audio.setBusVolume("music",  Settings.get("volMusic", 0.75))
-    Audio.setBusVolume("ui",     Settings.get("volSfx", 1.0))
+    Audio.setBusVolume("ui",     Settings.get("volUi", 0.85))
   end, function(e) return tostring(e) .. "\n" .. debug.traceback("", 2) end)
   Boot.audioTime = love.timer.getTime() - t0
   if not okAudio then print("AUDIO FAILED: " .. tostring(audioErr)) end

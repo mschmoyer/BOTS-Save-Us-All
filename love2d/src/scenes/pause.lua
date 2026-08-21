@@ -118,8 +118,8 @@ function S:drawStatus(x, y, w, a)
   UI.caption("CYCLE", x, cy, UI.ts.micro, UI.c(P.inkFaint, 0.85 * a), "left")
   local cw = UI.text(tostring(wd.cycle or 1), x, cy + 16, UI.ts.h1,
                      UI.c(P.ink, a), "left", a, 0.02)
-  UI.caption("OF " .. tostring(TU.cycle.count), x + cw + 10, cy + 40, UI.ts.micro,
-             UI.c(P.inkFaint, 0.8 * a), "left")
+  UI.caption("OF " .. tostring(TU.cycle.count), x + cw + 12, cy + 54, UI.ts.micro,
+             UI.c(P.inkDim, 0.8 * a), "left")
   UI.caption(PHASE_LABEL[wd.phase] or "--", x + w, cy + 16, UI.ts.label,
              UI.c(P.warn, 0.9 * a), "right")
 
@@ -207,6 +207,9 @@ function S:draw()
   local prevLW = lg.getLineWidth()
 
   UI.defocus(a, t)
+  -- seat both columns, so the world behind them never competes with a numeral
+  Draw.softShadow(w * 0.20, h * 0.52, w * 0.26, h * 0.36, 0.5 * a)
+  Draw.softShadow(w * 0.83, h * 0.44, w * 0.22, h * 0.30, 0.5 * a)
 
   local x0 = floor(max(UI.pad * 2, w * 0.065) / UI.u) * UI.u
   local colW = 336
@@ -216,14 +219,14 @@ function S:draw()
   local hk = UI.stagger(t, 1, 0.02, 0, 0.4, U.ease.outExpo)
   UI.text("PAUSED", x0 + (1 - hk) * -14, headY, UI.ts.h1, UI.c(P.ink, a * hk),
           "left", a * hk, U.lerp(0.30, 0.08, hk))
-  UI.caption("THE ISLAND IS HOLDING ITS BREATH", x0, headY + 58, UI.ts.micro,
+  UI.caption("THE ISLAND IS HOLDING ITS BREATH", x0, headY + 66, UI.ts.micro,
              UI.c(P.inkFaint, 0.8 * a * hk), "left")
   Draw.setColor(UI.c(P.warn, 0.9 * a * hk))
   lg.setLineWidth(2)
-  lg.line(x0, headY + 82, x0 + colW * hk, headY + 82)
+  lg.line(x0, headY + 90, x0 + colW * hk, headY + 90)
 
   -- menu
-  local menuY = headY + 112
+  local menuY = headY + 120
   local rowH = 60
   for i = 1, #MENU do
     local m = MENU[i]

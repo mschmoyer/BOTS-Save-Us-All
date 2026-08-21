@@ -149,7 +149,8 @@ end
 --------------------------------------------------------------------- lifecycle
 function S:enter(opts)
   self.t = 0
-  self.tab = 1
+  -- BOTS_OPT_TAB lets tools/shot.sh photograph a page other than the first
+  self.tab = U.clamp(tonumber(os.getenv("BOTS_OPT_TAB") or "") or 1, 1, #TABS)
   self.ctx = UI.context({ accent = P.accentCool })
   self.ctx.wrap = false
   self.opts = opts
@@ -159,7 +160,7 @@ function S:enter(opts)
   applyAll()
   -- open on a row, not on the tab strip, so the description strip has something
   -- to say the moment the panel lands
-  self.ctx.focusId = PAGES[1][1].key
+  self.ctx.focusId = PAGES[self.tab][1].key
 end
 
 function S:leave()

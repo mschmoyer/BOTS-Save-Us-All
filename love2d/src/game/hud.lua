@@ -416,12 +416,12 @@ local function drawScrims(a)
   local sw, sh = L.sw, L.sh
   UI.vgrad(0, 0, sw, 120, P.black, P.black, 0.18 * a, 0)
   UI.vgrad(0, sh - 130, sw, 130, P.black, P.black, 0, 0.22 * a)
-  Draw.softShadow(PAD + 40, PAD + 52, 250, 150, 0.42 * a)         -- cobalt / forest
-  Draw.softShadow(sw * 0.5, L.o2y + 34, 330, 120, 0.34 * a)       -- oxygen
-  Draw.softShadow(L.dialX, L.dialY + 6, 250, 140, 0.44 * a)       -- cycle dial
-  Draw.softShadow(PAD + 60, sh - PAD - 80, 300, 210, 0.40 * a)    -- hearts + feed
-  Draw.softShadow(sw - PAD - 130, sh - PAD - 30, 260, 120, 0.40 * a) -- workforce
-  Draw.softShadow(sw * 0.5, sh - PAD - 34, 430, 110, 0.34 * a)    -- build bar
+  Draw.softShadow(PAD + 40, PAD + 52, 265, 165, 0.62 * a)         -- cobalt / forest
+  Draw.softShadow(sw * 0.5, L.o2y + 36, 350, 130, 0.48 * a)       -- oxygen
+  Draw.softShadow(L.dialX, L.dialY + 6, 265, 155, 0.62 * a)       -- cycle dial
+  Draw.softShadow(PAD + 70, sh - PAD - 78, 320, 220, 0.58 * a)    -- hearts + feed
+  Draw.softShadow(sw - PAD - 140, sh - PAD - 28, 280, 130, 0.58 * a) -- workforce
+  Draw.softShadow(sw * 0.5, sh - PAD - 34, 450, 120, 0.46 * a)    -- build bar
 end
 
 ------------------------------------------------------------------- the oxygen
@@ -478,7 +478,7 @@ local function drawOxygen(w, a)
   UI.caption("OXYGEN", cx - 6 - nw - 14, base + 2, UI.ts.micro,
              UI.c(P.inkDim, 0.8 * a), "right")
   UI.caption("TARGET " .. itos(TU.o2.target), cx + 34, base + 2, UI.ts.micro,
-             UI.c(P.inkFaint, 0.6 * a), "left")
+             UI.c(P.inkDim, 0.62 * a), "left")
 end
 
 -------------------------------------------------------------------- the dial
@@ -525,7 +525,7 @@ local function drawCycleDial(w, a)
   UI.text(PHASE_LABEL[phase] or "--", tx, cy - 17, UI.ts.h4,
           UI.mix(P.ink, pc, urgent and 0.8 or 0.15), "right", a, 0.14)
   UI.caption("CYCLE " .. itos(w.cycle or 1) .. " OF " .. itos(TU.cycle.count),
-             tx, cy + 6, UI.ts.micro, UI.c(P.inkFaint, 0.8 * a), "right")
+             tx, cy + 6, UI.ts.micro, UI.c(P.inkDim, 0.8 * a), "right")
 
   if urgent then
     UI.brackets(cx - R - 10, cy - R - 10, (R + 10) * 2, (R + 10) * 2, 12, pc,
@@ -545,7 +545,7 @@ local function drawResources(w, a)
   if HUD.cobShake > 0.02 then cobColor = UI.mix(P.ramp.cobalt[4], P.danger, HUD.cobShake) end
   UI.text(itos(HUD.cob.v), x + 30 + shake, y + 4, UI.ts.h2 * (1 + flash * 0.06),
           cobColor, "left", a, 0.02)
-  UI.caption("COBALT", x + 30 + shake, y + 40, UI.ts.micro, UI.c(P.inkFaint, 0.8 * a), "left")
+  UI.caption("COBALT", x + 30 + shake, y + 40, UI.ts.micro, UI.c(P.inkDim, 0.85 * a), "left")
 
   -- forest
   local ty = y + 60
@@ -553,7 +553,7 @@ local function drawResources(w, a)
   treeGlyph(x + 11, ty + 16, 11, a, tflash)
   UI.text(itos(HUD.trees.v), x + 30, ty + 2, UI.ts.h3 * (1 + tflash * 0.06),
           UI.mix(P.accent, P.white, tflash * 0.6), "left", a, 0.02)
-  UI.caption("FOREST", x + 30, ty + 30, UI.ts.micro, UI.c(P.inkFaint, 0.8 * a), "left")
+  UI.caption("FOREST", x + 30, ty + 30, UI.ts.micro, UI.c(P.inkDim, 0.85 * a), "left")
 
   -- a hairline that ties the two together
   UI.rule(x, y + 52, 108, P.ink, 0.1 * a)
@@ -586,7 +586,7 @@ local function drawHearts(w, a)
       end
     end
   end
-  UI.caption("INTEGRITY", x, y + 20, UI.ts.micro, UI.c(P.inkFaint, 0.6 * a), "left")
+  UI.caption("INTEGRITY", x, y + 20, UI.ts.micro, UI.c(P.inkDim, 0.7 * a), "left")
 
   -- reboot timer, if the player is down
   if p.state == "down" then
@@ -603,7 +603,7 @@ local function drawRoster(w, a)
   local cellW = 46
   local x0 = L.sw - PAD - n * cellW
   local y = L.sh - PAD - 34
-  UI.caption("WORKFORCE", L.sw - PAD, y - 16, UI.ts.micro, UI.c(P.inkFaint, 0.7 * a), "right")
+  UI.caption("WORKFORCE", L.sw - PAD, y - 16, UI.ts.micro, UI.c(P.inkDim, 0.8 * a), "right")
   local total = 0
   for i = 1, n do total = total + ROSTER[i] end
   for i = 1, n do

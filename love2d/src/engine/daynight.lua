@@ -144,6 +144,12 @@ local function recompute()
   DN.lift[3] = DN.skyTint[3] * liftAmt
 
   -- sky bodies ---------------------------------------------------------------
+  if os.getenv("BOTS_DBG") then
+    print(string.format("DBG phase=%s t=%.2f amb=%.2f,%.2f,%.2f x%.2f exp=%.2f con=%.2f sat=%.2f fog=%.2f,%.2f,%.2f x%.3f sky=%.2f,%.2f,%.2f lift=%.3f,%.3f,%.3f o2=%.3f gain=%.2f",
+      DN.phase, DN.t, DN.ambient[1],DN.ambient[2],DN.ambient[3], DN.ambientStrength, DN.exposure, DN.contrast, DN.saturation,
+      DN.fogColor[1],DN.fogColor[2],DN.fogColor[3], DN.fogStrength, DN.skyTint[1],DN.skyTint[2],DN.skyTint[3],
+      DN.lift[1],DN.lift[2],DN.lift[3], DN.o2, DN.lightGain))
+  end
   DN.starAlpha = U.saturate((0.70 - DN.ambientStrength) / 0.40) ^ 1.4
   DN.moonAlpha = U.saturate((0.96 - DN.ambientStrength) / 0.58)
 end

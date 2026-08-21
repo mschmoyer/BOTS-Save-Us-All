@@ -220,6 +220,93 @@ local function renderMusic(state, secs, opts)
   return out
 end
 
+--- Every variant of every sound in the bank, so variant diversity can be
+--- measured rather than asserted.
+local function renderEveryVariant(dir)
+  os.execute("mkdir -p '" .. dir .. "/all'")
+  for _, name in ipairs(Audio.names()) do
+    local d = Audio.defs[name]
+    for v = 1, d.variants do
+      local spec = d.build(v, d.variants, U.rng(1000 + v * 7))
+      spec.rate = d.rate or Audio.rate
+      wav(string.format("%s/all/%s__v%02d.wav", dir, name, v), Synth.render(spec))
+    end
+  end
+  for _, name in ipairs(Audio.musicDefs) do
+    local m = Audio.musicDefs[name]
+    for _, st in ipairs({ 0, 7 }) do
+      local spec = m.build(Synth.noteToHz(48 + st))
+      spec.rate = m.rate or Audio.rate
+      wav(string.format("%s/all/mus_%s__st%02d.wav", dir, name, st), Synth.render(spec))
+    end
+  end
+  for name, p in pairs(Audio.percDefs) do
+    for v = 1, 3 do
+      local spec = p.spec(U.rng(500 + v))
+      spec.rate = p.rate or Audio.rate
+      wav(string.format("%s/all/perc_%s__v%02d.wav", dir, name, v), Synth.render(spec))
+    end
+  end
+end
+
+--- Voice-pool stress: 40 bots, 30 enemies and a boss all making noise at once
+--- while the score runs, driven at a fixed step through the real mixer. Reports
+--- how the pool actually behaves rather than how we hope it behaves.
+local function stressTest(secs)
+  local rn = U.rng(4242)
+  Audio.stopAll()
+  Music.setState("night", { cycle = 4 })
+  Music.setIntensity(0.9); Music.setO2(0.5)
+  local dt = 1 / 60
+  local t = 0
+  local peakVoices, sumVoices, frames = 0, 0, 0
+  local perBus = { sfx = 0, music = 0, ui = 0 }
+  local rejected, played = 0, 0
+  local hist = {}
+  while t < secs do
+    -- 40 bots: chatter and the occasional boot / hurt
+    for i = 1, 40 do
+      if rn:chance(0.006) then
+        if Audio.play("bot_chatter", { x = rn:range(-900, 900), y = 0 }) then played = played + 1
+        else rejected = rejected + 1 end
+      end
+    end
+    -- 30 enemies: footsteps at a walking cadence, plus chewing and dying
+    for i = 1, 30 do
+      if rn:chance(0.05) then
+        if Audio.play("enemy_step", { x = rn:range(-1200, 1200), y = 0 }) then played = played + 1
+        else rejected = rejected + 1 end
+      end
+      if rn:chance(0.004) then Audio.play("chomp", { x = rn:range(-900, 900), y = 0 }) end
+      if rn:chance(0.002) then Audio.play("enemy_die", { x = rn:range(-900, 900), y = 0 }) end
+    end
+    -- the player and the boss
+    if rn:chance(0.02) then Audio.play("shove_hit") Audio.duck(0.3, 0.35) end
+    if rn:chance(0.01) then Audio.play("plant") end
+    if rn:chance(0.008) then Audio.play("boss_step") end
+    if rn:chance(0.004) then Audio.play("bot_down") end
+    if rn:chance(0.01) then Audio.play("ui_move", { bus = "ui" }) end
+    Audio.update(dt, 0, 0)
+    Music.update(dt)
+    local n = Audio.voiceCount()
+    peakVoices = max(peakVoices, n)
+    sumVoices = sumVoices + n
+    frames = frames + 1
+    for b in pairs(perBus) do perBus[b] = max(perBus[b], Audio.meter(b).voices) end
+    hist[#hist + 1] = Audio.meter("master").rms
+    t = t + dt
+  end
+  local sum, mx = 0, 0
+  for i = 1, #hist do sum = sum + hist[i] mx = max(mx, hist[i]) end
+  print(string.format(
+    "STRESS %.0fs: voices avg %.1f peak %d/%d | max per bus sfx %d music %d ui %d | " ..
+    "plays %d rejected %d (%.1f%%) | master rms avg %.3f peak %.3f",
+    secs, sumVoices / max(1, frames), peakVoices, Audio.maxVoices,
+    perBus.sfx, perBus.music, perBus.ui, played, rejected,
+    100 * rejected / max(1, played + rejected), sum / max(1, #hist), mx))
+  Audio.stopAll()
+end
+
 local function renderAll()
   local dir = os.getenv("BOTS_AUDIO_OUT") or "/tmp/bots_audio"
   os.execute("mkdir -p '" .. dir .. "'")
@@ -251,14 +338,21 @@ local function renderAll()
 
   -- each music state
   local states = { { "title", { cycle = 1 } }, { "day", { cycle = 1 } }, { "day7", { cycle = 7 } },
-                   { "night", { cycle = 4 } }, { "boss", { cycle = 6 } },
+                   { "dusk", { cycle = 3 } }, { "night", { cycle = 4 } },
+                   { "boss", { cycle = 6 } }, { "draft", { cycle = 5 } },
                    { "ending", { cycle = 7 } } }
   for _, st in ipairs(states) do
     local name = st[1]
     local real = (name == "day7") and "day" or name
-    Music.setIntensity(name == "night" and 0.7 or (name == "boss" and 1.0 or 0.15))
+    Music.setIntensity(name == "night" and 0.7 or (name == "boss" and 1.0 or
+                       (name == "dusk" and 0.45 or 0.15)))
     Music.setO2(name == "ending" and 1.0 or (name == "night" and 0.5 or 0.3))
     wav(dir .. "/music_" .. name .. ".wav", renderMusic(real, secs, st[2]))
+  end
+
+  if (os.getenv("BOTS_AUDIO_ALL") or "") ~= "" then renderEveryVariant(dir) end
+  if (os.getenv("BOTS_AUDIO_STRESS") or "") ~= "" then
+    stressTest(tonumber(os.getenv("BOTS_AUDIO_STRESS")) or 20)
   end
   print("RENDER DONE -> " .. dir)
 end

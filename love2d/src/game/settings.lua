@@ -19,6 +19,7 @@ Settings.defaults = {
   volMusic    = 0.75,
   volSfx      = 1.00,
   volAmbience = 0.65,
+  volUi       = 0.85,
 
   -- post chain toggles (engine/postfx.lua reads these)
   fxBloom      = true,
@@ -56,6 +57,7 @@ local SCHEMA = {
   volMusic    = { t = "number", min = 0, max = 1 },
   volSfx      = { t = "number", min = 0, max = 1 },
   volAmbience = { t = "number", min = 0, max = 1 },
+  volUi       = { t = "number", min = 0, max = 1 },
 
   fxBloom      = { t = "boolean" },
   fxGrain      = { t = "boolean" },

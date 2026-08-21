@@ -150,8 +150,27 @@ local RY     = 0.5 + OV
 local glyphs = {}
 
 --- Register a glyph. `adv` is in the *final* (post-shift) frame.
+--- Strip consecutive duplicate points. Several glyphs are assembled by
+--- concatenating a stem with an arc that starts exactly where the stem ended,
+--- which leaves a zero-length segment. Desktop GL tolerates the degenerate
+--- miter that produces; WebGL does not, and it silently drops the segment
+--- before it - which is what turned U into J in the browser build.
+local function clean(stroke)
+  local out, n = {}, 0
+  for i = 1, #stroke, 2 do
+    local x, y = stroke[i], stroke[i + 1]
+    if n < 2 or abs(x - out[n - 1]) > 1e-6 or abs(y - out[n]) > 1e-6 then
+      n = n + 1; out[n] = x
+      n = n + 1; out[n] = y
+    end
+  end
+  return out
+end
+
 local function G(ch, adv, strokes, dots)
-  glyphs[ch] = { adv = adv, s = strokes or {}, d = dots }
+  strokes = strokes or {}
+  for i = 1, #strokes do strokes[i] = clean(strokes[i]) end
+  glyphs[ch] = { adv = adv, s = strokes, d = dots }
 end
 
 ----------------------------------------------------------------------- A - Z

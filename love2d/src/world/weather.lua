@@ -89,6 +89,7 @@ function W.update(dt, world)
     W.set(pick(W.rng, phase, cycle))
   end
 
+  if os.getenv("BOTS_DBG") then print(string.format("WDBG %s rain=%.2f cloud=%.2f", W.state, W.rain, W.cloud)) end
   W.rain = U.damp(W.rain, W.target, 0.5, dt)
   W.cloud = U.damp(W.cloud, W.cloudTarget, 0.4, dt)
   -- the ground stays wet for a while after the rain stops
