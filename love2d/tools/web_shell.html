@@ -335,6 +335,51 @@
     } catch (e) { /* older engine: leave it alone rather than break boot */ }
   })();
 
+  /* --- the gamepad API can be *disallowed* rather than absent ------------- */
+  // An iframe served without `allow="gamepad"` still exposes
+  // navigator.getGamepads, but calling it throws SecurityError. SDL samples
+  // gamepads once per frame from inside the main loop, so the first throw
+  // takes the whole loop down and the canvas goes black with nothing drawn --
+  // which is exactly what happens when this page is embedded. Test-call it
+  // once, and if it throws, replace it with something that returns nothing.
+  // A pad genuinely plugged into a page that is *allowed* to see it is
+  // untouched, so controller support is unaffected wherever it is permitted.
+  (function () {
+    function padsBlocked() {
+      try { navigator.getGamepads(); return false; }
+      catch (e) { return true; }
+    }
+    if (typeof navigator.getGamepads !== 'function' || !padsBlocked()) return;
+    var EMPTY = [];
+    var stub = function () { return EMPTY; };
+    try {
+      Object.defineProperty(Navigator.prototype, 'getGamepads',
+                            { value: stub, configurable: true, writable: true });
+    } catch (e) { /* fall through to the instance */ }
+    try { navigator.getGamepads = stub; } catch (e) {}
+    try { navigator.webkitGetGamepads = stub; } catch (e) {}
+    if (!padsBlocked()) { try { console.info('gamepad api blocked here; stubbed'); } catch (e) {} }
+  })();
+
+  /* --- never fail silently ------------------------------------------------ */
+  // A thrown exception inside the emscripten main loop leaves a black canvas
+  // and no explanation. Put the panel back with the reason on it: a page that
+  // says what went wrong is worth more than one that is merely dark.
+  var reported = false;
+  window.addEventListener('error', function (ev) {
+    if (reported) return;
+    reported = true;
+    var msg = (ev && (ev.message || (ev.error && ev.error.message))) || 'unknown error';
+    try {
+      var loader = $('loader');
+      if (loader) { loader.style.display = ''; loader.classList.remove('gone'); }
+      say(String(msg).replace(/[<&]/g, ' '));
+      var b = $('start');
+      if (b) { b.textContent = 'Reload'; b.disabled = false;
+               b.onclick = function () { location.reload(); }; }
+    } catch (e) {}
+  });
+
   var Module = {
     arguments: argv,
     INITIAL_MEMORY: 402653184,

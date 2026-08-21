@@ -20,6 +20,20 @@ const path = require('path');
         + '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
       : undefined,
   });
+  // BLOCKPAD=1 reproduces an embedding whose permissions policy disallows the
+  // gamepad feature: navigator.getGamepads still exists and throws when called.
+  // SDL samples it once per frame from inside the main loop, so an unguarded
+  // build goes black on the first frame -- which is what the artifact iframe
+  // does, and what no amount of local testing would ever have shown.
+  if (process.env.BLOCKPAD) {
+    await page.addInitScript(() => {
+      const boom = function () {
+        throw new DOMException("Access to the feature \"gamepad\" is disallowed by permissions policy.", "SecurityError");
+      };
+      try { Object.defineProperty(Navigator.prototype, 'getGamepads', { value: boom, configurable: true, writable: true }); } catch (e) {}
+      try { navigator.getGamepads = boom; } catch (e) {}
+    });
+  }
   const logs = [];
   page.on('console', m => logs.push(`[${m.type()}] ${m.text()}`));
   page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
