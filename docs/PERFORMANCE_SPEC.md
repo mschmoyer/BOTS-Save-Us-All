@@ -434,6 +434,39 @@ deliberately so "no visual change" held for F4.
   ships** — the forest's character is the game's whole power fantasy. If the
   captures look worse, the correct outcome is to not ship it and say why.
 
+## Open, and deliberately not closed here
+
+**Green streak artifacts, seen once, not reproduced.** A 12,000-frame autoplay capture at
+seed 12345 showed long horizontal green bands and thin diagonal lines across the lower
+screen, in a late-game dialogue state. It is recorded here rather than dismissed, because it
+was real and nobody has explained it.
+
+What was then established:
+
+- A second capture of the *same build at the same seed* is clean at frames 3,000 / 6,000 /
+  9,000 / 12,000, including a frame in the same kind of state (ending dialogue, camera pulled
+  back, bot labels up).
+- A **matched deterministic A/B** — `BOTS_JUMP=extraction`, fixed seed and identity, the two
+  builds landing on the same frame with the same dialogue line — is clean on both sides at
+  300 / 600 / 900. Difference over 10/255: **0.022–0.045% of sampled pixels**, consistent with
+  F2's shadow tips and nothing else.
+
+So F1/F2/F4 are cleared *for the states that can be reached deterministically*, which is not
+the same as cleared. The honest position is that this is an unreproduced one-off in a state
+nobody can currently re-enter on demand.
+
+**The gap it exposes is the real finding.** The first instinct — capture the same seed before
+and after — is worthless here, because autoplay runs diverge into different game states
+entirely. There is no fixed probe for *gameplay* rendering the way `demo_tree` and `demo_draw`
+are fixed probes for their subsystems, and every visual claim about gameplay in this document
+rests on either a deterministic jump state or an agent's own probe scene. A committed probe
+scene that parks a known set of entities, weather, time of day and dialogue in front of the
+camera would make this class of question answerable in seconds. **Worth its own item.**
+
+**Also found, unfixed** (see the F2/F3/F4 entry): `World:draw` gates both tree passes on
+`t.alive` and `Tree:kill` clears `alive` immediately, so a felled tree's topple animation and
+`Tree:drawStump` never render in gameplay.
+
 ## Verification protocol
 
 Nothing here is judgeable from source. Every item is proven the same way:

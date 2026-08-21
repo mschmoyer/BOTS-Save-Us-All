@@ -127,8 +127,22 @@ seconds. **Read the PNGs.** Nothing about this game can be judged from the sourc
 - The autoplay **trace** is not reproducible run to run on a contended machine — two identical
   runs ended at 466 and 250 trees. Do not A/B with it.
 - The autoplay **capture** is not a valid pixel A/B: two runs of identical code differ on 96%
-  of pixels by ±1, because the grade is wall-clock dependent. Use a fixed deterministic probe
-  scene for pixel regression.
+  of pixels by ±1, because the grade is wall-clock dependent, and after a few thousand frames
+  the two runs are not even in the same game state.
+
+  **What to use instead**, for a gameplay-rendering A/B: `BOTS_JUMP` with a fixed seed and a
+  fixed identity reaches a matched late-game state in hundreds of frames rather than thousands
+  of divergent ones, and two builds land on the same frame with the same dialogue line up.
+
+  ```bash
+  BOTS_IDENTITY=ab_a BOTS_SEED=12345 BOTS_JUMP=extraction \
+    BOTS_JUMP_TREES=600 BOTS_JUMP_BOTS=40 BOTS_SCENE=src.scenes.game \
+    tools/shot.sh 900 300,600,900 /tmp/ab_a
+  ```
+
+  Read the result as: ~66% of pixels differ by ±1 (the dither/grade floor, ignore it) and the
+  signal is the count differing by **more than 10/255**. For reference, F1+F2+F4 against their
+  baseline measured 0.022–0.045% over that threshold across three frames.
 - Headless capture only calls `love.draw()` on photographed frames, so `Tree.setViewFromCamera`
   never runs and **every tree reports on-screen** — which silently invalidates any measurement
   of view-culling or anything else that depends on the camera.
