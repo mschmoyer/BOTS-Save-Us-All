@@ -143,12 +143,16 @@ function Game:bindSignals()
   Signal.on("bot:built", function(b)
     if self.rallyTold or not b or b.type ~= "planter" then return end
     self.rallyTold = true
-    Timer.global:after(3.0, function()
+    -- wait for a quiet moment: an order the player cannot give yet, delivered
+    -- over the prologue, is just noise
+    local function tell()
+      if self.world.cutscene then Timer.global:after(1.5, tell) return end
       if HUD.toast then
         HUD.toast(Input.glyph("rally") .. "   SEND THEM SOMEWHERE",
                   nil, "plant a flag; they will work toward it", 7)
       end
-    end)
+    end
+    Timer.global:after(4.0, tell)
   end, self)
 
   Signal.on("world:failed", function()
