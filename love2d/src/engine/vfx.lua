@@ -1470,9 +1470,11 @@ local function drawGeo(li, bi)
 end
 
 --- Draw one layer. Leaves blend mode, colour and line width at their defaults.
+local SKIP = os.getenv("BOTS_VFX_SKIP")
 function VFX.draw(layerName)
   local li = LAYER_IX[layerName or "world"]
   if not li or not inited then return end
+  if SKIP and layerName == SKIP then return end
   local g = love.graphics
   local bAlpha, bAdd = batches[li][1], batches[li][2]
 

@@ -327,6 +327,20 @@ local C = {
   ashHi   = P.shade(P.ramp.ash, 3),
   molten  = P.shade(P.ramp.ember, 3),
   moltenHi= P.shade(P.ramp.ember, 4),
+  -- The open core. It was a graded tan disc -- brass, or a wooden hatch, at the
+  -- exact centre of the machine -- and "the core is open" is the most dangerous
+  -- sentence the rig can say. So it is built the way molten metal actually
+  -- looks: a near-black crust floating on a pool that is the brightest thing in
+  -- the frame, and the only place the pool shows is the cracks between plates.
+  crust    = P.mix(P.ramp.ember[1], P.black, 0.88),
+  crustLit = P.mix(P.ramp.ember[1], P.black, 0.56),
+  crustCold= P.mix(P.ramp.metal[1], P.black, 0.74),
+  poolRim  = P.shade(P.ramp.ember, 1.25),
+  poolMid  = P.shade(P.ramp.ember, 2.20),
+  -- Not mixed toward white. Additive strokes crossing each other make the
+  -- white on their own, and a hot colour that starts pale can only ever go
+  -- cream: the seams have to stay the colour of fire where they are thin.
+  poolHot  = P.shade(P.ramp.ember, 3.05),
   -- The rig's own power is *cold*. It was violet, which put the antagonist in
   -- the Blight's colour and undid the whole point of making it a third
   -- material: the machine came for the air, so what runs inside it is the
@@ -412,16 +426,38 @@ local function edash(cx, cy, rx, ry, n, frac, w, c, alpha, phase)
 end
 
 --- A tapered limb segment with round ends: every leg bone and strut.
+---
+--- One convex polygon, caps included. It used to be a quad plus two circles --
+--- three draw calls -- and the rig draws about a hundred and thirty of these a
+--- frame between its six legs, its trusses, its struts, its inlet vanes and its
+--- intake grille. Four hundred calls for a shape that fits in ten vertices is
+--- not a trade worth making on a target that is a browser on a phone.
+local CAPN, CAPA = {}, {}
+for i = 0, 4 do
+  local th = i * math.pi / 4
+  CAPN[i + 1], CAPA[i + 1] = cos(th), sin(th)
+end
+local LIMB = {}
 local function limb(x1, y1, x2, y2, w1, w2, c, alpha)
   local dx, dy = x2 - x1, y2 - y1
   local l = math.sqrt(dx * dx + dy * dy)
   if l < 1e-4 then return end
-  local nx, ny = -dy / l, dx / l
+  local ux, uy = dx / l, dy / l
+  local nx, ny = -uy, ux
+  local n = 0
+  for i = 1, 5 do                     -- the near cap: +normal, back, -normal
+    local cn, ca = CAPN[i] * w1, CAPA[i] * w1
+    n = n + 1; LIMB[n] = x1 + nx * cn - ux * ca
+    n = n + 1; LIMB[n] = y1 + ny * cn - uy * ca
+  end
+  for i = 1, 5 do                     -- and the far one, back to where it began
+    local cn, ca = CAPN[i] * w2, CAPA[i] * w2
+    n = n + 1; LIMB[n] = x2 - nx * cn + ux * ca
+    n = n + 1; LIMB[n] = y2 - ny * cn + uy * ca
+  end
+  trimTo(LIMB, n)
   Draw.setColor(c, alpha)
-  LG.polygon("fill", x1 + nx * w1, y1 + ny * w1, x2 + nx * w2, y2 + ny * w2,
-                     x2 - nx * w2, y2 - ny * w2, x1 - nx * w1, y1 - ny * w1)
-  LG.circle("fill", x1, y1, w1, 10)
-  LG.circle("fill", x2, y2, w2, 10)
+  LG.polygon("fill", LIMB)
 end
 
 --- A bolt head: dark socket, domed cap, one specular pip. At this scale it is
@@ -491,14 +527,6 @@ end
 --- all have to be the same on every machine and in every replay, and the boss's
 --- own rng belongs to the *fight* -- spending it here would desync the seed.
 local hash = Draw.hash
-
---- The rig sorts above the forest, always.
----
---- It is standing *on* the canopy -- the bots say so out loud -- and depth
---- sorting it into the tree list by its feet buried a hundred-foot extraction
---- platform under two rows of leaves. At the climax of a thirteen-minute run
---- the antagonist was a pink smudge you could not find on screen.
-function Boss:sortKey() return self.y + 1000000 end
 
 ------------------------------------------------------------------ presentation
 --- One presentation clock, advanced from `age` so it cannot double-step when
@@ -587,57 +615,103 @@ end
 --- The ground it has taken: the canopy crushed flat under six feet, the ash
 --- ring where its exhaust killed what it did not break, and the strobe washing
 --- over all of it. Drawn over the trees, because it is standing on them.
-function Boss:drawFootprint(arrive, lift, footY)
+---
+--- Everything in it that does not move is baked. The crushed crowns, the
+--- splinters, the ash ring and the contact darkening all come out of `hash`,
+--- which means they are identical in every frame, on every machine and in every
+--- replay -- and they were being rebuilt from scratch sixty times a second, at
+--- about two hundred and thirty draw calls a frame, in the most expensive scene
+--- in the game, on a target that is a phone in a browser. They are one texture
+--- and one quad now. What stays live is what actually changes: the strobe wash
+--- and the six foot craters, which move with the gait.
+local FOOT = { canvas = nil, r = 0, w = 0, h = 0 }
+
+--- The baked half, drawn once into a canvas around its own centre.
+function Boss:footprintBake()
   local r = self.radius
-  local a2 = arrive * arrive
-  if a2 < 0.01 then return end
-  local cy = self.y + r * 0.24
+  if FOOT.canvas and FOOT.r == r then return FOOT end
+  local w = math.ceil(r * 5.4)
+  local h = math.ceil(r * 3.4)
+  local bx, by = w * 0.5, h * 0.5
+  local prev = LG.getCanvas()      -- push("all") does not carry the canvas
+  local cv = LG.newCanvas(w, h)
+  cv:setFilter("linear", "linear")
+  LG.push("all")
+  LG.origin()
+  LG.setScissor()
+  LG.setCanvas(cv)
+  LG.clear(0, 0, 0, 0)
+  LG.setBlendMode("alpha", "alphamultiply")
 
   -- Contact. A machine this size that does not darken what it stands on floats
   -- above the frame no matter how well the hull is drawn -- and at the climax
   -- of a thirteen-minute run the antagonist has to sit *in* the world.
-  Draw.radialGradient(self.x, cy, r * A.footprint, P.alpha(C.void, 0.80 * a2),
+  Draw.radialGradient(bx, by, r * A.footprint, P.alpha(C.void, 0.80),
                       P.alpha(C.void, 0), r * A.footprint * 0.46)
-  Draw.radialGradient(self.x, cy, r * 1.25, P.alpha(P.black, 0.62 * a2),
+  Draw.radialGradient(bx, by, r * 1.25, P.alpha(P.black, 0.62),
                       P.alpha(P.black, 0), r * 0.58)
 
   -- crushed canopy: leaf shapes lying flat and colourless where they fell
   for i = 1, 46 do
     local a = hash(i, 3, 11) * TAU
     local d = r * (0.60 + hash(i, 5, 7) * 1.60)
-    local x = self.x + cos(a) * d
-    local y = cy + sin(a) * d * 0.52
+    local x = bx + cos(a) * d
+    local y = by + sin(a) * d * 0.52
     local s = r * (0.13 + hash(i, 9, 13) * 0.20)
     -- a flattened crown: a dark body with a pale broken edge on its up-side,
     -- which is what makes a blob read as a tree somebody stood on
-    Draw.setColor(P.mix(P.ramp.leaf[1], C.void, 0.45), (0.70 + 0.25 * hash(i, 4, 6)) * a2)
+    Draw.setColor(P.mix(P.ramp.leaf[1], C.void, 0.45), 0.70 + 0.25 * hash(i, 4, 6))
     Draw.blob(x, y + s * 0.10, s * 1.06, 8, i * 31, 0.36, 0.38)
     Draw.setColor(hash(i, 2, 8) > 0.5 and C.ash or P.mix(P.ramp.leaf[2], C.ash, 0.6),
-                  (0.60 + 0.30 * hash(i, 4, 6)) * a2)
+                  0.60 + 0.30 * hash(i, 4, 6))
     Draw.blob(x, y - s * 0.06, s * 0.90, 8, i * 31, 0.34, 0.36)
   end
   -- splinters thrown out, pointing away from what broke them
   for i = 1, 30 do
     local a = hash(i, 17, 4) * TAU
     local d = r * (1.30 + hash(i, 19, 6) * 1.00)
-    local x = self.x + cos(a) * d
-    local y = cy + sin(a) * d * 0.52
+    local x = bx + cos(a) * d
+    local y = by + sin(a) * d * 0.52
     limb(x, y, x + cos(a) * r * 0.13, y + sin(a) * r * 0.065, r * 0.020, r * 0.005,
-         C.ashHi, 0.65 * a2)
+         C.ashHi, 0.65)
   end
   -- the dead ash ring, broken rather than drawn as a circle
   for i = 0, 13 do
     local a0 = i / 14 * TAU + hash(i, 23, 2) * 0.16
     local a1 = a0 + 0.26 + hash(i, 29, 3) * 0.14
-    plate(self.x, cy, a0, a1, r * (A.footprint - 0.34), r * (A.footprint + 0.08), 0.52,
-          P.alpha(C.ash, 0), C.ashHi, 0.70 * a2, 3)
+    plate(bx, by, a0, a1, r * (A.footprint - 0.34), r * (A.footprint + 0.08), 0.52,
+          P.alpha(C.ash, 0), C.ashHi, 0.70, 3)
   end
 
-  -- the strobe on the ground, and the shape of the machine standing in it
+  LG.setCanvas(prev)
+  LG.pop()
+  FOOT.canvas, FOOT.r, FOOT.w, FOOT.h = cv, r, w, h
+  return FOOT
+end
+
+function Boss:drawFootprint(arrive, lift, footY)
+  local r = self.radius
+  local a2 = arrive * arrive
+  if a2 < 0.01 then return end
+  local cy = self.y + r * 0.24
+
+  -- the baked ground, as one quad. Premultiplied, because that is what a canvas
+  -- holds after it has been drawn into with ordinary alpha blending.
+  local F = self:footprintBake()
+  local bm, am = LG.getBlendMode()
+  LG.setBlendMode("alpha", "premultiplied")
+  Draw.setColor(P.white, a2)
+  LG.draw(F.canvas, self.x - F.w * 0.5, cy - F.h * 0.5)
+  LG.setBlendMode(bm, am)
+
+  -- The strobe on the ground. Amber, not red: the four red lamps that used to
+  -- justify a red wash are gone, the sweeping beacon is the only warning light
+  -- left on the machine, and with the wash matching it red goes back to meaning
+  -- exactly one thing in this fight -- the beam.
   local strobe = math.max(0, sin(self.age * TAU * AR.strobeHz)) ^ 2
   Draw.additive(function()
-    Draw.radialGradient(self.x, cy, r * 1.95, P.alpha(P.danger, (0.06 + 0.16 * strobe) * a2),
-                        P.alpha(P.danger, 0), r * 0.86)
+    Draw.radialGradient(self.x, cy, r * 1.95, P.alpha(C.hazard, (0.05 + 0.14 * strobe) * a2),
+                        P.alpha(C.hazard, 0), r * 0.86)
   end)
 
   -- foot craters, one per leg, dug in where the weight actually goes
@@ -915,10 +989,13 @@ function Boss:drawDeck(lift)
   LG.setLineWidth(2)
   ngon("line", 0, deckY, r * A.deckR, r * A.deckSq, 8, math.pi / 8)
 
-  -- rivet line around the deck rim
-  for i = 0, 23 do
-    local a = i / 24 * TAU
-    bolt(cos(a) * r * (A.deckR - 0.06), deckY + sin(a) * r * (A.deckSq - 0.05), r * 0.024, 0.9)
+  -- One rivet on each plate seam rather than a ring of twenty-four. Two dozen
+  -- bolt heads inside 0.86 of the radius is not armour, it is a texture, and at
+  -- the zoom this game is played at a texture is what the deck already had too
+  -- much of.
+  for i = 0, AR.deckRivets - 1 do
+    local a = i / AR.deckRivets * TAU + math.pi / 8
+    bolt(cos(a) * r * (A.deckR - 0.07), deckY + sin(a) * r * (A.deckSq - 0.06), r * 0.030, 0.95)
   end
 
   -- hazard band across the deck's leading edge, facing whichever way it walks
@@ -938,67 +1015,73 @@ function Boss:drawDeck(lift)
   Draw.setColor(C.rim, 0.4)
   LG.setLineWidth(2)
   ngon("line", 0, superY, r * A.superR, r * A.superSq, 8, 0)
-  for i = 0, 11 do
-    local a = i / 12 * TAU
-    bolt(cos(a) * r * (A.superR - 0.05), superY + sin(a) * r * (A.superSq - 0.045), r * 0.020, 0.85)
+  for i = 0, 5 do
+    local a = i / 6 * TAU + 0.4
+    bolt(cos(a) * r * (A.superR - 0.05), superY + sin(a) * r * (A.superSq - 0.045), r * 0.024, 0.9)
   end
+  -- One housing per flank, not a generator module with a louvre bank stacked on
+  -- top of it. Two elements inside the same thirty pixels of deck are not two
+  -- elements, they are noise -- and of the two only the heat slot has a job:
+  -- it is how the deck says, from across the island, that the core is open.
   for m = -1, 1, 2 do
     local bx = m * r * 0.52
-    local by = deckY - r * 0.10
-    local h  = r * 0.30
-    Draw.setColor(C.void)
-    Draw.roundRect("fill", bx - r * 0.19, by - h, r * 0.38, h + r * 0.10, r * 0.04)
-    Draw.linearGradient(bx - r * 0.17, by - h + r * 0.02, r * 0.34, h + r * 0.05,
-                        P.mix(C.hull, C.lit, 0.35), C.void, math.pi * 0.5)
-    Draw.setColor(C.rim, 0.4)
-    LG.setLineWidth(2)
-    LG.line(bx - r * 0.17, by - h + r * 0.02, bx + r * 0.17, by - h + r * 0.02)
-    -- a recessed access panel with two ribs, and a status pip
-    for gk = 0, 3 do
-      bolt(bx - r * 0.145 + gk * r * 0.097, by - h + r * 0.055, r * 0.020, 0.9)
-    end
-    local on = math.max(0, sin(self.age * 3.1 + m)) ^ 2
-    Draw.setColor(P.accent, 0.4 + 0.5 * on)
-    LG.circle("fill", bx + r * 0.12, by - r * 0.03, r * 0.024, 6)
-  end
-
-  -- vents: two louvre banks on the flanks, breathing heat
-  for v = 0, 1 do
-    local vx = (v == 0 and -1 or 1) * r * 0.52
-    local vy = deckY - r * 0.02
-    local heat = 0.5 + 0.5 * sin(self.age * TAU * AR.ventHz + v * 2.1)
+    local by = deckY - r * 0.05
+    local h  = r * 0.34
+    local heat = 0.5 + 0.5 * sin(self.age * TAU * AR.ventHz + m)
     local hotC = self.coreOpen > 0 and C.moltenHi or C.molten
-    Draw.setColor(C.deep)
-    Draw.roundRect("fill", vx - r * 0.16, vy - r * 0.105, r * 0.32, r * 0.21, r * 0.035)
     Draw.setColor(C.void)
-    Draw.roundRect("fill", vx - r * 0.135, vy - r * 0.085, r * 0.27, r * 0.17, r * 0.02)
-    Draw.additive(function()
-      Draw.setColor(hotC, (0.14 + 0.14 * heat) * (self.coreOpen > 0 and 2.0 or 1))
-      LG.rectangle("fill", vx - r * 0.135, vy - r * 0.085, r * 0.27, r * 0.17)
-    end)
-    for s = 0, 2 do
-      local sy = vy - r * 0.070 + s * r * 0.058
-      Draw.setColor(C.void)
-      LG.rectangle("fill", vx - r * 0.135, sy, r * 0.27, r * 0.030)
-      Draw.setColor(P.mix(C.hull, C.lit, 0.5))
-      LG.rectangle("fill", vx - r * 0.135, sy, r * 0.27, r * 0.021)
-    end
-    Draw.setColor(C.rim, 0.35)
+    Draw.roundRect("fill", bx - r * 0.20, by - h, r * 0.40, h + r * 0.11, r * 0.04)
+    Draw.linearGradient(bx - r * 0.18, by - h + r * 0.02, r * 0.36, h + r * 0.07,
+                        P.mix(C.hull, C.lit, 0.40), C.void, math.pi * 0.5)
+    Draw.setColor(C.rim, 0.45)
     LG.setLineWidth(2)
-    Draw.roundRect("line", vx - r * 0.16, vy - r * 0.105, r * 0.32, r * 0.21, r * 0.035)
-    -- the shimmer over it: three wobbling additive fins, warm in phase 3
-    local hot = hotC
+    LG.line(bx - r * 0.18, by - h + r * 0.02, bx + r * 0.18, by - h + r * 0.02)
+    -- the heat slot: a recess with three louvres and whatever is behind them
+    local sx, sy = bx - r * 0.145, by - r * 0.145
+    local sw, sh = r * 0.29, r * 0.21
+    Draw.setColor(C.void)
+    Draw.roundRect("fill", sx, sy, sw, sh, r * 0.02)
     Draw.additive(function()
-      for s = 1, 3 do
-        local w = sin(self.age * 5 + s * 2 + v) * r * 0.04
-        Draw.quad(vx - r * 0.11, vy - r * 0.40,
-                  vx + r * 0.11, vy - r * 0.40,
-                  vx + r * 0.07 + w, vy - r * (0.58 + 0.08 * s),
-                  vx - r * 0.07 + w, vy - r * (0.58 + 0.08 * s),
-                  hot, hot, P.alpha(hot, 0), P.alpha(hot, 0),
+      Draw.setColor(hotC, (0.16 + 0.16 * heat) * (self.coreOpen > 0 and 2.0 or 1))
+      LG.rectangle("fill", sx, sy, sw, sh)
+    end)
+    for k = 0, 2 do
+      local ly = sy + r * 0.014 + k * r * 0.064
+      Draw.setColor(C.void)
+      LG.rectangle("fill", sx, ly, sw, r * 0.032)
+      Draw.setColor(P.mix(C.hull, C.lit, 0.5))
+      LG.rectangle("fill", sx, ly, sw, r * 0.020)
+    end
+    -- the shimmer standing off the top of it, warm once the core is open
+    Draw.additive(function()
+      for k = 1, 2 do
+        local w = sin(self.age * 5 + k * 2 + m) * r * 0.04
+        Draw.quad(bx - r * 0.10, by - h,
+                  bx + r * 0.10, by - h,
+                  bx + r * 0.06 + w, by - h - r * (0.13 + 0.10 * k),
+                  bx - r * 0.06 + w, by - h - r * (0.13 + 0.10 * k),
+                  hotC, hotC, P.alpha(hotC, 0), P.alpha(hotC, 0),
                   (0.07 + 0.06 * heat) * (self.coreOpen > 0 and 2.2 or 1))
       end
     end)
+  end
+
+  -- The four struts that carry the intake collar. They belong to the throat,
+  -- but they are drawn here, before the core, because every one of them
+  -- crosses the aperture on the way up and four black bars laid over the one
+  -- element the phase read depends on is not structure, it is a cage. Behind
+  -- the well they read as what they are: the frame the throat stands in.
+  do
+    local cr, crY = r * A.collarR, r * A.collarR * A.collarSq
+    local cy = lift + r * A.collarY
+    for k = 0, 3 do
+      local a = k * TAU / 4 + math.pi / 4
+      local sx = cos(a) * r * 0.64
+      local sy = deckY + sin(a) * r * 0.44
+      limb(sx, sy, cos(a) * cr * 0.85, cy + sin(a) * crY * 0.85, r * 0.036, r * 0.024, C.void)
+      limb(sx, sy, cos(a) * cr * 0.85, cy + sin(a) * crY * 0.85, r * 0.020, r * 0.012,
+           P.mix(C.deep, C.hull, 0.3 + 0.7 * cos(a - math.pi * 1.25)))
+    end
   end
 
   -- contact shadow where the throat's base meets the deck
@@ -1009,9 +1092,9 @@ function Boss:drawDeck(lift)
   -- Sealed in phase 1, cracked in phase 2, retracted in phase 3 -- so the phase
   -- is legible from the shape of the machine and not from a plate count.
   --
-  -- The pool is drawn *opaque* and the leaves sit on top of it. Drawing the hot
-  -- part additively in the gaps instead turned the open core into a pale beige
-  -- sunburst: molten metal is a surface, and only its bloom is light.
+  -- The crust below is drawn *opaque* and the leaves sit on top of it. Molten
+  -- metal is a surface first: only what comes up out of the breaks in it is
+  -- light, and the moment that is reversed the core is a lamp under a lid.
   local open = (self.phase - 1) * 0.5
   if self.coreOpen > 0 then open = 1 end
   local pulse = 0.65 + 0.35 * sin(self.age * 3)
@@ -1019,24 +1102,124 @@ function Boss:drawDeck(lift)
   local rOut = r * (A.irisOut + 0.02)
 
   Draw.setColor(C.void)
-  LG.ellipse("fill", 0, deckY, rOut * 1.06, rOut * 1.06 * isq)
-  -- the pool: dark red at the rim, white-hot at the middle, and it only gets
-  -- properly hot once the machine is actually open
-  local coreEdge = P.mix(P.shade(P.ramp.ember, 1.6), C.coreDeep, 1 - open)
-  local coreMid  = P.mix(P.shade(P.ramp.ember, 2.3), C.coreMidC, (1 - open) * 0.9)
-  local coreHot  = P.mix(P.shade(P.ramp.ember, 3.4), C.coreHiC, (1 - open) * 0.8)
-  ngonLit(0, deckY, rOut, rOut * isq, 20, 0, coreEdge, coreEdge, 1)
-  plate(0, deckY, 0, TAU, 0, rOut, isq, coreMid, coreEdge, 1, 22)
-  plate(0, deckY, 0, TAU, 0, rOut * 0.30, isq, coreHot, P.alpha(coreHot, 0), 0.45 * pulse, 20)
+  LG.ellipse("fill", 0, deckY, rOut * 1.10, rOut * 1.10 * isq)
 
-  -- crust: broken plate still floating on it, so the pool has a surface
-  for k = 1, 8 do
-    local a = hash(k, 51, 3) * TAU + self.age * 0.09
-    local d = rOut * (0.20 + hash(k, 53, 4) * 0.72)
-    Draw.setColor(P.mix(C.void, C.deep, hash(k, 57, 5)), 0.90)
-    Draw.blob(cos(a) * d, deckY + sin(a) * d * isq, r * (0.028 + hash(k, 59, 6) * 0.036),
-              6, k * 17, 0.42, 0.55)
+  -- The crust. Near-black, and it is nearly all of the well: what the eye is
+  -- given here is a *surface*, and the only bright thing inside the machine is
+  -- what is coming up through the breaks in it.
+  --
+  -- This was a graded tan disc -- brass, or a wooden hatch, at the exact centre
+  -- of a machine that has come to strip a planet. A tessellation of crust
+  -- plates was tried first and at the size the core actually occupies on screen
+  -- it read as a gear: three concentric rings of even cells is a machined
+  -- thing, and this has to be a failing one. Cracks drawn as strokes carry it,
+  -- because a stroke can be thin, crooked and moving, and a cell cannot.
+  local pRim = P.mix(C.poolRim, C.coreDeep, 1 - open)
+  local pMid = P.mix(C.poolMid, C.coreMidC, 1 - open)
+  local pHot = P.mix(C.poolHot, C.coreHiC, 1 - open)
+  local crustC = P.mix(C.crustCold, C.crust, open)
+  local crustL = P.mix(C.crustCold, C.crustLit, open)
+  ngonLit(0, deckY, rOut, rOut * isq, 20, 0, crustL, crustC, 1)
+  plate(0, deckY, 0, TAU, rOut * 0.55, rOut, isq, P.alpha(C.void, 0), C.void, 0.55, 20)
+  -- four broken slabs, at low contrast: enough that the crust has a grain,
+  -- few enough that it is still one surface. Nine of them read as rubble.
+  for k = 1, 4 do
+    local a = hash(k, 51, 3) * TAU + self.age * 0.05
+    local d = rOut * (0.28 + hash(k, 53, 4) * 0.50)
+    Draw.setColor(P.mix(crustC, crustL, 0.35 + hash(k, 57, 5) * 0.45), 0.40)
+    Draw.blob(cos(a) * d, deckY + sin(a) * d * isq, rOut * (0.24 + hash(k, 59, 6) * 0.18),
+              7, k * 17, 0.34, 0.55)
   end
+
+  -- one pocket where the crust has given way and the melt is simply open. It
+  -- wanders, so the core is never quite the same shape twice.
+  do
+    local w = self.age * 0.29
+    local px, py = sin(w) * rOut * 0.34, deckY + cos(w * 0.83) * rOut * 0.26 * isq
+    local pr = rOut * 0.30
+    Draw.setColor(C.void, 0.50)
+    Draw.blob(px, py, pr * 1.05, 8, 5, 0.34, isq)
+    Draw.radialGradient(px, py, pr, P.mix(pRim, C.void, 0.30), P.alpha(pRim, 0), pr * isq)
+  end
+
+  -- The cracks. Each one walks outward from the vent in five steps with a
+  -- crooked wobble, and a bright pulse travels up it -- so the fissure network
+  -- is legibly *moving* without a frame of it being authored.
+  local drift = self.age * TAU * AR.coreDriftRps
+  local flow  = self.age * TAU * AR.coreFlowHz
+  local wide  = r * (AR.coreCrack + AR.coreCrackOpen * open)
+  local NC, NS = AR.coreCracks, 4
+  Draw.additive(function()
+    for i = 1, NC * 2 do
+      -- Two generations. The first walks out of the vent; the second is finer,
+      -- shorter, offset half a step and starts out in the field -- because
+      -- eight equal strokes leaving one bright middle is a starfish, and a
+      -- crust that has failed fails at more than one scale.
+      local fine = i > NC
+      local j = fine and (i - NC + 0.5) or i
+      local a = drift + j / NC * TAU + hash(i, 71, 2) * 0.9
+      -- each crack starts on its own point of the vent's lip rather than at
+      -- the middle: eight strokes converging on one pixel stack additively
+      -- into a white star, which is the lens flare this pass exists to avoid
+      local o = rOut * (fine and (0.42 + hash(i, 73, 4) * 0.22)
+                             or (0.20 + hash(i, 73, 4) * 0.16))
+      local lenK = rOut * (fine and (0.62 + hash(i, 79, 3) * 0.34)
+                                 or (0.62 + hash(i, 79, 3) * 0.42))
+      local wid  = wide * (fine and 0.50 or 1.00)
+      local dim  = fine and 0.62 or 1
+      local wob  = 0.45 + hash(i, 81, 5) * 1.15
+      local px, py, pw = cos(a) * o, deckY + sin(a) * o * isq, wid * 1.10
+      for st = 1, NS do
+        local t  = st / NS
+        local d  = o + (lenK - o) * t
+        local aa = a + (hash(i, st, 13) - 0.5) * 0.30 * wob + sin(flow * 0.7 + i + st) * 0.09
+        local qx, qy = cos(aa) * d, deckY + sin(aa) * d * isq
+        local w  = wid * (1.10 - t * 0.30)
+        -- the pulse running up the crack. It never falls all the way off: a
+        -- crack that goes out is a crack that stops being a light source, and
+        -- then the core is a dark patch again.
+        local pu = (0.52 + 0.48 * U.saturate(sin(flow * 2.0 - st * 1.05 + i * 1.7))) * dim
+        local c0 = P.mix(pHot, pMid, U.saturate((t - 1 / NS) * 1.15))
+        local c1 = P.mix(pHot, pMid, U.saturate(t * 1.15))
+        local nx0, ny0 = -(qy - py), (qx - px)
+        local nl = math.sqrt(nx0 * nx0 + ny0 * ny0)
+        if nl > 1e-4 then
+          nx0, ny0 = nx0 / nl, ny0 / nl
+          Draw.quad(px + nx0 * pw, py + ny0 * pw, px - nx0 * pw, py - ny0 * pw,
+                    qx - nx0 * w, qy - ny0 * w, qx + nx0 * w, qy + ny0 * w,
+                    P.alpha(c0, 0.80 * pu), P.alpha(c0, 0.80 * pu),
+                    P.alpha(c1, 0.72 * pu * (1 - t * 0.22)),
+                    P.alpha(c1, 0.72 * pu * (1 - t * 0.22)))
+          -- a thread of white-hot down the middle of the widest stretch.
+          -- The crack has to be the colour of fire and still reach the top of
+          -- the range somewhere; a strip a pixel and a half wide is where that
+          -- can be afforded without the well going back to being a lamp.
+          if st <= 2 and not fine then
+            local wc = P.mix(pHot, P.white, 0.55)
+            Draw.quad(px + nx0 * pw * 0.40, py + ny0 * pw * 0.40,
+                      px - nx0 * pw * 0.40, py - ny0 * pw * 0.40,
+                      qx - nx0 * w * 0.40, qy - ny0 * w * 0.40,
+                      qx + nx0 * w * 0.40, qy + ny0 * w * 0.40,
+                      P.alpha(wc, 0.60 * pu), P.alpha(wc, 0.60 * pu),
+                      P.alpha(wc, 0.40 * pu), P.alpha(wc, 0.40 * pu))
+          end
+        end
+        px, py, pw = qx, qy, w
+      end
+    end
+    -- the wall of the well, catching what is burning at the bottom of it. It
+    -- is the difference between a dark disc with some marks on it and a hole
+    -- with a fire in it.
+    plate(0, deckY, 0, TAU, rOut * 0.80, rOut * 1.00, isq,
+          P.alpha(pMid, 0), P.alpha(pMid, 0.30 + 0.16 * open), 1, 22)
+    -- the vent at the middle, and the light the whole well throws back up
+    Draw.setColor(pMid, 0.55)
+    LG.ellipse("fill", 0, deckY, wide * 1.7, wide * 1.7 * isq, 12)
+    Draw.setColor(P.mix(pHot, P.white, 0.45), 0.55)
+    LG.ellipse("fill", 0, deckY, wide * 0.75, wide * 0.75 * isq, 10)
+    Draw.glow(0, deckY, rOut * (0.42 + 0.26 * open) * pulse, pMid,
+              (0.13 + 0.17 * open), 2)
+  end)
 
   -- the leaves, retracting outward as the machine opens
   for k = 0, 5 do
@@ -1056,54 +1239,57 @@ function Boss:drawDeck(lift)
     end
   end
 
-  Draw.additive(function()
-    Draw.glow(0, deckY, r * (0.14 + 0.24 * open) * pulse, C.molten, 0.16 + 0.22 * open)
-  end)
-
   -- the machined ring the leaves run in, and its bolts: without it a closed
   -- aperture is a grey disc and nothing says it is a door
   plate(0, deckY, 0, TAU, rOut * 1.02, rOut * 1.20, isq, C.void, C.deep, 1, 22)
   plate(0, deckY, 0, TAU, rOut * 1.16, rOut * 1.20, isq, C.lit, C.lit, 0.7, 22)
-  for k = 0, 11 do
-    local a = k / 12 * TAU + 0.12
-    bolt(cos(a) * rOut * 1.11, deckY + sin(a) * rOut * 1.11 * isq, r * 0.019, 0.9)
+  for k = 0, 5 do
+    local a = k / 6 * TAU + 0.12
+    bolt(cos(a) * rOut * 1.11, deckY + sin(a) * rOut * 1.11 * isq, r * 0.024, 0.95)
   end
 
-  -- molten cracks spidering out of the core once it is open
+  -- Cracks spidering out of the core across the deck plate, once it is open.
+  -- Cut into the deck first and lit second: an additive line on its own is
+  -- lightning crawling over a lid, and a groove with heat in it is a hull that
+  -- is coming apart.
   if self.coreOpen > 0 then
-    Draw.additive(function()
-      for k = 1, 10 do
-        local a = k / 10 * TAU + hash(k, 41, 2) * 0.4
-        local n = 5
+    local n = 4
+    for k = 1, AR.coreVeins do
+      local a = k / AR.coreVeins * TAU + hash(k, 41, 2) * 0.5
+      for pass = 0, 1 do
         local px, py = cos(a) * r * A.irisOut, deckY + sin(a) * r * A.irisOut * 0.7
-        for s = 1, n do
-          local d = r * (A.irisOut + s / n * (A.deckR - A.irisOut) * 0.98)
-          local aa = a + (hash(k, s, 13) - 0.5) * 0.5
+        for st = 1, n do
+          local d = r * (A.irisOut + st / n * (A.deckR - A.irisOut) * 0.92)
+          local aa = a + (hash(k, st, 13) - 0.5) * 0.42
           local qx, qy = cos(aa) * d, deckY + sin(aa) * d * (A.deckSq / A.deckR)
-          local f = 1 - s / n
-          Draw.setColor(P.mix(C.moltenHi, C.molten, s / n), (0.55 * f + 0.15) * pulse)
-          LG.setLineWidth(1 + f * 3)
-          LG.line(px, py, qx, qy)
+          local f = 1 - st / n
+          if pass == 0 then
+            Draw.setColor(C.void, 0.85)
+            LG.setLineWidth(3 + f * 4)
+            LG.line(px, py, qx, qy)
+          else
+            Draw.setColor(P.mix(C.moltenHi, C.molten, st / n), (0.60 * f + 0.12) * pulse)
+            LG.setLineWidth(1 + f * 2)
+            LG.line(px, py, qx, qy)
+          end
           px, py = qx, qy
         end
+      end
+    end
+    Draw.additive(function()
+      for k = 1, AR.coreVeins do
+        local a = k / AR.coreVeins * TAU + hash(k, 41, 2) * 0.5
+        Draw.glow(cos(a) * r * (A.irisOut + 0.10), deckY + sin(a) * r * (A.irisOut + 0.10) * 0.7,
+                  r * 0.16, C.molten, 0.30 * pulse)
       end
     end)
   end
 
-  -- four strobes on short masts, blinking out of phase
-  for i = 1, 4 do
-    local a = math.pi * 0.5 + (i - 1) * math.pi * 0.5 + (i > 2 and 0.5 or -0.5) * 0.55
-    local bx = cos(a) * r * 0.66
-    local by = deckY + sin(a) * r * 0.52
-    limb(bx, by, bx, by - r * 0.16, r * 0.032, r * 0.024, C.void)
-    limb(bx, by, bx, by - r * 0.15, r * 0.018, r * 0.013, C.hull)
-    local on = math.max(0, sin(self.age * TAU * AR.strobeHz + i * 1.6)) ^ 3
-    Draw.setColor(C.void)
-    LG.circle("fill", bx, by - r * 0.18, r * 0.050, 8)
-    Draw.setColor(P.danger, 0.35 + 0.65 * on)
-    LG.circle("fill", bx, by - r * 0.18, r * 0.038, 8)
-    if on > 0.04 then Draw.glow(bx, by - r * 0.18, r * 0.44 * on, P.danger, 0.85 * on) end
-  end
+  -- Four strobes used to blink here. Two of them sat at three and nine o'clock
+  -- as small saturated pink dots -- the only pink left on a hull the violet was
+  -- deliberately taken out of -- and at gameplay zoom they read as stray VFX
+  -- lying on the deck rather than as lamps bolted to it. The rig keeps exactly
+  -- one warning light, the sweeping one below, and red is left to mean the beam.
 
   -- the rotating beacon on the superstructure: one amber wedge sweeping the
   -- deck. Nothing else in the game does this, and it is what makes the rig read
@@ -1112,9 +1298,13 @@ function Boss:drawDeck(lift)
   local mx = cos(A.beaconAt) * r * A.superR * 0.86
   local my = superY + sin(A.beaconAt) * r * A.superSq * 0.86
   local lampY = my - r * 0.24
+  -- The sweeping wedge is the rig's whole warning read now, so it reaches
+  -- further and carries a hard leading edge instead of fading out both sides.
   Draw.additive(function()
-    plate(mx, lampY, ba - 0.22, ba + 0.22, r * 0.06, r * 0.62, 0.42,
-          C.hazard, P.alpha(C.hazard, 0), 0.14, 5)
+    plate(mx, lampY, ba - 0.26, ba + 0.26, r * 0.06, r * 0.78, 0.42,
+          C.hazard, P.alpha(C.hazard, 0), 0.17, 6)
+    plate(mx, lampY, ba + 0.20, ba + 0.26, r * 0.06, r * 0.78, 0.42,
+          C.hazard, P.alpha(C.hazard, 0), 0.22, 3)
   end)
   limb(mx, my, mx, lampY + r * 0.03, r * 0.026, r * 0.020, C.void)
   limb(mx, my, mx, lampY + r * 0.03, r * 0.015, r * 0.011, C.lit)
@@ -1188,7 +1378,7 @@ function Boss:drawTurret(lift)
   if heat > 0.02 then
     local mx = tx + bx * r * 0.41 - bx * kick
     local my = ty + by * r * 0.41 - by * kick
-    Draw.glow(mx, my, r * (0.10 + 0.45 * heat), P.danger, 0.4 + 0.8 * heat)
+    Draw.glow(mx, my, r * (0.06 + 0.12 * heat), P.danger, 0.20 + 0.22 * heat, 2)
   end
 end
 
@@ -1204,16 +1394,6 @@ function Boss:drawIntake(lift)
   local mr = r * A.mouthR
   local crY = cr * A.collarSq
   local mrY = mr * A.mouthSq
-
-  -- four struts from the deck up to the collar
-  for k = 0, 3 do
-    local a = k * TAU / 4 + math.pi / 4
-    local sx = cos(a) * r * 0.64
-    local sy = lift + r * A.deckY + sin(a) * r * 0.44
-    limb(sx, sy, cos(a) * cr * 0.85, cy + sin(a) * crY * 0.85, r * 0.036, r * 0.024, C.void)
-    limb(sx, sy, cos(a) * cr * 0.85, cy + sin(a) * crY * 0.85, r * 0.020, r * 0.012,
-         P.mix(C.deep, C.hull, 0.3 + 0.7 * cos(a - math.pi * 1.25)))
-  end
 
   -- the cone wall, lit from up-left and falling into shadow at its base
   Draw.setColor(C.void)
@@ -1530,15 +1710,23 @@ function Boss:drawTelegraph(arrive)
     Draw.ring(x0, y0, r * (2.2 - 1.5 * k), 3, 0, TAU, P.danger, 3)
     if k > 0.88 then
       Draw.additive(function()
-        Draw.setColor(P.white, (k - 0.88) / 0.12 * 0.7)
-        LG.circle("fill", x0, y0, r * 0.26, 16)
+        Draw.setColor(P.mix(P.warn, P.white, 0.5), (k - 0.88) / 0.12 * 0.55)
+        LG.circle("fill", x0, y0, r * 0.15, 14)
       end)
     end
     LG.setLineWidth(1)
   end
 end
 
---- The beam itself, and the housing it comes out of.
+--- The beam itself. It leaves a turret now, so it can behave like something a
+--- turret fired: tightest at the muzzle, opening downrange, hard-edged, and
+--- shedding spall sideways off whatever it is cutting.
+---
+--- It used to be drawn wide at the muzzle -- three tapered passes, a white
+--- core, seven diamonds and a 62 px radial bloom all stacked in the same
+--- inch -- which clipped to paper white and read as a lens flare parked on the
+--- barrel. None of that is how a cut looks. A cut is a thin bright line with
+--- a tight halo and a mess coming off the workpiece.
 function Boss:drawBeam(lift)
   local r = self.radius
   local a = self.beamAngle
@@ -1546,35 +1734,101 @@ function Boss:drawBeam(lift)
   local ex = self.x + tx + cos(ta) * r * 0.41
   local ey = self.y + ty + sin(ta) * 0.68 * r * 0.41
   local range = AR.beamRange
-  local x2, y2 = ex + cos(a) * range, ey + sin(a) * range
+  local ux, uy = cos(a), sin(a)
+  local nx, ny = -uy, ux
+  local x2, y2 = ex + ux * range, ey + uy * range
 
   -- scorch under it, so the sweep leaves a mark rather than floating
   Draw.setColor(C.void, 0.45)
-  local nx, ny = -sin(a) * r * 0.20, cos(a) * r * 0.20
-  Draw.quad(ex + nx, ey + ny, ex - nx, ey - ny,
-            x2 - nx * 0.4, y2 - ny * 0.4, x2 + nx * 0.4, y2 + ny * 0.4,
+  local sx, sy = nx * r * 0.20, ny * r * 0.20
+  Draw.quad(ex + sx, ey + sy, ex - sx, ey - sy,
+            x2 - sx * 0.4, y2 - sy * 0.4, x2 + sx * 0.4, y2 + sy * 0.4,
             C.void, C.void, P.alpha(C.void, 0), P.alpha(C.void, 0))
 
-  local flick = 0.88 + 0.12 * sin(self.age * 41)
-  Draw.beam(ex, ey, x2, y2, r * 0.60 * flick, P.alpha(P.danger, 0.55), 0.75)
-  Draw.beam(ex, ey, x2, y2, r * 0.22 * flick, P.alpha(P.mix(P.danger, P.warn, 0.35), 0.7), 0.4)
-  Draw.beam(ex, ey, x2, y2, r * 0.05, P.alpha(P.white, 0.55), 0.2)
-  -- energy running down it
+  local flick = 0.90 + 0.10 * sin(self.age * 41)
+  local segs = 8
+
+  --- One pass of the shaft: core half-width `w0` at the muzzle opening to `w1`
+  --- at the far end, with a soft flank either side of it so the profile falls
+  --- off instead of ending in a hard edge. Three flat ribbons stacked on each
+  --- other read as a printed stripe; a beam has to have a section.
+  local function shaft(w0, w1, c, a0, a1, soft)
+    soft = soft or 2.4
+    local fade = P.alpha(c, 0)
+    local px, py, pw, pa = ex, ey, w0, a0
+    for k = 1, segs do
+      local t  = k / segs
+      local w  = U.lerp(w0, w1, t ^ 0.55)
+      local al = U.lerp(a0, a1, t)
+      local qx, qy = ex + ux * range * t, ey + uy * range * t
+      local c0, c1 = P.alpha(c, pa), P.alpha(c, al)
+      -- core
+      Draw.quad(px + nx * pw, py + ny * pw, px - nx * pw, py - ny * pw,
+                qx - nx * w, qy - ny * w, qx + nx * w, qy + ny * w,
+                c0, c0, c1, c1)
+      -- and a flank either side of it, falling to nothing
+      for side = -1, 1, 2 do
+        Draw.quad(px + nx * side * pw, py + ny * side * pw,
+                  px + nx * side * pw * soft, py + ny * side * pw * soft,
+                  qx + nx * side * w * soft, qy + ny * side * w * soft,
+                  qx + nx * side * w, qy + ny * side * w,
+                  c0, fade, fade, c1)
+      end
+      px, py, pw, pa = qx, qy, w, al
+    end
+  end
+
   Draw.additive(function()
-    for i = 1, 7 do
-      local t = ((self.age * 1.4 + i / 7) % 1)
+    shaft(r * AR.beamMuzzleW, r * AR.beamFarW * flick, P.danger, 0.34, 0.02, 2.6)
+    shaft(r * AR.beamMuzzleW * 0.44, r * AR.beamFarW * 0.40 * flick,
+          P.mix(P.danger, P.warn, 0.40), 0.50, 0.04, 2.2)
+    -- the cut itself: thin, hard, and the only part allowed near white
+    shaft(r * 0.014, r * 0.026, P.mix(P.warn, P.white, 0.55), 0.85, 0.12, 1.8)
+
+    -- The muzzle, as gas leaving a brake rather than as a star: two short
+    -- petals across the barrel and a bloom a quarter the size of the old one.
+    local mf = 0.72 + 0.28 * sin(self.age * 53)
+    local mw = r * AR.beamMuzzle * mf
+    for side = -1, 1, 2 do
+      Draw.quad(ex - ux * mw * 0.10, ey - uy * mw * 0.10,
+                ex + nx * side * mw * 0.26 + ux * mw * 0.06,
+                ey + ny * side * mw * 0.26 + uy * mw * 0.06,
+                ex + nx * side * mw + ux * mw * 0.50,
+                ey + ny * side * mw + uy * mw * 0.50,
+                ex + ux * mw * 0.70, ey + uy * mw * 0.70,
+                P.alpha(P.warn, 0.40), P.alpha(P.warn, 0.30),
+                P.alpha(P.warn, 0), P.alpha(P.warn, 0.10))
+    end
+    -- and nothing round. A radial bloom at the muzzle is the whole reason the
+    -- old beam read as a lens flare, so what is left here is directional: the
+    -- petals above, and a short hot stub down the barrel's own line.
+    Draw.quad(ex + nx * r * 0.055, ey + ny * r * 0.055,
+              ex - nx * r * 0.055, ey - ny * r * 0.055,
+              ex + ux * mw * 1.5 - nx * r * 0.018, ey + uy * mw * 1.5 - ny * r * 0.018,
+              ex + ux * mw * 1.5 + nx * r * 0.018, ey + uy * mw * 1.5 + ny * r * 0.018,
+              P.alpha(P.warn, 0.34), P.alpha(P.warn, 0.34),
+              P.alpha(P.warn, 0), P.alpha(P.warn, 0))
+
+    -- spall coming off the cut, thrown sideways and backwards down the lane.
+    -- This is the tell that the beam is *doing* something to what it crosses.
+    local tick = floor(self.age * 9)
+    for i = 1, AR.beamSpall do
+      local t = (self.age * 1.1 + i / AR.beamSpall) % 1
       local d = t * range
-      local w = r * 0.30 * (1 - t * 0.6)
-      local px, py = ex + cos(a) * d, ey + sin(a) * d
-      local ux, uy = cos(a), sin(a)
-      Draw.setColor(P.mix(P.warn, P.white, 0.5), (1 - t) * 0.45)
-      LG.polygon("fill", px + ux * w * 0.55, py + uy * w * 0.55,
-                         px - uy * w, py + ux * w,
-                         px - ux * w * 0.55, py - uy * w * 0.55,
-                         px + uy * w, py - ux * w)
+      local px, py = ex + ux * d, ey + uy * d
+      -- thrown clear of the lane, not down it: spall inside the beam is just
+      -- a dashed line and reads as a texture on the ribbon
+      local side = (hash(i, tick, 3) > 0.5) and 1 or -1
+      local off = r * (0.16 + 0.18 * hash(i, tick, 7))
+      local l = r * (0.09 + 0.16 * hash(i, tick, 5))
+      Draw.setColor(P.mix(P.warn, P.white, 0.35), 0.60 * (1 - t))
+      LG.setLineWidth(1.5)
+      LG.line(px + nx * side * off, py + ny * side * off,
+              px + nx * side * (off + l) - ux * l * 1.10,
+              py + ny * side * (off + l) - uy * l * 1.10)
     end
   end)
-  Draw.glow(ex, ey, r * 0.70, P.mix(P.danger, P.warn, 0.4), 0.55)
+  LG.setLineWidth(1)
 end
 
 ------------------------------------------------------------------------- draw
@@ -1626,7 +1880,10 @@ function Boss:draw()
         plate(0, lift, a0, a1, r * (1.10 + 0.16 * (1 - hb)), r * (1.26 + 0.16 * (1 - hb)),
               A.skirtSq, P.warn, P.alpha(P.warn, 0), 0.85 * k, 4)
       end
-      Draw.setColor(P.white, 0.5 * k)
+      -- the shell's own edge, warm rather than white: the message is ARMOUR
+      -- HOLDING, and a white flash on a machine whose only warm note is the
+      -- hazard paint reads as damage rather than as a refusal
+      Draw.setColor(P.mix(P.warn, P.white, 0.45), 0.42 * k)
       LG.setLineWidth(2 + 4 * k)
       LG.ellipse("line", 0, lift, r * 1.12, r * 1.12 * A.skirtSq, 40)
     end)
@@ -1664,8 +1921,10 @@ function Boss:emitLight(Lighting)
   -- amount of drawing survives a hotspot sitting on top of it.
   Lighting.addLight(self.x, self.y + r * 0.60, AR.keyRadius, P.ramp.metal[3], AR.keyGain,
                     { flicker = 0.04, softness = 1 })
+  -- Amber, matching the beacon: see drawFootprint. Red on this machine is the
+  -- beam and nothing else.
   local strobe = math.max(0, math.sin(self.age * TAU * AR.strobeHz)) ^ 2
-  Lighting.addLight(self.x, self.y + r * 0.55, AR.strobeRadius, P.danger,
+  Lighting.addLight(self.x, self.y + r * 0.55, AR.strobeRadius, C.hazard,
                     AR.strobeGain * (0.35 + 0.65 * strobe), { softness = 1 })
   Lighting.addLight(self.x, self.y + r * A.mouthY, AR.throatRadius, P.o2,
                     AR.throatGain * (0.75 + 0.25 * math.sin(self.age * 3.4)))

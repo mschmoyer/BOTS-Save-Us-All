@@ -105,7 +105,13 @@ T.bots = {
     -- three builders and fifteen planters drained more than a player earns
     -- standing on a deposit. It says "builds new Planters from cobalt it
     -- finds", and now that is what it does.
-    buildCost = 1,
+    -- Three chunks of what it found, per Planter. At one, a Builder converted
+    -- node cobalt into workers far cheaper than the player's own escalating
+    -- price and the crew ran away with itself -- traced runs reached a hundred
+    -- and thirty-eight bots where twenty to forty is the shape of the game.
+    -- The bank charge it used to make was the only brake, and taking that brake
+    -- away without replacing it is what let go.
+    buildCost = 3,
     desc = "Builds new Planters from cobalt it finds.",
   },
   repulsor = {
@@ -219,7 +225,7 @@ T.cycle = {
   -- in exact proportion, so growth was self-punishing and loss was
   -- self-relieving. The pressure is authored per cycle now and the forest term
   -- is a much smaller reminder that a bigger wood is a longer perimeter.
-  budget     = { 26, 46, 78, 120, 172, 236, 310 },   -- floor for the night's spend
+  budget     = { 26, 46, 74, 110, 156, 208, 268 },   -- floor for the night's spend
   budgetPerTree = 0.16,        -- ...plus this much for every tree you have grown
   -- What the night is made of, by cycle: the weight of each type at the cycle it
   -- unlocks, and how that weight drifts per cycle afterwards (under 1 fades,
@@ -248,7 +254,11 @@ T.cycle = {
   focusChance  = 0.34,
   focusDecay   = 12,      -- seconds a place stays hot after teeth went into it
   anchorWindow = 0.45,    -- fraction of the night a surviving Scar pulls waves in
-  anchorChance = 0.80,
+  -- Four waves in five opening on a Scar turned a bad dawn into a spiral: the
+  -- night began inside the wood you had already lost, which cost more trees,
+  -- which left more Scars. It still pulls the opening inland; it no longer
+  -- decides the whole first half of the night.
+  anchorChance = 0.55,
   escortFrom   = 6,       -- Wardens and Maws arrive with a bodyguard from here
   escortSpend  = 0.22,    -- ...paid for out of this share of what is left
   scarQuota    = { 0, 1, 2, 2, 3, 3, 4 },  -- Scars the Blight may leave per dawn

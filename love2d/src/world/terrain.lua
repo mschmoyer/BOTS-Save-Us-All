@@ -127,6 +127,8 @@ extern vec3  cWater[4];
 extern vec3  cStone[4];
 extern vec3  cFlora;
 extern vec3  cLichen;
+extern vec3  cNecrosis;
+extern vec3  cWither;
 
 float hsh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
@@ -483,71 +485,120 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // coastline uses, so the blight *eats* into living ground on a crinkled front.
   float scarN = scar + (d1 - 0.5) * 0.34 + (d2 - 0.5) * 0.20 + (d3 - 0.5) * 0.09;
   float scarT = smoothstep(0.30, 0.50, scarN) * (1.0 - beachT * 0.75);
-  float scarEdge = smoothstep(0.15, 0.33, scarN) * (1.0 - smoothstep(0.29, 0.45, scarN));
+  float scarEdge = smoothstep(0.13, 0.31, scarN) * (1.0 - smoothstep(0.27, 0.46, scarN));
+  // Outliers. Disease does not advance as a front with a clean outside; it
+  // spots ahead of itself and the spots join up later. A handful of islands of
+  // dead ground just beyond the edge is the whole difference between blight
+  // and a stencil.
+  float spotF = fbm3(w * 0.0170 + 517.0);
+  float spot = smoothstep(0.635, 0.865, spotF)
+             * smoothstep(0.01, 0.24, scarN) * (1.0 - smoothstep(0.30, 0.47, scarN));
+  scarT = clamp(scarT + spot * (1.0 - beachT) * 0.80, 0.0, 1.0);
   if (scarT > 0.002 || scarEdge > 0.002) {
-    // Dead ground is *ash over cinder*, and the value structure carries all of
-    // it: pale dust on the plates, near-black down the fissures, the middle of
-    // a scar burnt out and the rim still dusty. The violet is a stain in the
-    // cracks and never the local colour of the dirt -- poisoned earth is a
-    // bruise, not a sweet, and hard magenta veins on brown read as lines drawn
-    // on wallpaper.
-    float deep   = smoothstep(0.30, 0.86, scarN);   // toward the heart of it
-    float form   = fbm3(w * 0.0021 + 211.0);        // ~480 px: the big shapes
+    // Poisoned ground, not dry ground. Everything wide-area here is value and
+    // texture: a necrosis mottle for the masses, a fibrous curdling over it,
+    // wet seeps where the mat never dried, and a crust that has split only
+    // where it *did* dry. The crazing is the last layer and the quietest one --
+    // led with, it reads as mud, and the whole thing turns into a lake bed.
+    float deep = smoothstep(0.26, 0.88, scarN);   // toward the heart of it
+    float form = fbm3(w * 0.0021 + 211.0);        // ~480 px: the big shapes
+    float rotF = fbm3(w * 0.0064 +  77.0);        // ~156 px: necrosis mottle
+    float wetF = fbm3(w * 0.0041 + 909.0);        // ~244 px: where it seeps
+    float curd = rdg3(w * 0.0290 + 131.0);        // ~34 px: fibrous curdling
 
-    // Cracked ground is *cells*: flat plates of dried ash with a fissure
-    // between them. Two scales, big plates broken down into small ones, warped
-    // so no edge is ruled. Everything about a scar has to read by value and
-    // texture first -- veins painted on a brown field read as wallpaper.
-    vec2 cwp = w + vec2((fbm3(w * 0.0105 +  5.0) - 0.5) * 26.0,
-                        (fbm3(w * 0.0105 + 61.0) - 0.5) * 26.0);
-    vec3 pa  = cells(cwp * 0.0165);                 // ~61 px plates
-    vec2 pas = cellId((cwp + uSun * 5.0) * 0.0165);
-    vec3 pb  = cells(cwp * 0.0470);                 // ~21 px crazing
+    // Where the crust dried hard enough to shrink and split. Whole regions of
+    // a scar never do -- they stay a soft rotten mat -- and that is what stops
+    // the surface being one reptile-skin texture from edge to edge.
+    float dryK = smoothstep(0.34, 0.74, form * 0.62 + (1.0 - wetF) * 0.55);
+    // ...and where it stayed wet and went to a dark seep instead.
+    float seep = smoothstep(0.58, 0.90, wetF) * (0.30 + 0.70 * deep);
+
+    // Cracked ground is *cells*: flat plates with a fissure between them,
+    // warped so no edge is ruled and stretched so they are not equilateral.
+    vec2 cwp = w + vec2((fbm3(w * 0.0105 +  5.0) - 0.5) * 34.0,
+                        (fbm3(w * 0.0105 + 61.0) - 0.5) * 34.0);
+    vec2 pcs = vec2(0.0130, 0.0163);              // ~77 x 61 px plates
+    vec3 pa  = cells(cwp * pcs);
+    vec2 pas = cellId((cwp + uSun * 6.0) * pcs);
+    // Each plate crazes on its own. Offsetting the sub-grid by the plate's own
+    // hash means a small crack can never run across a major fissure, which is
+    // what puts T-junctions and orphan slivers in -- and it is the whole
+    // difference between a hierarchy and two Voronoi nets laid on top of each
+    // other, which is what a second `cells(w * k)` gives you and what this
+    // surface used to be.
+    vec3 pb  = cells(cwp * 0.0392 + hash22(pa.xy + 3.3) * 19.0);
     float tA = hash21(pa.xy + 5.7);
     float tB = hash21(pb.xy + 19.3);
-    // The fissures open and close along their length instead of running as a
-    // ruled net of equal width, and whole regions of the scar craze tightly
-    // while others barely open -- without that second, slower term a large scar
-    // is one repeating reptile-skin texture from edge to edge.
-    float cvz = (0.55 + 0.95 * fbm3(w * 0.0036 + 71.0))
-              * (0.70 + 0.65 * fbm3(w * 0.0170 +  3.0));
-    float crackA = smoothstep(0.070, 0.006, pa.z * cvz);
-    float crackB = smoothstep(0.085, 0.014, pb.z * cvz);
-    float crack  = clamp(crackA + crackB * 0.72, 0.0, 1.0);
+    // How far this particular plate has broken up, and how wide the fissures
+    // around it have opened. Evenly weighted edges over evenly sized cells is
+    // a survey drawing.
+    float brk  = smoothstep(0.20, 0.78, hash21(pa.xy + 41.0) * 0.62 + dryK * 0.66);
+    float open = (0.40 + 1.10 * fbm3(w * 0.0036 + 71.0)) * (0.48 + 0.85 * dryK);
+    float crackA = smoothstep(0.052, 0.004, pa.z * open);
+    float crackB = smoothstep(0.058, 0.008, pb.z * open) * brk * (1.0 - crackA);
+    float crack  = clamp(crackA * 0.90 + crackB * 0.62, 0.0, 1.0) * (1.0 - seep * 0.88);
 
-    // Hold the top of the ramp back: cAsh's last stop is a warm tan, and plates
-    // reaching it turned the whole scar the colour of a leather sofa. Ash, then
-    // desaturated toward its own grey, so the scar reads dead rather than dirty.
+    // ---- value ----
     vec3 dead = ramp(cAsh[0], cAsh[1], cAsh[2], cAsh[3],
-                     0.45 + tA * 1.28 + tB * 0.55 + (d2 - 0.5) * 0.40);
-    dead = mix(dead, vec3(dot(dead, vec3(0.299, 0.587, 0.114))), 0.20);
-    // a little dead soil under the ash: warm, but never enough to make the
-    // whole scar brown
-    dead = mix(dead, ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.45 + d2 * 0.90), 0.10);
+                     clamp(0.34 + tA * 0.80 + tB * 0.28 + (rotF - 0.5) * 1.40
+                           + (curd - 0.5) * 0.46 + (d2 - 0.5) * 0.30 + form * 0.44,
+                           0.0, 3.0));
+    float dv = dot(dead, vec3(0.299, 0.587, 0.114));
+    dead = mix(dead, vec3(dv), 0.44);
+    // ---- the bruise ----
+    // Plum where the flesh is deepest and darkest, sick olive where it is going
+    // off at the margins. Both at low amplitude, and split by value rather than
+    // painted on, so the hue is something you find when you stand on it.
+    dead = mix(mix(dead, cBlight[1], 0.44), mix(dead, cNecrosis, 0.30),
+               smoothstep(0.055, 0.235, dv));
     // the heart of a scar is burnt out; the rim is still dust
-    dead *= 0.52 + 0.56 * (1.0 - deep) + 0.52 * form;
+    dead *= 0.60 + 0.46 * (1.0 - deep) + 0.44 * form;
+    // pale bloom along the curdled ridges: efflorescence, or mould, or both
+    dead = mix(dead, mix(dead, cAsh[3], 0.60),
+               smoothstep(0.70, 0.94, curd) * (1.0 - seep) * 0.55);
     // a plate standing proud of its neighbour catches the light on its up-sun
     // lip and throws a shadow off the other side
     float lift = clamp((hash21(pa.xy + 61.0) - hash21(pas + 61.0)) * 2.6, -1.0, 1.0);
     float pEdge = step(0.001, length(pas - pa.xy));
-    dead *= 1.0 + pEdge * max(lift, 0.0) * 0.26 - pEdge * max(-lift, 0.0) * 0.30;
-    dead *= 1.0 - crack * 0.72;
-    // The stain, and only in the fissures: a cold bruise where the ground has
-    // opened. Poisoned earth is a bruise, not a sweet.
-    dead = mix(dead, mix(dead, cBlight[1], 0.34), crackA * deep);
-    // The one hairline allowed to be hot, and it is rationed twice over: only
-    // the floor of a fissure, only at the heart of a scar, and only in the one
-    // fissure in four that the plate hash lets glow at all.
+    dead *= 1.0 + pEdge * max(lift, 0.0) * 0.22 - pEdge * max(-lift, 0.0) * 0.26;
+
+    // ---- the fissures ----
+    // A colour, not a multiply. `dead *= 1.0 - crack` drives the net to black,
+    // and black lines at one even weight over flat plates is exactly the
+    // cracked-mud read: the linework becomes the loudest thing in the frame and
+    // the plates between it become paving. A shallow shoulder either side gives
+    // the crack a lip and a floor instead of one hard stroke.
+    dead *= 1.0 - smoothstep(0.150, 0.028, pa.z * open) * (1.0 - crackA) * 0.17;
+    dead = mix(dead, mix(cAsh[0], cBlight[0], 0.55), crack * 0.62);
+    // The stain, and only down the fissures: the ground is opened here and
+    // what is underneath it is not soil.
+    dead = mix(dead, mix(dead, cBlight[1], 0.40), crackA * deep * (1.0 - seep));
+
+    // ---- wet rot ----
+    // The seeps are the reason this is not a dried lake bed: soft-edged, cold,
+    // uncracked, standing lower than everything around them.
+    dead = mix(dead, mix(cBlight[0], cAsh[0], 0.35), seep * 0.66);
+    dead += mix(cBlight[1], cBlight[2], 0.40) * seep * smoothstep(0.74, 0.96, wetF) * 0.07;
+
+    // The one hairline allowed to be hot, and it is rationed three ways over:
+    // only the floor of a fissure, only at the heart of a scar, only in the one
+    // plate in five the hash lets glow at all -- and never in a seep.
     float live = smoothstep(0.80, 0.94, hash21(pa.xy + 7.1))
                * smoothstep(0.54, 0.78, fbm3(w * 0.0062 + 41.0));
-    dead += cBlight[3] * smoothstep(0.009, 0.0, pa.z * cvz) * deep * deep * live * 0.20;
+    dead += cBlight[3] * smoothstep(0.008, 0.0, pa.z * open)
+            * deep * deep * live * (1.0 - seep) * 0.22;
+
+    // ---- the rot rim ----
+    // Living ground a scar has already reached. Grass does not go grey when it
+    // dies, it goes straw and lies down; fading out through neutral put a
+    // smoke-coloured halo round every scar, and the halo was the tell. Broken
+    // along its length too, so it is a margin and not an outline.
+    float rimN = clamp(scarEdge * (0.30 + 1.05 * fbm3(w * 0.0092 + 233.0)), 0.0, 1.0);
+    vec3 dying = mix(col, cWither, 0.42 + 0.22 * d2);
+    dying = mix(dying, vec3(dot(dying, vec3(0.299, 0.587, 0.114))), 0.40) * 0.74;
+    dying = mix(dying, cBlight[1], 0.16);
+    col = mix(col, dying, rimN * 0.88);
     col = mix(col, dead, scarT);
-    // The rot rim: living ground going grey a few metres before it dies. Value
-    // and saturation, not hue -- a violet halo round every scar was the tell.
-    vec3 rot = col * 0.60;
-    rot = mix(rot, vec3(dot(rot, vec3(0.299, 0.587, 0.114))), 0.55);
-    rot = mix(rot, cBlight[1], 0.20);
-    col = mix(col, rot, scarEdge * 0.80);
   }
 
   // ---- macro value composition -----------------------------------------
@@ -1217,6 +1268,8 @@ function Terrain:_makeShaders()
   sendRamp("cStone", R.stone)
   put(g, "cFlora", { R.leaf[2][1], R.leaf[2][2], R.leaf[2][3] })
   put(g, "cLichen", { P.lichen[1], P.lichen[2], P.lichen[3] })
+  put(g, "cNecrosis", { P.necrosis[1], P.necrosis[2], P.necrosis[3] })
+  put(g, "cWither", { P.wither[1], P.wither[2], P.wither[3] })
 
   local nsh = self._normalSh
   put(nsh, "fieldA", self.fieldA)
