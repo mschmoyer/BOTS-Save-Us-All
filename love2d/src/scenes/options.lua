@@ -23,6 +23,7 @@ local UI       = require("src.engine.ui")
 local Input    = require("src.engine.input")
 local Screen   = require("src.engine.screen")
 local Settings = require("src.game.settings")
+local Haptics  = require("src.game.haptics")
 local J        = require("src.engine.juice")
 local Opt      = require("src.core.optional")
 
@@ -77,8 +78,15 @@ local PAGES = {
       desc = "How far the camera moves on an impact. Zero holds the camera perfectly still." },
     { kind = "slider", key = "flashAmount", label = "SCREEN FLASH",
       desc = "Brightness of hit and milestone flashes. Zero removes every full-screen flash." },
-    { kind = "toggle", key = "rumble", label = "CONTROLLER RUMBLE",
-      desc = "Haptics on damage, dashes and boss impacts." },
+    -- A slider rather than the switch this used to be. Rumble is not one
+    -- thing a player either wants or does not: the same intensity that reads
+    -- as weight on a wired pad reads as a wasp on a light one, and a player
+    -- who turns it off entirely usually only wanted it quieter. Zero is off,
+    -- and moving the slider plays a pattern so the level is felt, not guessed.
+    { kind = "slider", key = "rumbleAmount", label = "CONTROLLER RUMBLE",
+      desc = "How hard the controller is allowed to move. Zero turns every "
+          .. "rumble off. It is a designed language, not a constant buzz -- "
+          .. "dawn and the extraction are felt, a kill is not." },
   },
   { -- TOUCH
     { kind = "stepper", key = "touchSide", label = "ACTION CLUSTER",
@@ -131,6 +139,7 @@ local function applyAll()
   end
   Settings.applyJuice(J)
   Settings.applyInput(Input)
+  Haptics.applySettings()
   applyQuality()
 end
 S.applyAll = applyAll
@@ -146,13 +155,19 @@ local function applyOne(key)
     applyQuality()
   elseif key == "shakeAmount" or key == "flashAmount" then
     Settings.applyJuice(J)
-  elseif key == "rumble" then
-    Settings.applyInput(Input)
+  elseif key == "rumbleAmount" then
+    -- `rumble` (the on/off consent engine/touch.lua also reads) follows the
+    -- slider, so zero means off in exactly one place.
+    Haptics.setAmount(Settings.get("rumbleAmount"))
+    Haptics.preview()
   end
 end
 
 --------------------------------------------------------------------- lifecycle
 function S:enter(opts)
+  -- Registers `rumbleAmount` on the settings schema before anything reads it.
+  -- Idempotent, and normally already done by Input.load at boot.
+  Haptics.load()
   self.t = 0
   -- BOTS_OPT_TAB lets tools/shot.sh photograph a page other than the first
   self.tab = U.clamp(tonumber(os.getenv("BOTS_OPT_TAB") or "") or 1, 1, #TABS)
@@ -283,7 +298,14 @@ function S:draw()
              UI.c(P.inkFaint, 0.6 * a), "right")
   -- the device name is information, not an accent: the accent on this screen
   -- means "the thing you are pointing at", and nothing else may borrow it
-  UI.caption(Input.schemeName():upper(), L.cx + L.cw, py + 54, UI.ts.micro,
+  -- The active device, and -- only when it is worth saying -- that it has no
+  -- motors in it. A player who has turned the rumble slider up and felt
+  -- nothing deserves to be told why on the screen they turned it up on.
+  local dev = Input.schemeName():upper()
+  if Input.scheme == "pad" and Input.rumbleSupported == false then
+    dev = dev .. "  /  NO RUMBLE MOTORS"
+  end
+  UI.caption(dev, L.cx + L.cw, py + 54, UI.ts.micro,
              UI.c(P.inkDim, 0.7 * a), "right")
 
   -- tabs

@@ -460,6 +460,27 @@
     printErr: console.error.bind(console),
     print: function (text) {
       if (typeof text === 'string') {
+        // Haptics. SDL's Emscripten joystick backend has no rumble path at
+        // all -- setVibration is a no-op that returns false in the browser --
+        // but the *page* can do it, so the game announces each pattern here
+        // and this forwards it to the pad. playEffect cancels whatever is
+        // playing and takes one magnitude pair, so what arrives is a
+        // pattern's peak and length rather than a per-frame envelope.
+        if (text.lastIndexOf('HAPTIC|', 0) === 0) {
+          var hp = text.split('|');
+          var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+          for (var hi = 0; hi < pads.length; hi++) {
+            var act = pads[hi] && pads[hi].vibrationActuator;
+            if (act && act.playEffect) {
+              try {
+                act.playEffect('dual-rumble', {
+                  duration: +hp[3], strongMagnitude: +hp[1], weakMagnitude: +hp[2],
+                });
+              } catch (e) {}
+            }
+          }
+          return;
+        }
         if (text.charCodeAt(0) === 66 /* B */) {
           if (text === 'BOOTREADY') { gameReady(); return; }
           var m = /^BOOT\|(\d+)\|(.*)$/.exec(text);

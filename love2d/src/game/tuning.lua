@@ -783,6 +783,7 @@ T.haptics = {
     botRevived  = { pri = 2, gap = 0.20, s = { {0.16,0.16,0.03}, {0.05,0.28,0.12}, {0,0,0.18} } },
     cohort      = { pri = 2, gap = 0.50, s = { {0.28,0.10,0.04}, {0.08,0.02,0.22}, {0,0,0.20} } },
     scarCleared = { pri = 2, gap = 0.50, s = { {0.10,0.24,0.03}, {0.04,0.08,0.16}, {0,0,0.20} } },
+    rally       = { pri = 2, gap = 0.30, s = { {0.00,0.30,0.01}, {0.06,0.10,0.05}, {0,0,0.10} } },
     -- Information, not celebration: two fast, tiny high ticks.
     denied      = { pri = 2, gap = 0.20, s = { {0.00,0.22,0.005}, {0,0,0.03}, {0.00,0.22,0.005}, {0,0,0.04} } },
 
@@ -796,8 +797,9 @@ T.haptics = {
     -- texture instead.
     sacrifice   = { pri = 1, gap = 0.00, s = { {0.14,0.05,0.005}, {0,0,0.07} } },
     -- The catch-all the four existing Input.rumble() calls in entities/player.lua
-    -- land on. Ranked between acknowledgement and consequence so a dash cannot
-    -- cut dawn in half and dawn cannot swallow a hit.
+    -- land on. Its shape is built from the call's own arguments, and its rank
+    -- from the call's own strength (see Input.rumble), so a dash tick ducks
+    -- under a big moment and taking a hit still cuts through one.
     legacy      = { pri = 3, gap = 0.00, s = { {1,1,0} } },
   },
 }
