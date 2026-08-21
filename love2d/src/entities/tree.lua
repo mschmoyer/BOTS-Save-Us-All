@@ -637,9 +637,15 @@ local LAYER_ALPHA = { 1.00, 1.00, 1.00 }
 local LAYER_RIM   = { 0.06, 0.28, 0.55 }
 local LAYER_PUSH  = { -0.14, 0.0, 0.09 }   -- parallax: back layer up, front layer down
 
---- Lay the skeleton out at growth `g` and bake it into a mesh.
+--- Lay the skeleton out at growth `g` and tessellate it.
 --- `kind` is "full" | "lod" | "shadow".
-local function buildMesh(sk, g, kind)
+--- Returns the vertex list, the index list, the extents and the triangle area.
+--- This is the only place tree geometry is produced. `buildMesh` below turns
+--- the result into a GPU mesh; tools/bake_trees.sh writes the same result to
+--- disk so the browser does not have to run this at all. Both go through here,
+--- so the baked library can never disagree with the live one about anything
+--- except the cost of arriving at it.
+local function buildMeshData(sk, g, kind)
   local sp = sk.sp
   local sc = 1 / sk.normY      -- everything is laid out in units of adult height
   local invY = 1               -- ... so local y IS the height factor
@@ -776,7 +782,7 @@ local function buildMesh(sk, g, kind)
     for i = 1, #src do n = n + 1; I[n] = src[i] end
   end
 
-  if #V < 3 or n < 3 then return nil, maxY, maxR end
+  if #V < 3 or n < 3 then return nil, nil, maxY, maxR, 0 end
 
   -- Total triangle area, in the mesh's own unit-tall-adult space. A tree draw
   -- covers `area * (size * zoom)^2` fragments, so this is what lets the frame
@@ -789,6 +795,14 @@ local function buildMesh(sk, g, kind)
     area = area + abs((b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2])) * 0.5
   end
 
+  return V, I, maxY, maxR, area
+end
+
+--- The live tessellator's mesh. The reference implementation, and the fallback
+--- whenever there is no baked library to read one out of.
+local function buildMesh(sk, g, kind)
+  local V, I, maxY, maxR, area = buildMeshData(sk, g, kind)
+  if not V then return nil, maxY, maxR end
   local mesh = love.graphics.newMesh(FORMAT, V, "triangles", "static")
   mesh:setVertexMap(I)
   return mesh, maxY, maxR, area
@@ -804,22 +818,191 @@ end
 
 local function bucketGrowth(b) return b / (TUNE.buckets - 1) end
 
+local CELLS = nil        -- filled on first use: #SPECIES * variants * buckets
+
+------------------------------------------------------------- baked library
+-- WHY THERE IS A CACHE IN FRONT OF THE TESSELLATOR
+--
+-- `ensure` keys on (species, variant, bucket) and on nothing else. The skeleton
+-- comes out of a PRNG seeded with the species and the variant, the growth is
+-- the bucket's, and no run seed reaches any of it: 5 species x 5 variants x
+-- 10 buckets is 250 cells and 750 meshes -- 247,897 vertices -- that are the
+-- same bytes on every machine and in every run. Today every browser tab
+-- tessellates all of them, in interpreted Lua, before the island appears.
+--
+-- The header of src/game/warmup measures that at 1.5 s in one uninterrupted
+-- burst and 26.4 s when it is sliced badly. So tools/bake_trees.sh runs the
+-- tessellator once at build time and writes the exact bytes the vertex buffers
+-- want; loading a cell becomes three newMesh calls and six memcpys.
+--
+-- This is a *cache*, not a replacement. `buildMeshData` above is how the
+-- geometry is authored, and it is the fallback for every case:
+--
+--   no manifest       -> tessellate, silently (a source checkout has no bake)
+--   stale fingerprint -> tessellate, loudly (the geometry moved, the bake did not)
+--   a cell that will not read -> tessellate that cell, keep the rest
+--
+-- BOTS_TREE_BAKE=0 forces the tessellator, which is how the two are compared;
+-- BOTS_TREE_BAKE=1 makes a missing or stale bake an error instead of a
+-- fallback, which is what a build script wants.
+local BAKE_DIR     = "src/bake/trees"
+local BAKE_VERSION = 1
+local bakeState    = nil    -- nil = not opened yet, false = unusable, table = open
+local bakeCount    = 0      -- cells that came out of the file rather than the tessellator
+
+-- Bytes per vertex, straight off FORMAT rather than written down twice: every
+-- attribute in it is a float, and the blob is the buffer contents verbatim.
+local BAKE_STRIDE = 0
+for i = 1, #FORMAT do BAKE_STRIDE = BAKE_STRIDE + FORMAT[i][3] * 4 end
+
+local function safe(f, ...)
+  if not f then return nil end
+  local ok, r = pcall(f, ...)
+  if ok then return r end
+  return nil
+end
+
+local function bakeCfg(name)
+  local f = _G.BOTS_CFG                    -- main.lua's env-or-argv reader
+  if f then return f(name) end
+  if os and os.getenv then
+    local v = os.getenv(name)
+    if v ~= nil and v ~= "" then return v end
+  end
+  return nil
+end
+
+--- What the geometry looks like is decided by this file, by the colour ramps it
+--- reads out of the palette, and by the handful of pure helpers in core/util it
+--- shapes growth with. Hash the three, store the hash in the manifest, and a
+--- bake that no longer matches the code that produced it is caught at load
+--- instead of shipped. love.data.hash is native in both runtimes, so this is a
+--- fraction of a millisecond rather than a byte loop over 100 KB of Lua.
+function Tree.bakeFingerprint()
+  if not (love and love.filesystem and love.data) then return "no-filesystem" end
+  local a = safe(love.filesystem.read, "src/entities/tree.lua")
+  local b = safe(love.filesystem.read, "src/engine/palette.lua")
+  local c = safe(love.filesystem.read, "src/core/util.lua")
+  if not (a and b and c) then return "no-source" end
+  local h = safe(love.data.hash, "md5", a .. b .. c)
+  if not h then return "no-hash" end
+  return safe(love.data.encode, "string", "hex", h) or "no-hex"
+end
+
+--- Open the baked library, or leave `bakeState` false and let the tessellator
+--- do what it has always done. Called once, from the first `ensure`.
+local function bakeOpen()
+  bakeState = false
+  local flag = bakeCfg("BOTS_TREE_BAKE")
+  if flag == "0" then return end
+  local required = (flag == "1")
+  local path = BAKE_DIR .. "/manifest.lua"
+  local function reject(why)
+    if required then error("baked tree library required but " .. why, 0) end
+    print("tree.lua: baked library ignored (" .. why .. "); tessellating instead")
+  end
+  if not (love and love.filesystem and love.graphics and love.data) then return end
+  if not love.filesystem.getInfo(path) then
+    if required then reject("there is no " .. path) end
+    return                                  -- a plain source checkout: not news
+  end
+  local chunk = safe(love.filesystem.load, path)
+  local m = chunk and safe(chunk)
+  if type(m) ~= "table" then return reject("the manifest would not load") end
+  if m.version ~= BAKE_VERSION then
+    return reject("it is layout v" .. tostring(m.version) .. ", this is v" .. BAKE_VERSION)
+  end
+  if m.stride ~= BAKE_STRIDE then
+    return reject("its vertices are " .. tostring(m.stride) .. " bytes, this format wants " ..
+                  BAKE_STRIDE)
+  end
+  if m.fingerprint ~= Tree.bakeFingerprint() then
+    return reject("the geometry or the palette changed since it was baked")
+  end
+  local blob = safe(love.filesystem.newFileData, BAKE_DIR .. "/" .. tostring(m.data))
+  if not blob then return reject("its data file is missing") end
+  if blob:getSize() ~= m.bytes then return reject("its data file is the wrong length") end
+  bakeState = { cells = m.cells, blob = blob, itype = m.itype,
+                isize = (m.itype == "uint32") and 4 or 2, left = m.count or 0 }
+end
+
+--- The blob is 12 MB and every cell has been copied into a vertex buffer by the
+--- time the last one is read, so it goes back to the allocator the moment it is
+--- spent. In the browser that is 12 MB of a 320 MB heap.
+local function bakeRelease()
+  if type(bakeState) == "table" then
+    if bakeState.blob.release then safe(bakeState.blob.release, bakeState.blob) end
+    bakeState = false
+  end
+end
+
+--- One mesh out of a (byte offset, count) pair. The index data is raw 0-based
+--- GPU indices, which is what `Mesh:setVertexMap(Data, type)` takes -- the table
+--- form is the 1-based one.
+local function bakeMesh(st, vo, vc, io_, ic)
+  if vc <= 0 or ic <= 0 then return nil end
+  local vb = love.data.newByteData(st.blob, vo, vc * BAKE_STRIDE)
+  local ib = love.data.newByteData(st.blob, io_, ic * st.isize)
+  local mesh = love.graphics.newMesh(FORMAT, vc, "triangles", "static")
+  mesh:setVertices(vb)
+  mesh:setVertexMap(ib, st.itype)
+  if vb.release then vb:release() end
+  if ib.release then ib:release() end
+  return mesh
+end
+
+--- Fill one library cell from the bake. Returns the meta table, or nil to mean
+--- "read it from the tessellator instead" -- for a cell that is not in the file
+--- and for one that will not load, which are the same thing to the caller.
+local function bakeCellInto(key)
+  local st = bakeState
+  if type(st) ~= "table" then return nil end
+  local c = st.cells[key]
+  if not c then return nil end
+  local ok, m1, m2, m3 = pcall(function()
+    return bakeMesh(st, c[6], c[7], c[8], c[9]),
+           bakeMesh(st, c[10], c[11], c[12], c[13]),
+           bakeMesh(st, c[14], c[15], c[16], c[17])
+  end)
+  if not ok then
+    print("tree.lua: baked cell " .. key .. " would not load (" .. tostring(m1) ..
+          "); tessellating it")
+    return nil
+  end
+  LIB.full[key], LIB.lod[key], LIB.shadow[key] = m1, m2, m3
+  bakeCount = bakeCount + 1
+  return { extentY = c[1], extentR = c[2],
+           areaFull = c[3], areaLod = c[4], areaShadow = c[5] }
+end
+
 local function ensure(spi, variant, bucket)
   local key = libKey(spi, variant, bucket)
   local meta = LIB.meta[key]
   if meta then return key, meta end
   initShaders()
-  local sk = getSkeleton(spi, variant)
-  local g = bucketGrowth(bucket)
-  local m1, ey, er, a1 = buildMesh(sk, g, "full")
-  local m2, _, _, a2    = buildMesh(sk, g, "lod")
-  local m3, _, _, a3    = buildMesh(sk, g, "shadow")
-  LIB.full[key], LIB.lod[key], LIB.shadow[key] = m1, m2, m3
-  meta = { extentY = ey, extentR = er,
-           areaFull = a1 or 0, areaLod = a2 or 0, areaShadow = a3 or 0 }
+  if bakeState == nil then bakeOpen() end
+  meta = bakeCellInto(key)
+  if not meta then
+    local sk = getSkeleton(spi, variant)
+    local g = bucketGrowth(bucket)
+    local m1, ey, er, a1 = buildMesh(sk, g, "full")
+    local m2, _, _, a2    = buildMesh(sk, g, "lod")
+    local m3, _, _, a3    = buildMesh(sk, g, "shadow")
+    LIB.full[key], LIB.lod[key], LIB.shadow[key] = m1, m2, m3
+    meta = { extentY = ey, extentR = er,
+             areaFull = a1 or 0, areaLod = a2 or 0, areaShadow = a3 or 0 }
+  end
   LIB.meta[key] = meta
   libCount = libCount + 1
+  CELLS = CELLS or (#SPECIES * TUNE.variants * TUNE.buckets)
+  if libCount >= CELLS then bakeRelease() end
   return key, meta
+end
+
+--- Where the library came from, for the load-time report: "baked" or "built",
+--- and how many of the cells came out of the file.
+function Tree.libraryOrigin()
+  return bakeCount, libCount
 end
 
 --- Build the whole library up front so nothing hitches mid-run.
@@ -861,6 +1044,39 @@ function Tree.prewarmStep(budget)
   return warmI / warmN
 end
 
+
+--- The offline half of the baked library: walk every cell in key order, run the
+--- tessellator, and hand `emit` the raw vertex and index lists plus the metadata
+--- that is not recoverable from them. tools/treebakescene.lua is the only
+--- caller; it turns all of this into bytes.
+---
+--- It deliberately does not touch LIB or create a single Mesh. A bake wants the
+--- geometry, not a GPU's copy of it, and the two must not be able to disagree
+--- about which cells exist.
+function Tree.bakeCells(emit)
+  for spi = 1, #SPECIES do
+    for v = 0, TUNE.variants - 1 do
+      for b = 0, TUNE.buckets - 1 do
+        local sk = getSkeleton(spi, v)
+        local g  = bucketGrowth(b)
+        local Vf, If, ey, er, af = buildMeshData(sk, g, "full")
+        local Vl, Il, _,  _,  al = buildMeshData(sk, g, "lod")
+        local Vs, Is, _,  _,  as = buildMeshData(sk, g, "shadow")
+        emit(libKey(spi, v, b),
+             { extentY = ey, extentR = er, areaFull = af, areaLod = al, areaShadow = as },
+             { { Vf, If }, { Vl, Il }, { Vs, Is } })
+      end
+    end
+  end
+end
+
+--- What the bake has to write into its manifest so that this file can decide,
+--- at load, whether to trust it.
+function Tree.bakeInfo()
+  return { version = BAKE_VERSION, stride = BAKE_STRIDE,
+           fingerprint = Tree.bakeFingerprint(),
+           cells = #SPECIES * TUNE.variants * TUNE.buckets }
+end
 
 function Tree.libraryStats()
   local verts = 0
