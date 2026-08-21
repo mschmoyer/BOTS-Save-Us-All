@@ -268,14 +268,18 @@ local function drawSlot(i, x, y, w, h, world, a)
              UI.c(afford and P.ink or P.inkFaint, (afford and 0.92 or 0.5) * a),
              "center", nil, 1)
 
-  -- cost, with how close you are to it when you are not there yet
-  local costCol = afford and P.ramp.cobalt[4] or P.danger
+  -- Cost, and how close you are to it when you are not there yet. Deliberately
+  -- *not* red: six red numerals along the bottom of the screen the moment you
+  -- go broke shouts as loudly as taking damage does, and the eye cannot tell
+  -- the two apart mid-fight. Red here belongs to the refusal shake alone.
+  local costCol = deny > 0.02 and P.danger
+                  or (afford and P.ramp.cobalt[4] or P.ramp.cobalt[3])
   local cw = Text.measure(itos(cost), UI.ts.small, nil)
   local cxx = x + w * 0.5 - (cw + 13) * 0.5
-  Draw.setColor(UI.c(afford and P.ramp.cobalt[3] or P.danger, (afford and 1 or 0.75) * a))
+  Draw.setColor(UI.c(afford and P.ramp.cobalt[3] or P.inkFaint, (afford and 1 or 0.6) * a))
   Draw.diamond(cxx + 4, y + h - 8, 3.2, 4.2, "fill")
   UI.text(itos(cost), cxx + 12, y + h - 14, UI.ts.small,
-          UI.c(costCol, (afford and 1 or 0.85) * a), "left", a, 0.02)
+          UI.c(costCol, (afford and 1 or 0.7) * a), "left", a, 0.02)
 
   -- the bottom edge: an accent underline when you can build it, a cobalt
   -- progress sliver when you cannot
@@ -310,7 +314,7 @@ function BuildMenu.drawBar(a)
   -- floating beside it on bare ground, where it measured 1.6:1 against a
   -- sunlit canopy no matter what colour it was.
   UI.prompt(BAR.x + 2, BAR.y - 18, "radial", "WHEEL",
-            UI.ts.micro, P.inkDim, 0.85 * a, "left")
+            UI.ts.micro, P.ink, 0.8 * a, "left")
 end
 
 --------------------------------------------------------------------- ghost

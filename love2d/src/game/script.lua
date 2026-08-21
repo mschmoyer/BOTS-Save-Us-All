@@ -310,10 +310,12 @@ S.credits = {
   quiet   = "we are still here",     -- said in the world, not in a box
   close   = "THE AIR IS YOURS",
   -- Row labels for the tally. Nouns, not achievements: nothing here is scored.
-  -- Planted sits above standing so the gap between them reads as a cost.
+  -- What is standing, then what it cost -- never "planted" over "standing",
+  -- which prints the same number twice in any run that lost nothing and reads
+  -- like a bug in the one place the game cannot afford one.
   rows = {
-    { key = "planted", label = "TREES PLANTED" },
     { key = "trees",   label = "STILL STANDING" },
+    { key = "lost",    label = "TREES LOST" },
     { key = "o2",      label = "OXYGEN RESTORED", suffix = "%" },
     { key = "cycles",  label = "NIGHTS HELD" },
     { key = "built",   label = "BOTS BUILT" },

@@ -172,6 +172,10 @@ local STAGES = {
   { name = "TITLE",   scene = "src.scenes.title", warm = 2.6 },
   { name = "HUD",     hud = true },
   { name = "WHEEL",   hud = true, radial = true },
+  -- The rebellion: the boss bar, the locked-out build bar and a falling
+  -- oxygen arc. Previously the only way to see any of it was to play thirteen
+  -- minutes of a real run, so it was never reviewed.
+  { name = "BOSS",    hud = true, boss = true },
   { name = "DRAFT",   hud = true, scene = "src.scenes.draft", warm = 1.35 },
   { name = "PAUSE",   hud = true, scene = "src.scenes.pause" },
   { name = "OPTIONS", scene = "src.scenes.options" },
@@ -201,6 +205,18 @@ end
 
 --------------------------------------------------------------------- lifecycle
 function S:enter()
+  -- conf.lua fixes the window at 1600x900, so BOTS_W / BOTS_H only ever changed
+  -- the size of the virtual screen the window was drawn onto -- the game still
+  -- laid out at 16:9 and the short-viewport case went untested. The harness
+  -- asks for the mode itself.
+  local ew = tonumber(os.getenv("BOTS_W") or "")
+  local eh = tonumber(os.getenv("BOTS_H") or "")
+  if ew and eh and (ew ~= lg.getWidth() or eh ~= lg.getHeight()) then
+    love.window.setMode(ew, eh, { resizable = true, msaa = 0, vsync = 0 })
+    Screen.resize(ew, eh)
+    ISLAND.built = false
+  end
+
   self.frame = 0
   self.stage = 0
   self.t = 0
@@ -234,6 +250,17 @@ function S:setStage(n)
   local st = STAGES[n]
   if not st then return end
   if st.radial then setRadialHeld(true) end
+  if st.boss then
+    W.phase, W.phaseT, W.phaseDur = "extraction", 0, 1
+    W.boss = { alive = true, hp = 26, maxHp = 45 }
+    W.bossDrain = 8
+    W.o2 = 63
+    HUD.toast("PYLON-11", P.danger, "DID NOT COME BACK", 30, HUD.RANK_LOSS)
+  elseif prev and prev.boss then
+    W.phase, W.phaseT, W.phaseDur = "dusk", 7.4, 12
+    W.boss, W.bossDrain = nil, nil
+    W.o2 = 41.6
+  end
 
   local scene = st.scene and require(st.scene) or NULL_SCENE
   if st.scene == "src.scenes.draft" then
@@ -259,7 +286,12 @@ function S:update(dt, realDt)
   local st = STAGES[self.stage]
   if not st then return end
   if st.hud then
-    W.phaseT = min(W.phaseDur - 0.6, W.phaseT + realDt * 0.35)
+    if st.boss then
+      W.o2 = max(4, W.o2 - realDt * 2.2)
+      W.boss.hp = max(1, W.boss.hp - realDt * 1.6)
+    else
+      W.phaseT = min(W.phaseDur - 0.6, W.phaseT + realDt * 0.35)
+    end
     HUD.update(realDt, W)
     BuildMenu.update(realDt, CAM)
   end

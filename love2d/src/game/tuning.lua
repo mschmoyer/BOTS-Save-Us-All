@@ -59,7 +59,11 @@ T.bots = {
   order = { "planter", "builder", "repulsor", "sentry", "harvester", "beacon" },
 
   planter = {
+    -- Planters are the obvious buy, so their price climbs faster than anything
+    -- else: a roster of sixty Planters and seven of everything else is not a
+    -- build, it is the absence of one.
     label = "PLANTER", prefix = "SEED", cost = 10, hp = 3, radius = 12, speed = 78,
+    costGrowth = 0.26,
     plantEvery = 15.0, minTreeGap = 40, wanderRetarget = { 1.2, 3.4 },
     desc = "Wanders and plants saplings, forever.",
   },
@@ -102,7 +106,7 @@ T.bots = {
 -------------------------------------------------------------------------- trees
 T.tree = {
   growTime      = 26,          -- sapling -> mature
-  elderTime     = 110,         -- mature -> elder (only with the Old Growth chip)
+  elderTime     = 540,         -- mature -> elder; Old Growth makes it far quicker
   spreadEvery   = { 70, 128 }, -- seconds between seedling attempts
   -- Only trees on the edge of the wood put out seedlings. That is what turns the
   -- forest into an advancing front with a defensible line instead of a mat.
@@ -180,14 +184,16 @@ T.boss = {
   -- last stretch is always yours.
   hpPerBot     = 2.0,
   hpFloor      = 60,
-  rebelCohort  = 8,            -- bots charge in waves, so the sacrifice has rhythm
-  rebelEvery   = 2.5,
+  dartResist   = 0.28,         -- seed-darts plink off a rig this size
+  rebelShare   = 0.70,         -- the fraction of the rig the workforce pays for
+  rebelCohort  = 5,            -- bots charge in waves, so the sacrifice has rhythm
+  rebelEvery   = 4.2,
   phaseGap     = 6.0,          -- a phase always gets its moment before the next
   speed        = 108,
   contactDmg   = 1,
   phase2At     = 0.66,
   phase3At     = 0.33,
-  rebelDelay   = 5.0,
+  rebelDelay   = 6.5,
   -- The rig always takes the same *share* of whatever sky it found, so a run
   -- that reached the deadline at 30% still gets a real fight instead of an
   -- automatic loss.

@@ -289,8 +289,23 @@ function S:drawCard(chip, k, focused, a, foilTime, phase)
   UI.caption(RARITY_WORD[chip.r] or "", 0, y0 + CARD_H - 34, UI.ts.micro,
              UI.c(tint, (0.7 + 0.3 * k) * a), "center")
   if focused then
-    UI.brackets(x0 + 8, y0 + 8, CARD_W - 16, CARD_H - 16, 20, tint, 0.8 * a, 2, 0)
+    UI.brackets(x0 + 8, y0 + 8, CARD_W - 16, CARD_H - 16, 20, tint, 0.9 * a, 2.5, 0)
   end
+end
+
+--- The shortcut, on the card it belongs to. It used to be a whisper in the
+--- bottom-left corner ("OR PRESS 1 2 3") at 0.55 alpha, three hundred pixels
+--- away from the thing it was talking about.
+function S:drawCardKey(i, x, y, k, a)
+  if Input.scheme ~= "kb" then return end
+  local s = 26
+  Draw.setColor(UI.c(P.black, 0.7 * a))
+  Draw.roundRect("fill", x - s * 0.5, y, s, s - 4, 4)
+  lg.setLineWidth(1)
+  Draw.setColor(UI.c(P.ink, (0.2 + 0.4 * k) * a))
+  Draw.roundRect("line", x - s * 0.5 + 0.5, y + 0.5, s - 1, s - 5, 4)
+  UI.text(tostring(i), x, y + 5, UI.ts.small,
+          UI.c(P.ink, (0.7 + 0.3 * k) * a), "center", a, 0.02)
 end
 
 --------------------------------------------------------------------- drawing
@@ -316,25 +331,34 @@ function S:draw()
   self:drawTally(fx, headY, floor(fw * 0.58 / UI.u) * UI.u, a)
   self:drawNames(fx + fw - floor(fw * 0.30), headY + 4, floor(fw * 0.30), a)
 
-  -- cards
+  -- Cards, sized to the room that is actually left between the tally and the
+  -- footer. Fixed 392 px cards left a dead band across the middle of a 16:9
+  -- frame and ran into the tally on a phone-landscape one; this fills the first
+  -- and fits the second.
   local n = #self.offers
+  local topY = headY + UI.ts.mega + 44 + 84
+  local botY = h - UI.pad - 64
   local gap = 40
-  local total = n * CARD_W + (n - 1) * gap
-  local cy = floor(h * 0.655)
-  local x0 = w * 0.5 - total * 0.5 + CARD_W * 0.5
+  local fit = U.clamp((botY - topY) / CARD_H, 0.68, 1.18)
+  fit = min(fit, (w - fx * 2) / (n * CARD_W + (n - 1) * gap))
+  gap = gap * fit
+  local cw2 = CARD_W * fit
+  local total = n * cw2 + (n - 1) * gap
+  local cy = floor((topY + botY) * 0.5)
+  local x0 = w * 0.5 - total * 0.5 + cw2 * 0.5
   local flyK = self.chosen and U.ease.inOutCubic(U.saturate(self.flyT / FLY)) or 0
   local tx, ty = UI.pad + 60, h - UI.pad - 74      -- where the HUD keeps its feed
 
   for i = 1, n do
     local chip = self.offers[i]
-    local cx = x0 + (i - 1) * (CARD_W + gap)
+    local cx = x0 + (i - 1) * (cw2 + gap)
     local k = UI.stagger(t, i, SEQ.cards, SEQ.cardStep, SEQ.cardDur, U.ease.outBack)
     local ka = UI.stagger(t, i, SEQ.cards, SEQ.cardStep, SEQ.cardDur * 0.6)
 
     local focused, hot, activated, st
     if not self.chosen and k > 0.5 then
       focused, hot, activated, st = ctx:interact("card" .. i,
-        cx - CARD_W * 0.5, cy - CARD_H * 0.5, CARD_W, CARD_H, true)
+        cx - cw2 * 0.5, cy - CARD_H * fit * 0.5, cw2, CARD_H * fit, true)
       if activated then self.pending = i end
     else
       st = ctx:state("card" .. i)
@@ -342,7 +366,7 @@ function S:draw()
 
     local lift = max(st.focus, st.hover)
     local px, py = cx, cy - (1 - k) * 90 - lift * 18
-    local scale = (0.90 + 0.10 * k) * (1 + lift * 0.035)
+    local scale = fit * (0.90 + 0.10 * k) * (1 + lift * 0.035)
     local rot = (1 - k) * (i - 2) * 0.09
     local alpha = a * ka
 
@@ -361,7 +385,7 @@ function S:draw()
     if alpha > 0.004 then
       -- tilt toward the pointer, so a hovered card feels physically nudged
       if lift > 0.01 and not self.chosen then
-        rot = rot + U.clamp((ctx.mx - cx) / CARD_W, -1, 1) * 0.035 * lift
+        rot = rot + U.clamp((ctx.mx - cx) / cw2, -1, 1) * 0.035 * lift
       end
       lg.push()
       lg.translate(px, py)
@@ -369,6 +393,9 @@ function S:draw()
       lg.scale(scale)
       self:drawCard(chip, lift, focused and not self.chosen, alpha, t, i * 0.37)
       lg.pop()
+      if not self.chosen then
+        self:drawCardKey(i, cx, cy + CARD_H * 0.5 * scale + 12, lift, alpha)
+      end
     end
   end
 
@@ -376,13 +403,11 @@ function S:draw()
   local fk = UI.stagger(t, 1, SEQ.foot, 0, 0.5)
   if fk > 0.002 and not self.chosen then
     local fy = h - UI.pad - 26
-    UI.promptRow(w * 0.5, fy, PROMPTS, UI.ts.micro, P.inkDim, 0.85 * a * fk, "center")
+    -- left, not centre: the centre of this baseline is directly under the middle
+    -- card's number chip, and two prompts stacked in a column read as one
+    UI.promptRow(fx, fy, PROMPTS, UI.ts.micro, P.inkDim, 0.85 * a * fk, "left")
     UI.caption("ONE CHIP. THE OTHER TWO ARE GONE.", w - UI.pad * 3, fy + 4,
-               UI.ts.micro, UI.c(P.inkFaint, 0.55 * a * fk), "right")
-    if Input.scheme == "kb" then
-      UI.caption("OR PRESS 1  2  3", UI.pad * 3, fy + 4, UI.ts.micro,
-                 UI.c(P.inkFaint, 0.55 * a * fk), "left")
-    end
+               UI.ts.micro, UI.c(P.inkDim, 0.7 * a * fk), "right")
   end
 
   if top and not self.chosen then ctx:endFrame() end

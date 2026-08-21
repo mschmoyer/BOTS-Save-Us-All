@@ -67,21 +67,33 @@ end
 
 function Camera:detach() love.graphics.pop() end
 
+--- Where the camera is actually looking. `attach` folds offX/offY into the
+--- transform, and cutscene framing moves the camera *entirely* through those
+--- offsets - so every projection and every cull test has to account for them or
+--- the world gets culled against a rectangle the camera is not looking at. That
+--- is what rendered most story beats over open ocean.
+function Camera:focus()
+  return self.x - (self.offX or 0), self.y - (self.offY or 0)
+end
+
 function Camera:toWorld(sx, sy)
   local z = self.zoom
-  return (sx - self.w / 2) / z + self.x, (sy - self.h / 2) / z + self.y
+  local cx, cy = self:focus()
+  return (sx - self.w / 2) / z + cx, (sy - self.h / 2) / z + cy
 end
 
 function Camera:toScreen(wx, wy)
   local z = self.zoom
-  return (wx - self.x) * z + self.w / 2, (wy - self.y) * z + self.h / 2
+  local cx, cy = self:focus()
+  return (wx - cx) * z + self.w / 2, (wy - cy) * z + self.h / 2
 end
 
 --- World-space rectangle currently visible, expanded by `pad`. Used for culling.
 function Camera:viewRect(pad)
   pad = pad or 0
+  local cx, cy = self:focus()
   local hw, hh = self.w / (2 * self.zoom) + pad, self.h / (2 * self.zoom) + pad
-  return self.x - hw, self.y - hh, hw * 2, hh * 2
+  return cx - hw, cy - hh, hw * 2, hh * 2
 end
 
 function Camera:visible(x, y, r)

@@ -54,18 +54,22 @@ local S = {}
 ------------------------------------------------------------------------ tuning
 local T = {
   quiet     = 3.2,
-  gatherMax = 7.0,
+  gatherDur = 4.6,       -- everyone arrives together, however far out they were
   settle    = 3.0,       -- they stand there. Nobody says anything.
   after     = 3.4,       -- silence after the last word. This is the whole point.
-  ringGap   = 40,        -- arc length each bot wants on the circle
+  ringGap   = 32,        -- arc length each bot wants on the circle
   ringMin   = 132,
-  ringMax   = 250,
-  walk      = 96,
+  ringMax   = 226,
+  gatherFar = 2400,      -- further out than this and it would read as a teleport
   -- Framing is derived from the ring, not fixed: two survivors and forty want
   -- the same picture, and 1.72 on a full-grown island is a close-up of a leaf.
-  ringFrame = 300,       -- world half-height the ring should occupy on screen
+  ringFrame = 405,       -- world half-height the ring should occupy on screen
+  openTime  = 3.4,       -- seconds for the canopy over the circle to thin out
+  openFade  = 0.16,      -- what a tree standing inside the circle fades to
+  openW     = 1.45,      -- the opening, as a multiple of the ring radius
+  openH     = 1.25,
   zoomIn    = 1.20,
-  zoomMax   = 1.42,
+  zoomMax   = 1.80,
   zoomMin   = 0.88,
   zoomOut   = 0.70,
   scroll    = 46,        -- credits, pixels per second
@@ -138,7 +142,15 @@ local function epitaphFor(name, rec)
   if (rec.built or 0) > 0 then
     return "built " .. rec.built .. (rec.built == 1 and " planter" or " planters")
   end
-  return nil
+  -- Bot:epitaph's own fallbacks, so a name is never left bare. A ragged list --
+  -- some names with a line under them, some without -- reads as missing data,
+  -- and "was here" is not a smaller thing to have done than planting a tree.
+  local t = rec.type
+  if t == "repulsor"  then return "held the line" end
+  if t == "beacon"    then return "kept a light on" end
+  if t == "sentry"    then return "stood watch" end
+  if t == "harvester" then return "carried what it found" end
+  return "was here"
 end
 
 local function fallenRecords(world)
@@ -147,13 +159,17 @@ local function fallenRecords(world)
     local name = (type(rec) == "table") and rec.name or rec
     if not name or seen[name] then return end
     seen[name] = true
-    out[#out + 1] = { name = name, epitaph = epitaphFor(name, rec) }
+    out[#out + 1] = { name = name, epitaph = epitaphFor(name, rec) or "was here" }
   end
   if world.allLostNames then
     for i = 1, #world.allLostNames do push(world.allLostNames[i]) end
   end
   if world.lostNames then
     for i = 1, #world.lostNames do push(world.lostNames[i]) end
+  end
+  -- and the ones that went at the rig, in the order the cohorts left
+  if Story.sacrificed then
+    for i = 1, #Story.sacrificed do push(Story.sacrificed[i]) end
   end
   return out
 end
@@ -186,6 +202,7 @@ function S:enter(world)
     self.fallen = fallenRecords(world)
     self.stats = {
       trees   = world.treeCount or 0,
+      lost    = (world.stats and world.stats.lost) or 0,
       planted = (world.stats and world.stats.planted) or 0,
       o2      = world.o2 or 0,
       cycles  = math.min(world.cycle or 1, TU.cycle.count),
@@ -195,7 +212,8 @@ function S:enter(world)
     Story.prepare("ending", world)
   else
     self.bots, self.fallen = {}, {}
-    self.stats = { trees = 0, planted = 0, o2 = 0, cycles = 0, built = 0, rescued = 0 }
+    self.stats = { trees = 0, lost = 0, planted = 0, o2 = 0, cycles = 0,
+                   built = 0, rescued = 0 }
   end
 
   if Music.setState then Music.setState("ending") end
@@ -223,53 +241,69 @@ end
 function S:assignRing()
   local p = self.world and self.world.player
   if not p then return end
-  local n = #self.bots
-  if n == 0 then return end
-  local r = U.clamp(n * T.ringGap / U.TAU, T.ringMin, T.ringMax)
-  local order = {}
-  for i = 1, n do
+
+  -- Only the ones close enough that walking in reads as walking in. On a
+  -- forested island a Planter can be two thousand pixels away down a beach;
+  -- dragging it across the map in four seconds looks like a bug, and leaving
+  -- it where it is looks like a bot getting on with its job, which is true.
+  local ring = {}
+  for i = 1, #self.bots do
     local b = self.bots[i]
-    order[i] = { b = b, a = math.atan2(b.y - p.y, b.x - p.x) }
+    b.ringX, b.ringY = nil, nil
+    if U.dist(b.x, b.y, p.x, p.y) <= T.gatherFar then
+      ring[#ring + 1] = { b = b, a = math.atan2(b.y - p.y, b.x - p.x) }
+    end
   end
-  table.sort(order, function(a, c) return a.a < c.a end)
+  local n = #ring
+  if n == 0 then return end
+
+  local r = U.clamp(n * T.ringGap / U.TAU, T.ringMin, T.ringMax)
+  table.sort(ring, function(a, c) return a.a < c.a end)
   for i = 1, n do
     local a = -math.pi * 0.5 + (i - 1) / n * U.TAU
-    local b = order[i].b
+    local b = ring[i].b
     b.ringX = p.x + math.cos(a) * r
     b.ringY = p.y + math.sin(a) * r * 0.78
     b.ringA = a
+    -- where it set off from, so the walk can be timed rather than paced: they
+    -- all get there at the same moment, which is the only version of this
+    -- that is a circle rather than an arrival queue
+    b.gx, b.gy = b.x, b.y
   end
   self.ringR = r
+  self.ringN = n
   -- frame the circle, whatever size it turned out to be
   self.ringZoom = U.clamp(T.ringFrame / (r * 0.78 + 96), T.zoomMin, T.zoomMax)
 end
 
 --- Walk the bots to their places. Their own AI is not running; this is us.
-function S:stepBots(dt)
+--- `k` is 0..1 across the gather, so the ones that started furthest out move
+--- fastest and the circle closes all at once.
+function S:stepBots(dt, k)
   local p = self.world and self.world.player
   if not p then return true end
-  local settled = true
+  k = k == nil and 1 or U.saturate(k)
+  local e = U.ease.inOutCubic and U.ease.inOutCubic(k) or U.ease.outCubic(k)
   for i = 1, #self.bots do
     local b = self.bots[i]
     b.age = (b.age or 0) + dt
     b.blink = (b.blink or 0) + dt
-    if b.ringX then
-      local dx, dy = b.ringX - b.x, b.ringY - b.y
-      local d = U.len(dx, dy)
-      if d > 3 then
-        settled = false
-        local sp = min(T.walk, d * 3.2)
-        local nx, ny = U.norm(dx, dy)
-        b.x, b.y = b.x + nx * sp * dt, b.y + ny * sp * dt
-        b.vx, b.vy = nx * sp, ny * sp
-        if b.setFacing then b:setFacing(nx, ny) end
-      else
-        b.vx, b.vy = 0, 0
+    if b.ringX and b.gx then
+      local nx0, ny0 = b.x, b.y
+      b.x = U.lerp(b.gx, b.ringX, e)
+      b.y = U.lerp(b.gy, b.ringY, e)
+      local vx, vy = (b.x - nx0), (b.y - ny0)
+      b.vx, b.vy = (dt > 0) and vx / dt or 0, (dt > 0) and vy / dt or 0
+      if b.setFacing and (vx ~= 0 or vy ~= 0) then
+        local dx, dy = U.norm(vx, vy)
+        b:setFacing(dx, dy)
       end
+    else
+      b.vx, b.vy = 0, 0
     end
     if b.lookAt then b:lookAt(p.x, p.y) end
   end
-  return settled
+  return k >= 1
 end
 
 function S:advance(stage)
@@ -329,14 +363,38 @@ function S:tickCanopy(dt)
   local world = self.world
   local p = world and world.player
   if not (p and world.trees and Tree.setFocus) then return end
-  local r = (self.ringR or T.ringMin) * 1.15 + 90
-  Tree.setFocus(p.x, p.y, r)
+
+  -- The focus is NOT the player. Tree:updateXray only considers canopies that
+  -- sort in front of the focus point (`tree.y > focusY`), so pointing it at his
+  -- feet leaves every tree between him and the top of the circle fully opaque
+  -- -- which is exactly where half the ring is standing. Aim it at the back of
+  -- the ring and widen it until the whole ellipse is inside.
+  local r = self.ringR or T.ringMin
+  Tree.setFocus(p.x, p.y - r * 0.62, r * 1.5)
+
+  -- ...and the x-ray on its own is not enough. It takes a canopy down to 22%,
+  -- which is plenty when one tree is in the way and useless when nine are:
+  -- by the last cycle the island is eight hundred trees deep and the ring, the
+  -- bots and the man himself are all under an unbroken roof. So the roof opens.
+  -- Over the first few seconds of the ending, every tree standing inside the
+  -- circle thins out and lets the light down, and the forest closes again
+  -- behind the camera as it pulls away for the credits. It is the last thing
+  -- the forest does for him: it gets out of the way.
+  local closing = (self.stage == "credits")
+  self.open = U.saturate((self.open or 0) + (closing and -dt / 7.0 or dt / T.openTime))
+  local ox, oy = p.x, p.y - r * 0.30
+  local rx, ry = r * T.openW, r * T.openH
   local list = world.trees
   for i = 1, #list do
     local t = list[i]
     if t.updateXray then
       if t.visible then t.onScreen = t:visible() end
       t:updateXray(dt)
+      local dx = (t.x - ox) / rx
+      local dy = (t.y - (t.height or 0) * 0.35 - oy) / ry
+      if t.alive and dx * dx + dy * dy < 1 then
+        t.fade = U.damp(t.fade or 1, U.lerp(1, T.openFade, self.open), 2.2, dt)
+      end
     end
   end
 end
@@ -385,7 +443,10 @@ function S:update(dt, realDt)
   local barWant = (stage == "credits") and 0 or 1
   self.bar = U.approach(self.bar, barWant, realDt * (barWant > 0 and 1.5 or 0.9))
 
-  if stage ~= "credits" then self:stepBots(realDt) end
+  if stage ~= "credits" then
+    local k = (stage == "gather") and (self.stageT / T.gatherDur) or 1
+    self:stepBots(realDt, k)
+  end
   Story.refresh(world)      -- the helmet comes off mid-scene; the portrait knows
 
   -- camera: in on the circle, then slowly out over the forest
@@ -409,8 +470,7 @@ function S:update(dt, realDt)
   if stage == "quiet" then
     if self.stageT > T.quiet then self:advance("gather") end
   elseif stage == "gather" then
-    local settled = self:stepBots(0)
-    if settled or self.stageT > T.gatherMax then self:advance("settle") end
+    if self.stageT >= T.gatherDur then self:advance("settle") end
   elseif stage == "settle" then
     if self.stageT > T.settle then self:advance("words") end
   elseif stage == "words" then
@@ -490,7 +550,7 @@ function S:layoutCredits()
       local r = f[i]
       -- name over epitaph, not name beside number: a two-line block reads as a
       -- headstone, a label-and-value row reads as a table of results
-      push("name", r.name, r.epitaph, r.epitaph and (ROW.line + 26) or (ROW.line + 8))
+      push("name", r.name, r.epitaph, ROW.line + 30)
     end
   end
 
@@ -596,19 +656,19 @@ local function drawBars(amount)
   lg.setColor(1, 1, 1, 1)
 end
 
---- A soft ring of light on the ground where the bots are standing. It is the
---- only thing in the scene that is not diegetic, and it is barely there.
+--- A pool of light on the ground the ring is standing in. It used to be an
+--- outlined ellipse drawn under the world, which the trees around the circle
+--- chopped into two floating arcs -- it read as a broken UI element, not as
+--- light. It is now a soft fill, laid over the scene, and barely there.
 function S:drawCircleGlow()
   if not self.ringR or #self.bots == 0 then return end
   local p = self.world and self.world.player
   if not p then return end
-  local k = U.saturate((self.t - T.quiet) / 3)
+  local k = U.saturate((self.t - T.quiet) / 4) * (1 - U.saturate(self.creditsT / 6))
   if k <= 0.01 then return end
-  Draw.setColor(P.love, 0.05 * k)
-  lg.ellipse("fill", p.x, p.y + 6, self.ringR * 1.06, self.ringR * 0.84)
-  Draw.setColor(P.love, 0.12 * k)
-  lg.setLineWidth(1.4)
-  lg.ellipse("line", p.x, p.y + 6, self.ringR, self.ringR * 0.78)
+  local r = self.ringR
+  Draw.radialGradient(p.x, p.y - r * 0.10, r * 1.30,
+                      P.alpha(P.love, 0.085 * k), P.alpha(P.love, 0), r * 1.05)
   lg.setColor(1, 1, 1, 1)
 end
 
@@ -627,8 +687,8 @@ function S:draw()
   lg.clear(P.ramp.water[1])
   if world and world.draw then
     cam:attach()
-    self:drawCircleGlow()
     world:draw(cam)
+    self:drawCircleGlow()
     cam:detach()
   end
 

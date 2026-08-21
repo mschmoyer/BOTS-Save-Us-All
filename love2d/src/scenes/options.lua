@@ -155,6 +155,7 @@ function S:enter(opts)
   self.ctx.wrap = false
   self.opts = opts
   self.dirtyFlash = 0
+  self.confirmReset = false
   self.panelH = nil
   Settings.load()
   applyAll()
@@ -174,6 +175,7 @@ function S:update(dt, realDt)
 
   if Screen.current() ~= self then return end
   if Input.pressed("back") or Input.pressed("pause") then
+    if self.confirmReset then self.confirmReset = false return end
     Settings.saveIfDirty()
     Screen.pop()
     return
@@ -243,6 +245,7 @@ end
 
 --------------------------------------------------------------------- drawing
 local PROMPTS = { { "confirm", "TOGGLE" }, { "back", "BACK" } }
+local RESET_OPT = { size = UI.ts.small, danger = true }
 
 function S:draw()
   local ctx = self.ctx
@@ -273,8 +276,10 @@ function S:draw()
   UI.text("OPTIONS", L.cx, py + 32, UI.ts.h2, UI.c(P.ink, a), "left", a, 0.10)
   UI.caption("SAVED AS YOU CHANGE THEM", L.cx + L.cw, py + 36, UI.ts.micro,
              UI.c(P.inkFaint, 0.6 * a), "right")
+  -- the device name is information, not an accent: accentCool on this screen
+  -- means "the thing you are pointing at", and nothing else may borrow it
   UI.caption(Input.schemeName():upper(), L.cx + L.cw, py + 54, UI.ts.micro,
-             UI.c(P.accentCool, 0.7 * a), "right")
+             UI.c(P.inkDim, 0.7 * a), "right")
 
   -- tabs
   local ti, tch = UI.tabs(ctx, "tab", L.cx, py + HEAD_H - TABS_H, L.cw, TABS_H,
@@ -305,18 +310,37 @@ function S:draw()
 
   -- footer: prompts left, the one destructive action right
   local fy = py + ph - FOOT_H + 16
+  -- promptRow returns its width without the trailing gap, so the next thing on
+  -- the baseline has to open its own space or it reads as part of the last
+  -- prompt's label ("BACK LEFT / RIGHT ADJUSTS").
   local prow = UI.promptRow(L.cx, fy + 16, PROMPTS, UI.ts.micro, P.inkDim, 0.85 * a, "left")
-  UI.caption("LEFT / RIGHT ADJUSTS", L.cx + prow + 8, fy + 16, UI.ts.micro,
-             UI.c(P.inkFaint, 0.55 * a), "left")
+  local sepX = L.cx + prow + 20
+  Draw.setColor(UI.c(P.ink, 0.16 * a))
+  lg.setLineWidth(1)
+  lg.line(sepX, fy + 9, sepX, fy + 27)
+  UI.caption("LEFT / RIGHT ADJUSTS", sepX + 14, fy + 16, UI.ts.micro,
+             UI.c(P.inkDim, 0.7 * a), "left")
   local bw = 208
-  if UI.button(ctx, "reset", L.cx + L.cw - bw, fy, bw, 40, "RESTORE DEFAULTS",
-               { size = UI.ts.small, danger = true, alpha = a }) then
-    self.pendingReset = true
+  RESET_OPT.alpha = a
+  RESET_OPT.accent = self.confirmReset and P.danger or nil
+  if UI.button(ctx, "reset", L.cx + L.cw - bw, fy, bw, 40,
+               self.confirmReset and "PRESS AGAIN TO RESTORE" or "RESTORE DEFAULTS",
+               RESET_OPT) then
+    -- the one destructive control on this screen asks twice, exactly as the
+    -- pause menu's two destructive rows already do
+    if self.confirmReset then
+      self.pendingReset = true
+      self.confirmReset = false
+    else
+      self.confirmReset = true
+    end
   end
   if self.dirtyFlash > 0.01 then
     UI.caption("DEFAULTS RESTORED", L.cx + L.cw - bw - 20, fy + 14, UI.ts.micro,
                UI.c(P.warn, self.dirtyFlash * a), "right")
   end
+
+  if self.confirmReset and ctx.focusId ~= "reset" then self.confirmReset = false end
 
   if top then ctx:endFrame() end
   lg.setLineWidth(prevLW)

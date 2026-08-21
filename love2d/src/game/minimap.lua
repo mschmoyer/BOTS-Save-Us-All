@@ -155,10 +155,16 @@ function M.draw(world, cam)
     Text.display("THE ISLAND", cx, cy - 34 * scale, 22 * scale,
                  { color = P.ink, alpha = k, tracking = 0.28 })
   elseif Text.display and k < 0.3 then
-    -- what opens it, once, in the corner's own voice
-    Text.display(Input.glyph("map") .. "  MAP", cx + w, cy + h + 8, 10,
-                 { color = P.inkDim, alpha = (0.5 - k) * 1.2, tracking = 0.24,
-                   align = "right", shadow = 1 })
+    -- What opens it. Nothing else on the screen says so, so it is worth a line
+    -- of type -- but only while the player is still learning the island, not
+    -- for the whole run.
+    local age = world.time or 0
+    local hint = (0.5 - k) * 1.2 * U.saturate((90 - age) / 20)
+    if hint > 0.01 then
+      Text.display(Input.glyph("map") .. "  MAP", cx + w, cy + h + 8, 10,
+                   { color = P.inkDim, alpha = hint, tracking = 0.24,
+                     align = "right", shadow = 1 })
+    end
   end
   g.setColor(1, 1, 1, 1)
 end

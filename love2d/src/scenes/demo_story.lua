@@ -168,9 +168,7 @@ end
 
 function Stub:draw(cam)
   self.camera = cam
-  -- the cutscene camera works in offsets, which viewRect does not know about
   local vx, vy, vw, vh = cam:viewRect(260)
-  vx, vy = vx - (cam.offX or 0), vy - (cam.offY or 0)
 
   Draw.setColor(P.shade(P.ramp.grass, 1.85))
   lg.rectangle("fill", vx, vy, vw, vh)
@@ -285,12 +283,27 @@ function D:enter()
 
   if (os.getenv("BOTS_DEMO") or "") == "ending" then
     Story.begin(self.world)
+    self:seedLosses()
     Screen.switch(require("src.scenes.ending"), self.world)
     return
   end
 
   Story.begin(self.world)
+  self:seedLosses()
   self:goTo(1)
+end
+
+--- Two of the stub's bots die at the rig, for real, through the signal the
+--- rebellion uses. The memorial reads its sacrificed list from Story, and a
+--- harness that never emits bot:sacrificed cannot show that the list works --
+--- which is how "EVERY ONE OF THEM CAME HOME" ended up printing under a
+--- rebellion that killed twenty of them.
+function D:seedLosses()
+  local w = self.world
+  for _, i in ipairs({ 2, 4 }) do
+    local b = w.bots[i]
+    if b then Signal.emit("bot:sacrificed", b) end
+  end
 end
 
 --- Run the director for real for a few seconds so a broken subscription or a

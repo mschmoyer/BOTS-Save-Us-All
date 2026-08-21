@@ -89,6 +89,7 @@ function World:init(seed, opts)
   self:placeHome()
   self:seedCobalt()
 
+  Signal._world = self
   Signal.emit("world:ready", self)
 end
 
@@ -285,14 +286,13 @@ function World:plantTree(x, y, by)
   local gap = TU.tree.spreadReject * 0.74
   if self.hTree:nearest(x, y, gap, function(t) return t.alive end) then return false end
 
-  local oldGrowth = self.chips:has("oldGrowth")
   local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000), {
     startGrown = (by == "player" and self.chips:has("greenThumb")) or nil,
     growth = (by == "player" and self.chips:has("greenThumb")) and 0.5 or nil,
   }) or nil
   if not t then return false end
   t.world = self
-  t.canElder = oldGrowth
+  t.canElder = true
   self:addEntity(self.trees, self.hTree, t)
   self.treeCount = self.treeCount + 1
   self.stats.planted = self.stats.planted + 1
@@ -340,7 +340,8 @@ function World:botCost(botType)
   local def = TU.bots[botType]
   if not def then return 0 end
   local owned = self:countBots(botType)
-  local mul = math.min(1 + owned * TU.bots.costGrowth, TU.bots.costGrowthMax)
+  local growth = def.costGrowth or TU.bots.costGrowth
+  local mul = math.min(1 + owned * growth, TU.bots.costGrowthMax)
   return math.ceil(def.cost * mul * self.chips:get("botCost", 1))
 end
 
@@ -478,6 +479,9 @@ function World:hitEnemyAt(x, y, r, damage, vx, vy)
   if not e then return false end
   local dmg = damage
   if self.chips:has("brittle") and e.stun > 0 then dmg = dmg * 2 end
+  -- A Sentry firing seeds at the extraction rig should chip it, not shred it:
+  -- a handful of them were deleting the whole health bar in five seconds.
+  if e.kind == "boss" then dmg = dmg * TU.boss.dartResist end
   e:damage(dmg, x - (vx or 0) * 0.01, y - (vy or 0) * 0.01)
   return true
 end
@@ -707,7 +711,12 @@ function World:beginExtraction()
   end
   -- the fight's clock, scaled so it is always the same length
   self.bossDrainRate = math.max(TU.boss.extractFloor, self.o2) / TU.boss.extractWindow
-  self.boss = Boss.new(x, y, self, self:botCount())
+  local crew = self:botCount()
+  self.boss = Boss.new(x, y, self, crew)
+  -- The workforce always pays exactly the same share of the rig, however big it
+  -- is. Before this, forty bots standing near the landing site deleted the whole
+  -- health bar in ten seconds and none of the three authored phases ever played.
+  self.rebelDamage = math.max(0.5, self.boss.maxHp * TU.boss.rebelShare / math.max(1, crew))
   -- the boss lives in the enemy hash so shoves, pulses and sentry darts find it
   self.hEnemy:insert(self.boss)
   for i = 1, #self.bots do
@@ -853,7 +862,11 @@ function World:applyOxygen(dt)
 
   if self.phase == "extraction" and self.boss and self.boss.alive then
     self.extractionT = (self.extractionT or 0) + dt
-    self.bossDrain = (self.bossDrain or 0) + (self.bossDrainRate or 0.4) * dt
+    if (self.drainPause or 0) > 0 then
+      self.drainPause = self.drainPause - dt
+    else
+      self.bossDrain = (self.bossDrain or 0) + (self.bossDrainRate or 0.4) * dt
+    end
   end
   local ideal = raw - self.o2Debt - (self.bossDrain or 0)
   ideal = U.clamp(ideal, 0, TU.o2.target)
@@ -907,6 +920,10 @@ function World:updateSpread(dt)
         local near = 0
         self.hTree:each(t.x, t.y, 90, function(o) if o ~= t and o.alive then near = near + 1 end end)
         if near >= 3 then m = m * 1.35 end
+      end
+      -- eldering rides the same multiplier, with its own chip on top
+      if t.stage == "mature" or t.stage == "elder" then
+        m = m * self.chips:get("elderRate", 1)
       end
       t.growthMul = m
 
@@ -1140,6 +1157,13 @@ Signal.on("chip:added", function(chip)
   elseif chip.id == "richSeam" then
     w.extraNodes = (w.extraNodes or 0) + 4
   end
+end)
+
+-- Each phase break buys the player a breath: the drill stops while the rig
+-- reconfigures, so a long fight is not automatically a lost one.
+Signal.on("boss:phase", function()
+  local w = Signal._world
+  if w then w.drainPause = TU.boss.phaseGap * 0.7 end
 end)
 
 Signal.on("enemy:killed", function(e)

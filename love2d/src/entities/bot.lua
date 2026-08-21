@@ -131,7 +131,13 @@ function Bot:update(dt)
 
   if self.state == "rebel" then self:updateRebel(dt) return end
 
-  -- chatter
+  -- chatter, but never over a cutscene or the ending: the human saying "the air
+  -- is back" under a bubble reading "this one is crooked" is the exact failure
+  -- the old codebase was full of
+  local w = self.world
+  if w and (w.cutscene or w.phase == "ending") then
+    self.chatterT = math.max(self.chatterT, 4)
+  end
   self.chatterT = self.chatterT - dt
   if self.chatterT <= 0 then
     self.chatterT = self.rng:range(T.chatterEvery[1], T.chatterEvery[2])
@@ -335,7 +341,7 @@ function Bot:updateRebel(dt)
   self:lookAt(t.x, t.y)
   if self.rng:chance(dt * 6) then VFX.emit("love_heart", self.x, self.y - 16, { power = 0.4 }) end
   if d < t.radius + self.radius then
-    t:damage(1, self.x, self.y, { source = "bot" })
+    t:damage(self.world and self.world.rebelDamage or 1, self.x, self.y, { source = "bot" })
     VFX.emit("bot_death", self.x, self.y, { power = 1.2 })
     VFX.emit("love_heart", self.x, self.y, { power = 1.5 })
     Audio.play("bot_down", { pitch = 1.1 })

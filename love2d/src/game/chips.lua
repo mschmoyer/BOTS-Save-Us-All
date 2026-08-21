@@ -16,7 +16,8 @@ local C = {
   ---------------------------------------------------------------- growth
   { id = "mycelium",   f = F.GROWTH, r = 1, name = "MYCELIUM",     desc = "Trees spread 25% faster.",              mod = { spreadRate = 1.25 } },
   { id = "deepRoots",  f = F.GROWTH, r = 1, name = "DEEP ROOTS",   desc = "Trees take 40% longer to chew down.",   mod = { chewTime = 1.4 } },
-  { id = "oldGrowth",  f = F.GROWTH, r = 3, name = "OLD GROWTH",   desc = "Mature trees become elders. Elders make double oxygen.", flag = true },
+  { id = "oldGrowth",  f = F.GROWTH, r = 3, name = "OLD GROWTH",   desc = "Trees reach their elder years three times sooner, and elders count for more.",
+    mod = { elderRate = 3.0, elderWeight = 1.35 } },
   { id = "rainMemory", f = F.GROWTH, r = 2, name = "RAIN MEMORY",  desc = "Rain lasts twice as long and doubles growth.", flag = true },
   { id = "seedBank",   f = F.GROWTH, r = 2, name = "SEED BANK",    desc = "Hand-planting is free.",                flag = true },
   { id = "canopy",     f = F.GROWTH, r = 2, name = "CANOPY",       desc = "Trees within 90px of three others grow 35% faster.", flag = true },

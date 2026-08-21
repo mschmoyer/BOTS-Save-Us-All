@@ -382,6 +382,7 @@ local function resetState()
   Story.lastX, Story.lastY = nil, nil
   Story.did      = {}
   Story.epitaphs = {}
+  Story.sacrificed = {}
   Story.watch    = nil
   Story.tut      = { active = nil, a = 0, t = 0, gap = 1.5, fading = false,
                      shown = {}, doneIds = {} }
@@ -471,6 +472,20 @@ local function subscribe()
   -- -- and then again, in writing, next to its name in the memorial.
   Signal.on("bot:epitaph", function(name, text)
     if name and text then Story.epitaphs[name] = text end
+  end, Story)
+
+  -- A bot that charges the rig is not "lost" -- world.lua only records deaths
+  -- that go through bot:lost, and the rebellion bypasses it. Without this the
+  -- memorial prints EVERY ONE OF THEM CAME HOME directly after the player has
+  -- watched twenty of them explode, which is not a small mistake. They died
+  -- last, so they are last on the list, which is where they belong.
+  Signal.on("bot:sacrificed", function(bot)
+    if not bot or not bot.name then return end
+    if bot.epitaph then Story.epitaphs[bot.name] = bot:epitaph() end
+    Story.sacrificed[#Story.sacrificed + 1] = {
+      name = bot.name, type = bot.type,
+      planted = bot.planted or 0, built = bot.built or 0,
+    }
   end, Story)
 
   Signal.on("bot:lost", function(bot, peaceful)

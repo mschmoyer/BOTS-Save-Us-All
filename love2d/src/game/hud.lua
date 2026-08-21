@@ -103,7 +103,9 @@ HUD.hidden    = false
 HUD.botCount  = 0
 HUD.o2Rate    = 0        -- smoothed %/s, signed
 HUD.o2Cause   = nil      -- why it is moving, when it is moving down
-HUD.o2Lag     = 0        -- the ghost tail: where the reading was a moment ago
+HUD.o2Lag     = 0        -- a slow copy of the reading, for the trend sign
+HUD.o2Peak    = 0        -- high-water mark: the ghost tail on the arc
+HUD.o2Hold    = 0
 
 local heartAnim = {}
 for i = 1, 8 do heartAnim[i] = 0 end
@@ -289,6 +291,7 @@ function HUD.init(world)
   HUD.o2Mile = 0
   HUD.duskK, HUD.threat = 0, 0
   HUD.o2Rate, HUD.o2Cause, HUD.o2Lag = 0, nil, HUD.o2Shown
+  HUD.o2Peak, HUD.o2Hold = HUD.o2Shown, 0
   for i = 1, TOAST_MAX do toasts[i].live = false end
   HUD.clearSpeech()
 
@@ -384,6 +387,20 @@ function HUD.update(dt, world)
   local prevLag = HUD.o2Lag
   HUD.o2Lag = U.damp(HUD.o2Lag, o2, 0.9, dt)
   HUD.o2Rate = U.damp(HUD.o2Rate, (HUD.o2Lag - prevLag) / dt, 3, dt)
+
+  -- The high-water mark, held and then bled off: a lagged copy of the reading
+  -- only ever showed two percent of arc, which is nothing. This is the damage
+  -- bar every fighting game uses, and it is the only thing on screen that says
+  -- how much sky this night has actually cost.
+  if HUD.o2Shown >= HUD.o2Peak - 0.01 then
+    HUD.o2Peak = HUD.o2Shown
+    HUD.o2Hold = 0
+  else
+    HUD.o2Hold = HUD.o2Hold + dt
+    if HUD.o2Hold > 1.4 then
+      HUD.o2Peak = max(HUD.o2Shown, HUD.o2Peak - TU.o2.target * 0.02 * dt)
+    end
+  end
   local debt = world.o2Debt or 0
   local drain = world.bossDrain or 0
   if drain > 0.05 then
@@ -593,11 +610,13 @@ local function drawOxygen(w, a)
   -- danger red, so a night that costs you sky *looks* like a night that cost
   -- you sky rather than a number quietly getting smaller.
   local ae = a0 + (a1 - a0) * t
-  local lag = U.saturate(HUD.o2Lag / TU.o2.target)
-  local losing = lag - t > 0.002
+  local lag = U.saturate(HUD.o2Peak / TU.o2.target)
+  local losing = lag - t > 0.0015
   if losing then
     local al = a0 + (a1 - a0) * lag
-    Draw.ring(cx, cy, R, 5, ae, al, UI.c(P.danger, 0.55 * a), 3)
+    Draw.ring(cx, cy, R, 6, ae, al, UI.c(P.danger, 0.7 * a), 4)
+    local gx, gy = cx + cos(al) * R, cy + sin(al) * R
+    Draw.glow(gx, gy, 13, P.danger, 0.5 * a, 2)
   end
 
   -- fill
@@ -640,23 +659,27 @@ local function drawOxygen(w, a)
   UI.caption("OXYGEN", cx - 6 - nw - 14, base + 2, UI.ts.micro,
              UI.c(P.ink, 0.72 * a), "right", nil, 1)
 
-  -- the trend, under the numeral, on its own line
+  -- The trend, under the numeral, on its own centred line. A chevron for the
+  -- direction and a reason for the fall -- no rate figure: the size of the red
+  -- stretch on the arc already says how fast, and a second number here just
+  -- competed with the first one.
   local cause = HUD.o2Cause
-  local rate = HUD.o2Rate
+  local ty = ny2 + numSize + 8
   if cause then
-    local ty = ny2 + numSize + 8
+    local lw = UI.captionWidth(cause, UI.ts.micro)
     local puls = 0.72 + 0.28 * sin(HUD.time * 4)
+    -- danger's own value is mid-grey; over a sunlit canopy the pure hue only
+    -- managed 3.2:1, so the warning line is pulled toward white and given a
+    -- 2 px shadow. It still reads unambiguously as red.
     Draw.setColor(UI.c(P.danger, 0.95 * puls * a))
-    Draw.chevron(cx - 76, ty + 5, 6, pi * 0.5, 2, 0.85)
-    UI.caption(cause, cx - 64, ty, UI.ts.micro, UI.c(P.danger, 0.95 * a), "left", nil, 1)
-    UI.caption(dec1(rate) .. "/S", cx + 88, ty, UI.ts.micro,
-               UI.c(P.danger, 0.8 * a), "right", nil, 1)
-  elseif rate > 0.06 then
-    local ty = ny2 + numSize + 8
+    Draw.chevron(cx - lw * 0.5 - 12, ty + 4, 6, pi * 0.5, 2, 0.85)
+    UI.caption(cause, cx + 6, ty, UI.ts.micro, UI.mix(P.danger, P.white, 0.42, a),
+               "center", nil, 2)
+  elseif HUD.o2Rate > 0.06 then
+    local lw = UI.captionWidth("RISING", UI.ts.micro)
     Draw.setColor(UI.c(P.accent, 0.8 * a))
-    Draw.chevron(cx - 44, ty + 5, 6, -pi * 0.5, 2, 0.85)
-    UI.caption("+" .. dec1(rate) .. "/S", cx - 32, ty, UI.ts.micro,
-               UI.c(P.accent, 0.85 * a), "left", nil, 1)
+    Draw.chevron(cx - lw * 0.5 - 12, ty + 4, 6, -pi * 0.5, 2, 0.85)
+    UI.caption("RISING", cx + 6, ty, UI.ts.micro, UI.c(P.accent, 0.8 * a), "center", nil, 1)
   end
 end
 
@@ -829,7 +852,7 @@ local function drawFeed(a)
         UI.text(t.text, x + 14 + slide, y + 2, UI.ts.h4,
                 UI.mix(P.ink, P.danger, 0.25), "left", aa, 0.08)
         UI.caption(t.sub or "", x + 15 + slide, y + 28, UI.ts.micro,
-                   UI.c(t.color, 0.95 * aa), "left", nil, 1)
+                   UI.mix(t.color, P.white, 0.3, 0.95 * aa), "left", nil, 2)
       else
         Draw.setColor(UI.c(t.color, 0.9 * aa))
         Draw.roundRect("fill", x + slide, y + 4, 3, 18, 1.5)
@@ -883,21 +906,25 @@ local function drawTelegraph(w, a)
   else cx, cy, ang = sw, sh * 0.5, pi end
   local nx, ny = cos(ang), sin(ang)
   local tx, ty = -ny, nx
+  -- The top and bottom edges are where the oxygen arc and the build bar live,
+  -- so the chevrons flank them rather than marching straight through them. The
+  -- direction still reads; the readout underneath survives.
+  local spread = (abs(ny) > 0.5) and (L.o2w * 0.5 + 64) or 44
   local march = (HUD.time * 46) % 34
   for i = 0, 2 do
     local d = 30 + i * 34 + march
     local fade = (1 - i / 3) * aa
     for s = -1, 1, 2 do
-      local px = cx + nx * d + tx * s * 44
-      local py = cy + ny * d + ty * s * 44
+      local px = cx + nx * d + tx * s * spread
+      local py = cy + ny * d + ty * s * spread
       lg.setLineWidth(3)
       Draw.setColor(UI.c(col, fade * 0.75))
       Draw.chevron(px, py, 11, ang, 3, 0.8)
     end
   end
-  -- the word, set into the edge
-  local lx = cx + nx * 26 + tx * 0
-  local ly = cy + ny * 26 + ty * 0
+  -- the word, set into the edge beside the left-hand cluster
+  local lx = cx + nx * 26 + tx * (abs(ny) > 0.5 and -spread or 0)
+  local ly = cy + ny * 26 + ty * (abs(ny) > 0.5 and -spread or 0)
   local label = w.phase == "dusk" and "BREACH" or "PRESSURE"
   if abs(nx) > 0.5 then
     lg.push()
