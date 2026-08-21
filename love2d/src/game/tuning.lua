@@ -390,8 +390,8 @@ T.boss = {
   -- thirteen and a crew of forty-five, when the whole point of the curve is
   -- that a big workforce takes the fight off you.
   rebelStopAt  = 0.07,         -- hull fraction below which no new cohort leaves
-  rebelKeep    = 0.15,         -- and this share of the crew never leaves at all
-  rebelKeepMin = 3,
+  rebelKeep    = 0.30,         -- and this share of the crew never leaves at all
+  rebelKeepMin = 5,
   rebelWaves   = 14,
   -- One, so that rebelWaves is the authority on the *shape* of the procession
   -- at every crew size. At two, a crew of thirteen sent ten bots in five waves

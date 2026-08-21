@@ -72,10 +72,17 @@ local function buildStub()
     cutscene = false, bots = bots, enemies = {}, chips = chips, rng = rng,
     o2Debt = 5.2,
     stats = { planted = 214, lost = 61, botsLost = 7, killed = 380 },
+    -- A real losing run has twenty or thirty of these, not seven. The harness
+    -- was testing the easy case, which is how a memorial that truncated at
+    -- five and printed "AND 2 MORE" survived being looked at.
     allLostNames = {
       { name = "SEED-07" }, { name = "PYLON-11" }, { name = "THORN-04" },
       { name = "LAMP-01" }, { name = "SCRAP-09" }, { name = "FRAME-02" },
-      { name = "SEED-12" },
+      { name = "SEED-12" }, { name = "THORN-09" }, { name = "LAMP-04" },
+      { name = "PYLON-02" }, { name = "FRAME-11" }, { name = "SCRAP-01" },
+      { name = "SEED-03" }, { name = "THORN-12" }, { name = "LAMP-08" },
+      { name = "PYLON-06" }, { name = "FRAME-05" }, { name = "SCRAP-14" },
+      { name = "SEED-19" }, { name = "THORN-02" }, { name = "LAMP-11" },
     },
     player = { hp = 2, maxHp = 3, state = "alive", x = 800, y = 470,
                vx = 0, vy = 0, faceX = 1, faceY = 0 },

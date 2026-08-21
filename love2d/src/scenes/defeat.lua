@@ -207,7 +207,11 @@ function S:draw()
   end
   local sk = UI.stagger(t, 1, SEQ.sub, 0, 0.9)
   if sk > 0.002 then
-    Draw.setColor(UI.c(P.o2, 0.7 * sk))
+    -- The rule was in P.o2, which made this screen carry a cyan accent, a pink
+    -- memorial header, a green stat and a green call to action -- four accent
+    -- colours on one still frame. The forest is what the run was about and
+    -- what the last line points back at, so the rule is mint like the rest.
+    Draw.setColor(UI.c(P.accent, 0.55 * sk))
     lg.setLineWidth(2)
     lg.line(x0, y + UI.ts.h1 + 22, x0 + colW * sk, y + UI.ts.h1 + 22)
     UI.body("They took what you grew.", x0, y + UI.ts.h1 + 36, UI.bs.lead,
@@ -222,7 +226,9 @@ function S:draw()
     local k2 = UI.stagger(t, 2, SEQ.stats, 0.1, 0.5)
     UI.stat(x0, ky, "TREES PLANTED", tostring(floor(st.planted or 0)),
             UI.ts.h2, P.accent, "left", k1)
-    UI.stat(x0 + 260, ky, "NEVER CAME BACK", tostring(#self.names),
+    -- The HUD says DID NOT COME BACK and so does the ending. One phrase for
+    -- one thing; this screen was the only place it was worded differently.
+    UI.stat(x0 + 260, ky, "DID NOT COME BACK", tostring(#self.names),
             UI.ts.h2, #self.names > 0 and P.danger or P.inkDim, "left", k2)
   end
 
@@ -256,10 +262,25 @@ function S:draw()
         end
       end
     end
+    -- Everyone gets named. This used to stop at five and print "AND 2 MORE",
+    -- on a memorial, in a game whose whole subject is caring who came back.
+    -- The first five keep their epitaph; the rest run on in a tighter list,
+    -- and the step closes up until the whole crew fits the column. A memorial
+    -- that shrinks to hold everybody is honest; one that truncates is not.
     if n > shown then
-      local k = UI.stagger(t, shown + 1, SEQ.names, SEQ.nameStep, 0.6)
-      UI.caption("AND " .. tostring(n - shown) .. " MORE", nx, y + 26 + shown * 56,
-                 UI.ts.micro, UI.c(P.danger, 0.65 * k), "right", nil, 1)
+      local rest = n - shown
+      local top  = y + 26 + shown * 56 + 10
+      local room = math.max(60, h - top - 132)
+      local step = math.min(26, room / rest)
+      local size = step >= 20 and UI.ts.label or UI.ts.tiny
+      for i = 1, rest do
+        local idx = shown + i
+        local k = UI.stagger(t, idx, SEQ.names, SEQ.nameStep * 0.45, 0.6, U.ease.outExpo)
+        if k > 0.002 then
+          UI.text(self.names[idx], nx, top + (i - 1) * step, size,
+                  UI.c(UI.mix(P.ink, P.danger, 0.30), 0.72 * k), "right", k, 0.06)
+        end
+      end
     end
   end
 

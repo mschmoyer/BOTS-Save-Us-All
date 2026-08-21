@@ -890,7 +890,12 @@ function World:beginExtraction()
   end
   -- the fight's clock, scaled so it is always the same length
   self.bossDrainRate = math.max(1, self.o2) / TU.boss.extractWindow
-  self.extractRaw = self.o2Raw or self.o2
+  -- The lower of the two on purpose. Clamping only the raw figure stopped the
+  -- forest adding to it, but if the displayed reading was still easing upward
+  -- toward a raw value it had not caught yet, it went on climbing under a line
+  -- of dialogue that says the rig is taking the air back. Once the rig is on
+  -- the ground the meter may only fall.
+  self.extractRaw = math.min(self.o2Raw or self.o2 or 0, self.o2 or 0)
   local crew = self:botCount()
   self.boss = Boss.new(x, y, self, crew)
   self.rebelSent = 0

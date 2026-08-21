@@ -79,7 +79,10 @@
   h1 .c { color: var(--mint); }
   .sub {
     font-family: var(--disp); font-weight: 500; margin-top: .5rem;
-    font-size: clamp(13px, 2.2vw, 16px); letter-spacing: .5em; color: var(--cobalt);
+    /* the game's own title screen sets REFOREST in mint under the logo; this
+       panel is the first thing anyone sees and was setting it in cobalt, so
+       the page and the game it loads did not look like the same product */
+    font-size: clamp(13px, 2.2vw, 16px); letter-spacing: .5em; color: var(--mint);
   }
 
   .log {
@@ -169,7 +172,14 @@
      pressed stopped answering for twenty-odd seconds. The game now slices that
      work and reports where it is; see Boot.stage in main.lua. */
   var logEl = $('log'), lines = [], cursor = '<span class="cursor"></span>';
+  var lastSaid = null;
   function say(text, state) {
+    // The audio warm-up reports progress every frame under one label, so the
+    // panel filled with three identical copies of "synthesizing voices" and
+    // read as a hang. Repeat the line only once, and let the bar carry the
+    // motion.
+    if (text === lastSaid && state !== 'ok') return;
+    lastSaid = text;
     lines.push('<b>&gt;</b> ' + text + (state === 'ok' ? ' <span class="ok">ok</span>' : ''));
     if (lines.length > 3) lines.shift();
     logEl.innerHTML = lines.join('<br>') + '<br>' + cursor;
