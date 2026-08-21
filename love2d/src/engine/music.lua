@@ -145,9 +145,9 @@ local CYCLE_MODES = { "lydian", "lydian", "ionian", "ionian", "mixolydian", "dor
 -- Measured on the music bus, relative to a cycle-1 day (tools: a headless pass
 -- that runs each state and reads Audio.meter("music")):
 --
---   arrival -2.3 dB   procession +1.6   plates +3.5   core +5.7   fall +2.6
+--   arrival -2.0 dB   procession +1.7   plates +3.3   core +5.5   fall +1.4
 --
--- Night is +3.2, so the arrival sits five and a half dB below the night the
+-- Night is +2.9, so the arrival sits five dB below the night the
 -- player has just survived -- that drop is what makes the rest of the cue an
 -- arrival rather than a volume knob -- and the core, the loudest sustained thing
 -- in the game, is two and a half dB above the night. The fall is quieter than
@@ -177,10 +177,36 @@ local BOSS_PARTS = {
     theme = "none", density = 0, fadeBars = 1 },
 }
 
--- The procession is fourteen waves (game/tuning, boss.rebelWaves) and the score
--- walks its answering voice from the tonic to the octave across them, so however
--- many bots actually go, the *line* is the same length. See Music.cohort.
-local PROCESSION_STEPS = 14
+-- THE PROCESSION'S LINE.
+--
+-- Each wave puts a low toll under an answering voice, and that voice climbs. The
+-- obvious way to write it -- degree = how far through fourteen waves we are --
+-- is wrong, because the procession does not reliably run to fourteen. It stops
+-- when the hull drops under 16% (game/tuning, boss.rebelStopAt), a reserve never
+-- leaves at all, and a run with three surviving bots sends exactly one cohort
+-- and then nothing for another eighty seconds. A line indexed on wave count gets
+-- cut off in the middle of a scale, on whatever degree it happened to reach.
+--
+-- So the degrees are authored, and they *plateau*. The climb takes seven waves
+-- and reaches the octave; every wave after that is the octave or the tenth above
+-- it. Wherever the procession actually stops -- wave 6, wave 10, wave 14 -- the
+-- last thing heard is a consonance and the line has already arrived. The only
+-- unstable degree in the sequence is the b2 at wave two, which is the interval
+-- the whole cue is built on and is nowhere near where a procession ever ends.
+--
+-- Closure is not this line's job in any case: the tune comes back whole two
+-- parts later and the cadence lands on top of it. The line only has to not sound
+-- severed.
+local TOLL_DEGREES = { 1, 2, 3, 5, 6, 7, 8, 8, 10, 8, 10, 8, 10, 8 }
+local TOLL_TOP = 7          -- from here on the climb is over and the bell tolls
+
+-- If the first cohort has not left by now, it is not coming: a run can reach the
+-- extraction with no crew standing, and the boss's own phase gates then advance
+-- on a 26 s stall timer rather than on arrivals. Part 1 is a withholding, and a
+-- withholding that never resolves is not tension, it is a cue that has crashed.
+-- A normal run's first wave lands at 8.5 s, so this only ever fires when there
+-- genuinely is no procession.
+local PART1_MAX_WAIT = 13.5
 
 -- Each part is a complete state def in its own right, so nothing downstream has
 -- to know the finale is special: it inherits the boss cue's modal centre and key
@@ -230,7 +256,17 @@ end
 -- Per-layer output trim. The score used to run 12 dB louder at the boss than in
 -- the day purely because the bass and kick were sub-heavy; these keep the states
 -- inside a range one music-bus fader can serve.
-local TRIM = { pad = 1.05, bass = 0.55, arp = 1.0, bell = 1.2, perc = 0.58, choir = 1.15 }
+--
+-- `perc` was 0.58 and it was compensating twice. That figure was set against a
+-- kick that measured 98% of its energy below 80 Hz: the whole kit had to come
+-- down 4.7 dB to stop one sine nobody could hear from eating the headroom, and
+-- the hat, the shaker and the tom went down with it. The kick has a beater and a
+-- shell now and the four kit pieces are loudness-matched to each other rather
+-- than peak-normalised (engine/audio, PERC), so soloing the layer measures what
+-- it actually contributes -- which dropped from -1.7 dB against the pad to -5.7,
+-- because most of what it used to measure was inaudible. This puts the kit back
+-- where a kit belongs: level with the bed, a little under the tune.
+local TRIM = { pad = 1.05, bass = 0.55, arp = 1.0, bell = 1.2, perc = 0.88, choir = 1.15 }
 
 --------------------------------------------------------------------- state
 local M = {
@@ -250,7 +286,8 @@ local M = {
   gains = {}, targets = {}, fade = 0.25,
   pending = nil,
   bossPart = nil,     -- 1..5 while the finale is running, nil otherwise
-  tollIndex = 0, tollTotal = PROCESSION_STEPS, tollPending = false,
+  partT = 0,          -- seconds in the current boss part
+  tollIndex = 0, tollPending = false, tollsSeen = false,
   lastNotes = {},
   armed = {},         -- a layer only starts playing on a bar line, never mid-phrase
 }
@@ -296,6 +333,12 @@ local function setTargetsFromDef()
     -- arpeggio is the sound of the world healing, and the world is not healing.
     M.targets.perc = min(1, M.targets.perc * (0.88 + it * 0.18))
     M.targets.bass = min(1, M.targets.bass * (0.92 + it * 0.12))
+    -- The choir is the workforce. If the finale has got past its first part
+    -- without a single cohort leaving -- no crew, or a crew of three of whom
+    -- two are held in reserve -- then there is nobody to sing, and a full choir
+    -- would be the score claiming something the screen is not showing. It comes
+    -- in thin instead, which is its own reading: you are doing this alone.
+    if not M.tollsSeen then M.targets.choir = M.targets.choir * 0.5 end
     M.targetBpm = d.bpm
     return
   end
@@ -334,8 +377,8 @@ function Music.setState(name, opts)
   -- looping source cannot outlive the fight.
   if name == "boss" then
     M.bossPart = U.clamp(floor(opts.part or 1), 1, #BOSS_PARTS)
-    M.tollIndex, M.tollPending = 0, false
-    M.tollTotal = PROCESSION_STEPS
+    M.tollIndex, M.tollPending, M.tollsSeen = 0, false, false
+    M.partT = 0
     d = BOSS_PARTS[M.bossPart]
     if Audio.rigOpen then Audio.rigOpen() end
   else
@@ -432,14 +475,29 @@ end
 --- has to be audible in part 1 where the choir has not arrived yet.
 local function toll()
   local i = max(1, M.tollIndex or 1)
-  local n = max(2, M.tollTotal or PROCESSION_STEPS)
-  local up = min(1, (i - 1) / (n - 1))
-  note("bell", M.root + semisOf(1) - 12, { volume = 0.6 * TRIM.bell, pan = -0.12 })
-  local deg = 1 + floor(up * 7 + 1e-6)
+  local deg = TOLL_DEGREES[min(i, #TOLL_DEGREES)]
+  local up = min(1, (i - 1) / (TOLL_TOP - 1))
+  local top = (i >= TOLL_TOP)
+
+  -- The low bell. It does not get more interesting because more of them have
+  -- gone -- until the climb is over, at which point it starts alternating the
+  -- tonic and the fifth beneath it, which is what a bell does when it is no
+  -- longer announcing anything and is simply still ringing.
+  local lowDeg = 1
+  if top and (i - TOLL_TOP) % 2 == 1 then lowDeg = -2 end        -- the fifth below
+  note("bell", M.root + semisOf(lowDeg) - 12,
+       { volume = (i == 1 and 0.72 or 0.6) * TRIM.bell, pan = -0.12 })
+
+  -- and the voice that answers it
   note("choir", M.root + semisOf(deg) + 12,
        { volume = (0.44 + 0.34 * up) * TRIM.choir, pan = 0.22 })
   note("bell", M.root + semisOf(deg) + 12,
        { volume = (0.28 + 0.26 * up) * TRIM.bell, pan = 0.34 })
+
+  if not M.tollsSeen then
+    M.tollsSeen = true
+    setTargetsFromDef()      -- the choir was thin because nobody had gone yet
+  end
 end
 
 ---------------------------------------------------------------- the finale
@@ -450,6 +508,7 @@ function Music.bossPart(n)
   if M.state ~= "boss" then Music.setState("boss", { part = n }) return end
   if M.bossPart == n then return end
   M.bossPart = n
+  M.partT = 0
   local d = BOSS_PARTS[n]
   M.def = d
   -- harmony moves on the next bar line like every other change in this file;
@@ -463,11 +522,11 @@ end
 --- Which part is running (0 if the finale is not).
 function Music.bossPartIndex() return M.bossPart or 0 end
 
---- A wave of the workforce has left for the rig. Call it once per wave; index
---- and total are optional and default to counting.
-function Music.cohort(index, total)
+--- A wave of the workforce has left for the rig. Call it once per wave; `index`
+--- is optional and defaults to counting. There is deliberately no "total": the
+--- line is authored to survive stopping anywhere (see TOLL_DEGREES).
+function Music.cohort(index)
   if M.state ~= "boss" then return end
-  M.tollTotal = max(2, floor(total or M.tollTotal or PROCESSION_STEPS))
   M.tollIndex = floor(index or ((M.tollIndex or 0) + 1))
   M.tollPending = true
   -- the first wave is the moment the whole game has been walking toward, and it
@@ -490,6 +549,7 @@ function Music.bossFell()
   local n = #BOSS_PARTS
   local d = BOSS_PARTS[n]
   M.bossPart = n
+  M.partT = 0
   M.def = d
   M.mode = SCALES[d.mode] or M.mode
   M.modeName = d.mode
@@ -745,6 +805,16 @@ function Music.update(dt)
   end
   M.bpm = U.damp(M.bpm, M.targetBpm, 0.35, dt)
 
+  -- The finale's one self-driven move. Everything else in the boss cue is told
+  -- to it by the game; this is the case where the game has nothing to tell it,
+  -- because there is no crew and no procession is coming. See PART1_MAX_WAIT.
+  if M.bossPart == 1 then
+    M.partT = M.partT + dt
+    if M.partT > PART1_MAX_WAIT then Music.bossPart(2) end
+  elseif M.bossPart then
+    M.partT = M.partT + dt
+  end
+
   if M.firstStep then M.firstStep = false stepTick(0) end
 
   M.clock = M.clock + dt
@@ -777,7 +847,7 @@ function Music.debug()
     intensity = M.intensity, o2 = M.o2, cycle = M.cycle,
     bossPart = M.bossPart,
     bossPartName = M.bossPart and BOSS_PARTS[M.bossPart].name or nil,
-    tollIndex = M.tollIndex, tollTotal = M.tollTotal,
+    tollIndex = M.tollIndex, tollsSeen = M.tollsSeen, partT = M.partT,
     playing = M.playing, notes = M.lastNotes, pending = M.pending,
     phraseStep = M.phraseStep, theme = THEME, phrase = PHRASE,
   }

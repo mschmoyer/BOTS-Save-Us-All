@@ -37,6 +37,7 @@ end
 
 function Cobalt:update(dt)
   self:updateCommon(dt)
+  if (self.mineT or 0) > 0 then self.mineT = self.mineT - dt end
   if self.homing then
     local t = self.homing
     local dx, dy, d = U.norm(t.x - self.x, t.y - self.y)
@@ -64,6 +65,8 @@ end
 --- Break one chunk off a deposit. Returns true if something came loose.
 function Cobalt:mine(byWhom)
   if self.left <= 0 then return false end
+  if (self.mineT or 0) > 0 then return false end
+  self.mineT = T.mineEvery
   self.left = self.left - 1
   self.hitAnim = 1
   VFX.emit("cobalt_pickup", self.x, self.y)

@@ -285,7 +285,11 @@ local function allocate(w, h)
   releaseAll()
   scene    = newCanvas(SW, SH)
   grade    = newCanvas(SW, SH)
-  aa       = newCanvas(SW, SH)
+  -- `aa` is a third full-resolution target and FXAA is off by default, so it is
+  -- allocated the first time the chain actually runs that stage. At 1600x900
+  -- rgba16f that is 11 MB of VRAM nobody was using; on a phone that matters
+  -- more than the allocation ever did.
+  aa       = nil
   half1    = newCanvas(SW / 2, SH / 2)
   half2    = newCanvas(SW / 2, SH / 2)
   quarter1 = newCanvas(SW / 4, SH / 4)
@@ -497,6 +501,7 @@ function Post.render(opts)
 
   ------------------------------------------------------------------ fxaa
   if doFxaa then
+    if not aa then aa = newCanvas(SW, SH) end
     g.setCanvas(aa)
     g.clear(0, 0, 0, 1)
     g.setShader(S.fxaa)

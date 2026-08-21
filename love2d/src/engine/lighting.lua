@@ -30,6 +30,10 @@ local TEXSIZE   = 128
 local lx, ly, lr = {}, {}, {}
 local cr, cg, cb, li = {}, {}, {}, {}
 local lsoft, lang, lcone, lflick = {}, {}, {}, {}
+local lk = {}                       -- resolved intensity, filled in L.finish
+local b1, b2, b3 = {}, {}, {}       -- per-falloff-bucket index lists, reused
+local BK = { b1, b2, b3 }           -- hoisted: nothing in here allocates per frame
+local BN = { 0, 0, 0 }
 local count = 0
 
 local canvas, cw, ch = nil, 0, 0
@@ -264,10 +268,14 @@ function L.lightCount() return count end
 function L.getCanvas() return canvas end
 
 ------------------------------------------------------------------- the frame
+-- `now` is stamped once per frame in L.finish: love.timer.getTime() is a
+-- syscall-ish C call, and calling it once per light per frame is a hundred of
+-- them for a value that must not change inside a frame anyway.
+local flickNow = 0
 local function flickerOf(i)
   local f = lflick[i]
   if not f or f <= 0 then return 1 end
-  local t = love.timer.getTime()
+  local t = flickNow
   local seed = (lx[i] * 0.113 + ly[i] * 0.071)
   -- two octaves: a slow breathe plus a fast stutter
   local n = U.valueNoise(t * 5.7 + seed, seed * 0.37, 3) * 0.65
@@ -280,6 +288,7 @@ end
 function L.finish()
   if not canvas then return end
   local g = love.graphics
+  flickNow = love.timer.getTime()
   local prevCanvas = g.getCanvas()
   local prevShader = g.getShader()
   local pbm, pam = g.getBlendMode()
@@ -295,19 +304,33 @@ function L.finish()
   g.scale(scale)
 
   local inv = 1 / TEXSIZE
-  -- points first, bucketed by falloff texture so LÖVE batches each bucket into
-  -- a single draw call
+  -- Points first, bucketed by falloff texture so LOVE batches each bucket into
+  -- a single draw call. The buckets are gathered in one pass rather than by
+  -- rescanning the whole list three times, and each light's flicker is
+  -- evaluated once instead of once per bucket sweep.
+  local bn1, bn2, bn3 = 0, 0, 0
+  for i = 1, count do
+    if not lcone[i] and lr[i] > 0.5 then
+      local k = li[i] * flickerOf(i)
+      if k > 0.004 then
+        lk[i] = k
+        local b = lsoft[i]
+        if b == 1 then bn1 = bn1 + 1 b1[bn1] = i
+        elseif b == 2 then bn2 = bn2 + 1 b2[bn2] = i
+        else bn3 = bn3 + 1 b3[bn3] = i end
+      end
+    end
+  end
+  BN[1], BN[2], BN[3] = bn1, bn2, bn3
   for bucket = 1, 3 do
     local tex = falloff[bucket]
-    for i = 1, count do
-      if lsoft[i] == bucket and not lcone[i] then
-        local k = li[i] * flickerOf(i)
-        if k > 0.004 then
-          g.setColor(cr[i] * k, cg[i] * k, cb[i] * k, 1)
-          local s = lr[i] * 2 * inv
-          g.draw(tex, lx[i], ly[i], 0, s, s, TEXSIZE * 0.5, TEXSIZE * 0.5)
-        end
-      end
+    local list, n = BK[bucket], BN[bucket]
+    for j = 1, n do
+      local i = list[j]
+      local k = lk[i]
+      g.setColor(cr[i] * k, cg[i] * k, cb[i] * k, 1)
+      local s = lr[i] * 2 * inv
+      g.draw(tex, lx[i], ly[i], 0, s, s, TEXSIZE * 0.5, TEXSIZE * 0.5)
     end
   end
   -- cones: analytic, so the edge stays soft at any half-angle

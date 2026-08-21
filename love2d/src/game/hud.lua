@@ -13,6 +13,15 @@
 --   bottom right belongs to the minimap, and nothing else
 --   the edges    the dusk telegraph
 --
+-- On touch the same readouts are dealt again for a phone held in landscape,
+-- where the two bottom corners are under thumbs and the hands that carry them.
+-- Everything a player has to *read* moves into the top band: the whole "what you
+-- have" story -- cobalt, forest, crew, integrity -- becomes one left column with
+-- the event feed growing downward out of it instead of upward out of the floor,
+-- the right rail carries the clock and the map, the build bar is gone (the
+-- radial is touch's way in), and HOLD THE DAWN takes the freed bottom-centre
+-- band as a panel big enough to tap. See `TU.hud.touch`.
+--
 -- Bot chatter is drawn here too, not in the world: in world space it was
 -- graded, bloomed, and free to sit on top of the hearts. As a HUD layer it is
 -- crisp, it knows where every readout is, and it refuses to cover one.
@@ -42,6 +51,17 @@ local cos, sin, pi, atan2 = math.cos, math.sin, math.pi, math.atan2
 local TAU = U.TAU
 
 local HUD = {}
+
+--------------------------------------------------------------- the touch layer
+-- Reached lazily, never required: engine/touch.lua requires *this* file (for
+-- the bot silhouettes and the tappable readouts below) and a cycle between the
+-- input layer and the interface layer would be a genuinely bad edge to own.
+local Touch
+local function touchMod()
+  if Touch == nil then Touch = package.loaded["src.engine.touch"] or false end
+  return Touch or nil
+end
+local function touchMode() return Input.scheme == "touch" end
 
 ------------------------------------------------------------------ numerals
 -- Memoised integer -> string. tostring() allocates; the HUD calls it about
@@ -224,7 +244,7 @@ function HUD.queueSpeech(x, y, text, a)
 end
 
 ------------------------------------------------------------------ hit targets
--- Published for engine/touch.lua. Rebuilt only on resize, never per frame.
+--- Published for engine/touch.lua. Rebuilt only on resize, never per frame.
 local hits = {
   oxygen  = { x = 0, y = 0, w = 0, h = 0 },
   cycle   = { x = 0, y = 0, w = 0, h = 0 },
@@ -234,15 +254,33 @@ local hits = {
 }
 function HUD.hitTargets() return hits end
 
+--- The phone layout, published whole.
+---
+--- Two other modules need to agree with this file about where things are on a
+--- touch screen and neither can work it out for itself: game/minimap.lua has to
+--- put the plate where the rail expects it, and engine/touch.lua has to know
+--- which readouts are also buttons (the map plate opens the map; the HOLD THE
+--- DAWN panel takes the trade) and where its own utility rail may hang.
+--- One table, filled on resize, read by both.
+local TL = {
+  on = false, mapOpen = false, holdOn = false,
+  mapX = 0, mapY = 0, mapW = 0, mapH = 0,
+  map  = { x = 0, y = 0, w = 0, h = 0 },
+  hold = { x = 0, y = 0, w = 0, h = 0 },
+}
+function HUD.touchLayout() return TL end
+
 local L = {   -- resolved layout, rebuilt on resize
-  sw = 0, sh = 0,
+  sw = 0, sh = 0, tm = nil,
+  il = 0, it = 0, ir = 0, ib = 0,          -- safe insets actually used
   o2x = 0, o2y = 0, o2w = 0, o2R = 0, o2cx = 0, o2cy = 0, o2a0 = 0, o2a1 = 0,
   dialX = 0, dialY = 0, dialR = 0,
-  feedX = 0, feedY = 0, resH = 0,
+  feedX = 0, feedY = 0, feedDir = -1, feedLimit = 0, resH = 0,
+  resX = 0, resY = 0, heartX = 0, heartY = 0, bossY = 0,
 }
 
--- Where the HUD lives, as rectangles, so bot chatter can be told to stay out of
--- them. Rebuilt on resize only.
+--- Where the HUD lives, as rectangles, so bot chatter can be told to stay out of
+--- them. Rebuilt on resize only.
 local ZONES = {}
 for i = 1, 6 do ZONES[i] = { x = 0, y = 0, w = 0, h = 0 } end
 local function zone(i, x, y, w, h)
@@ -250,18 +288,32 @@ local function zone(i, x, y, w, h)
   z.x, z.y, z.w, z.h = x, y, w, h
 end
 
-local function layout(sw, sh)
-  if L.sw == sw and L.sh == sh then return end
-  L.sw, L.sh = sw, sh
+local function setRect(r, x, y, w, h) r.x, r.y, r.w, r.h = x, y, w, h end
+
+local function layout(sw, sh, tm)
+  if L.sw == sw and L.sh == sh and L.tm == tm then return end
+  L.sw, L.sh, L.tm = sw, sh, tm
+  local TT = TU.hud.touch
+
+  -- The inset the whole layer respects. On a phone it is the OS safe area --
+  -- floored, because a browser that swears there is no notch is still drawing a
+  -- rounded display corner over the outermost band -- plus a grid pad inside it.
+  local il, it, ir, ib = PAD, PAD, PAD, PAD
+  if tm then
+    local T = touchMod()
+    if T and T.safeInsets then il, it, ir, ib = T.safeInsets() end
+    il, it, ir, ib = il + TT.pad, it + TT.pad, ir + TT.pad, ib + TT.pad
+  end
+  L.il, L.it, L.ir, L.ib = il, it, ir, ib
 
   -- oxygen: a shallow arc struck from far below the screen, so it reads as
   -- horizon rather than as a widget. On a short viewport it narrows rather
   -- than reaching for the corners.
-  local w = U.clamp(sw * 0.36, 300, 560)
+  local w = U.clamp(sw * 0.36, 300, tm and TT.o2Max or 560)
   w = floor(w / UI.u) * UI.u
   L.o2w = w
   L.o2x = floor((sw - w) * 0.5)
-  L.o2y = PAD + 12
+  L.o2y = it + 12
   local R = w * 2.35
   L.o2R = R
   L.o2cx = sw * 0.5
@@ -270,38 +322,82 @@ local function layout(sw, sh)
   L.o2a0 = -pi * 0.5 - half
   L.o2a1 = -pi * 0.5 + half
 
-  L.dialR = 34
-  L.dialX = sw - PAD - L.dialR
-  L.dialY = PAD + L.dialR + 4
+  L.dialR = tm and TT.dialR or 34
+  L.dialX = sw - ir - L.dialR
+  L.dialY = it + L.dialR + 4
 
   L.resH  = 124                       -- cobalt row + forest/bots row
-  L.feedX = PAD
-  L.feedY = sh - PAD - 76
+  L.resX, L.resY = il, it
 
-  -- the dawn offer hangs off the bottom of the cycle dial, right-aligned to the
-  -- same edge, because it is a decision about that clock
-  local HT = TU.hud.hold
-  L.holdW, L.holdH = HT.w, HT.h
-  L.holdX = sw - PAD - HT.w
-  L.holdY = L.dialY + L.dialR + HT.gap
+  if tm then
+    -- The left column: what you have, then what is left of you, then what just
+    -- happened -- top to bottom, out of both thumbs' way, out of the notch.
+    L.heartX = il
+    L.heartY = it + L.resH + TT.heartGap + 14
+    L.feedX  = il
+    L.feedY  = L.heartY + TT.heartH + TT.feedGap
+    L.feedDir, L.feedLimit = 1, sh * TT.feedMax
 
-  hits.oxygen.x, hits.oxygen.y = L.o2x, PAD
+    -- The right rail: the clock, then the map, then (touch.lua's business) the
+    -- two orders nobody gives in a panic.
+    L.mapW = TT.mapW
+    L.mapH = floor(L.mapW * TU.world.h / TU.world.w)
+    L.mapX = sw - ir - L.mapW
+    L.mapY = L.dialY + L.dialR + TT.mapGap
+
+    -- HOLD THE DAWN drops into the band the build bar used to eat. It is one of
+    -- two real decisions in a run, it is offered for twelve seconds, and on a
+    -- phone the only honest way to offer it is a panel big enough to hit.
+    L.holdW, L.holdH = TT.holdW, TT.holdH
+    L.holdX = floor((sw - L.holdW) * 0.5)
+    L.holdY = sh - ib - TT.holdUp - L.holdH
+    L.bossY = sh - ib - TT.bossUp
+  else
+    L.heartX, L.heartY = il, sh - ib - 26
+    L.feedX, L.feedY = il, sh - ib - 76
+    L.feedDir, L.feedLimit = -1, 0
+    L.mapW, L.mapH, L.mapX, L.mapY = 0, 0, 0, 0
+    -- the dawn offer hangs off the bottom of the cycle dial, right-aligned to
+    -- the same edge, because it is a decision about that clock
+    local HT = TU.hud.hold
+    L.holdW, L.holdH = HT.w, HT.h
+    L.holdX = sw - ir - HT.w
+    L.holdY = L.dialY + L.dialR + HT.gap
+    L.bossY = sh - 108
+  end
+
+  hits.oxygen.x, hits.oxygen.y = L.o2x, it
   hits.oxygen.w, hits.oxygen.h = w, 78
   hits.cycle.x, hits.cycle.y = L.dialX - L.dialR - 8, L.dialY - L.dialR - 8
   hits.cycle.w, hits.cycle.h = (L.dialR + 8) * 2, (L.dialR + 8) * 2
-  hits.cobalt.x, hits.cobalt.y, hits.cobalt.w, hits.cobalt.h = PAD, PAD, 216, L.resH
-  hits.hearts.x, hits.hearts.y = PAD, sh - PAD - 48
+  hits.cobalt.x, hits.cobalt.y, hits.cobalt.w, hits.cobalt.h = il, it, 216, L.resH
+  hits.hearts.x, hits.hearts.y = L.heartX, L.heartY - 22
   hits.hearts.w, hits.hearts.h = 200, 48
-  hits.build.x, hits.build.y = sw * 0.5 - 300, sh - PAD - 66
+  hits.build.x, hits.build.y = sw * 0.5 - 300, sh - ib - 66
   hits.build.w, hits.build.h = 600, 66
 
-  zone(1, 0, 0, PAD + 232, PAD + L.resH + 12)              -- resources
-  zone(2, L.o2x - 44, 0, w + 88, L.o2y + 106)              -- oxygen
-  zone(3, L.dialX - L.dialR - 190, 0, L.dialR * 2 + 214,
-          L.holdY + L.holdH + 12)                          -- cycle dial + dawn offer
-  zone(4, 0, sh - 246, 340, 246)                           -- feed + hearts
-  zone(5, sw * 0.5 - 340, sh - 158, 680, 158)              -- build bar + boss bar
-  zone(6, sw - 320, sh - 292, 320, 292)                    -- the minimap's corner
+  TL.on = tm and true or false
+  TL.mapX, TL.mapY, TL.mapW, TL.mapH = L.mapX, L.mapY, L.mapW, L.mapH
+  -- generous slop on both: a 168 px plate and a 74 px panel are finger targets
+  setRect(TL.map, L.mapX - 10, L.mapY - 10, L.mapW + 20, L.mapH + 20)
+  setRect(TL.hold, L.holdX - 8, L.holdY - 8, L.holdW + 16, L.holdH + 16)
+
+  if tm then
+    zone(1, 0, 0, il + TT.colW, L.feedY - 6)                 -- the whole left column
+    zone(2, L.o2x - 40, 0, w + 80, L.o2y + 96)               -- oxygen
+    zone(3, L.mapX - 24, 0, sw - L.mapX + 24, L.mapY + L.mapH + 90)  -- clock, map, rail
+    zone(4, 0, L.feedY - 6, il + TT.colW, L.feedLimit - L.feedY + 12) -- the feed
+    zone(5, L.holdX - 20, L.bossY - 40, L.holdW + 40, sh - L.bossY + 40) -- offers
+    zone(6, 0, sh - 150, sw, 150)                            -- the thumbs' band
+  else
+    zone(1, 0, 0, il + 232, it + L.resH + 12)                -- resources
+    zone(2, L.o2x - 44, 0, w + 88, L.o2y + 106)              -- oxygen
+    zone(3, L.dialX - L.dialR - 190, 0, L.dialR * 2 + 214,
+            L.holdY + L.holdH + 12)                          -- cycle dial + dawn offer
+    zone(4, 0, sh - 246, 340, 246)                           -- feed + hearts
+    zone(5, sw * 0.5 - 340, sh - 158, 680, 158)              -- build bar + boss bar
+    zone(6, sw - 320, sh - 292, 320, 292)                    -- the minimap's corner
+  end
 end
 
 --------------------------------------------------------------------- signals
@@ -350,9 +446,20 @@ function HUD.init(world)
   Signal.on("bot:built", function(b)
     HUD.toast(b.name, P.accent, "ONLINE", nil, RANK_CHATTER)
   end)
+  -- A loss is the one moment this game is built to make land, and it used to
+  -- print the same form letter under every name: three deaths in a row read
+  -- SEED-16 / SEED-20 / SEED-24 with DID NOT COME BACK under each, which is a
+  -- mail merge. Bot:epitaph() already knows what this one actually did -- it is
+  -- what the memorial prints beside the name at the end of the run -- so it is
+  -- what the feed prints too. The form letter survives only as a fallback.
   Signal.on("bot:lost", function(b, peaceful)
     if peaceful then return end
-    HUD.toast(b.name, P.danger, "DID NOT COME BACK", nil, RANK_LOSS)
+    local why
+    if b.epitaph then
+      local ok, line = pcall(b.epitaph, b)
+      if ok and type(line) == "string" then why = line:upper() end
+    end
+    HUD.toast(b.name, P.danger, why or "DID NOT COME BACK", nil, RANK_LOSS)
   end)
   Signal.on("bot:revived", function(b)
     HUD.toast(b.name, P.accent, "BACK ON ITS FEET", nil, RANK_PROGRESS)
@@ -399,7 +506,7 @@ function HUD.update(dt, world)
   if not world then return end
 
   local sw, sh = lg.getDimensions()
-  layout(sw, sh)
+  layout(sw, sh, touchMode())
 
   Text.odometer(HUD.cob, world.cobalt or 0, dt, 9)
   Text.odometer(HUD.trees, world.treeCount or 0, dt, 7)
@@ -414,6 +521,31 @@ function HUD.update(dt, world)
   local canHold = (world.canHoldDawn and world:canHoldDawn()) == true
   HUD.holdK = U.damp(HUD.holdK, canHold and 1 or 0, TU.hud.hold.rate, dt)
   if HUD.holdK < 0.002 then HUD.holdK = 0 end
+
+  ------------------------------------------------------------------ the phone
+  -- Everything the touch layer cannot work out for itself, published once a
+  -- frame: which readouts are live targets, and what the one contextual button
+  -- is currently for. `plant` has been three verbs since the first build --
+  -- plant a sapling, pick a downed bot up, put it down again -- and it picks
+  -- between them by where you are standing. A key cap can stay silent about
+  -- that. A button on glass cannot.
+  if TL.on then
+    local mm = package.loaded["src.game.minimap"]
+    TL.mapOpen = (mm and mm.isOpen and mm.isOpen()) and true or false
+    TL.holdOn  = HUD.holdK > 0.4
+    local T = touchMod()
+    if T and T.setContext then
+      local p = world.player
+      local kind = "plant"
+      if p and p.carrying then
+        kind = "drop"
+      elseif p and world.nearestDownedBot
+             and world:nearestDownedBot(p.x, p.y, TU.player.carry.pickupRange) then
+        kind = "carry"
+      end
+      T.setContext(kind)
+    end
+  end
 
   HUD.cobFlash  = max(0, HUD.cobFlash - dt * 2.4)
   HUD.cobShake  = max(0, HUD.cobShake - dt * 3.6)
@@ -519,12 +651,20 @@ function HUD.update(dt, world)
       ORDER[j] = i
     end
   end
+  -- The feed grows away from its anchor: upward out of the floor on a desktop,
+  -- downward out of the left column on a phone, where the floor is a thumb.
   local stack = 0
+  local down = L.feedDir > 0
   for k = 1, n do
     local t = toasts[ORDER[k]]
-    stack = stack + t.h
-    t.yTo = -stack
-    if t.y == nil then t.y = t.yTo + 22 end
+    if down then
+      t.yTo = stack
+      stack = stack + t.h
+    else
+      stack = stack + t.h
+      t.yTo = -stack
+    end
+    if t.y == nil then t.y = t.yTo + (down and -22 or 22) end
     t.y = U.damp(t.y, t.yTo, 14, dt)
   end
   for i = 1, TOAST_MAX do
@@ -613,20 +753,30 @@ end
 -- them together.
 local function drawScrims(a)
   local sw, sh = L.sw, L.sh
+  local il, it, ib = L.il, L.it, L.ib
   -- Measured, not guessed: over a sunlit canopy the old weights left caption
   -- type at 1.7:1 against its own background. These are roughly doubled, and
   -- the per-cluster pools are drawn twice -- once wide and soft to lift the
   -- whole corner, once tight and dark under the type itself.
-  UI.vgrad(0, 0, sw, 132, P.black, P.black, 0.30 * a, 0)
-  UI.vgrad(0, sh - 146, sw, 146, P.black, P.black, 0, 0.34 * a)
-  Draw.softShadow(PAD + 60, PAD + 56, 300, 190, 0.62 * a)          -- resources, wide
-  Draw.softShadow(PAD + 52, PAD + 50, 190, 120, 0.62 * a)          -- resources, tight
+  UI.vgrad(0, 0, sw, it + 108, P.black, P.black, 0.30 * a, 0)
+  Draw.softShadow(il + 60, it + 32, 300, 190, 0.62 * a)            -- resources, wide
+  Draw.softShadow(il + 52, it + 26, 190, 120, 0.62 * a)            -- resources, tight
   Draw.softShadow(sw * 0.5, L.o2y + 44, 380, 150, 0.50 * a)        -- oxygen, wide
   Draw.softShadow(sw * 0.5, L.o2y + 36, 200, 70, 0.55 * a)         -- oxygen, tight
   Draw.softShadow(L.dialX - 30, L.dialY + 4, 250, 150, 0.60 * a)   -- cycle dial
   Draw.softShadow(L.dialX, L.dialY, 90, 90, 0.55 * a)
-  Draw.softShadow(PAD + 80, sh - PAD - 92, 340, 250, 0.60 * a)     -- hearts + feed
-  Draw.softShadow(sw * 0.5, sh - PAD - 30, 430, 120, 0.46 * a)     -- build bar
+  if L.tm then
+    -- The bottom band is the thumbs' now, so there is nothing down there to
+    -- seat. The left column carries on down instead, under the hearts and the
+    -- feed, and the bottom-centre gets a small pool only for the offer panel.
+    Draw.softShadow(il + 80, L.heartY + 6, 300, 150, 0.52 * a)     -- integrity
+    Draw.softShadow(il + 90, L.feedY + 60, 320, 200, 0.44 * a)     -- the feed
+    Draw.softShadow(sw * 0.5, L.bossY + 4, 430, 110, 0.34 * a)     -- boss / offer
+  else
+    UI.vgrad(0, sh - 146, sw, 146, P.black, P.black, 0, 0.34 * a)
+    Draw.softShadow(il + 80, sh - ib - 92, 340, 250, 0.60 * a)     -- hearts + feed
+    Draw.softShadow(sw * 0.5, sh - ib - 30, 430, 120, 0.46 * a)    -- build bar
+  end
 end
 
 ------------------------------------------------------------------- the oxygen
@@ -815,14 +965,34 @@ local function drawHoldOffer(w, a)
   local aa = a * e
   local bw, bh = L.holdW, L.holdH
   local x = L.holdX
-  local y = L.holdY + (1 - e) * TU.hud.hold.rise
-  local rx = x + bw - 14              -- the inner edge everything hangs off
+  local rise = TU.hud.hold.rise
+  local y = L.holdY + (1 - e) * (L.tm and rise or rise)
   -- a slow breath on the edge while the offer is open, so it reads as
   -- something being held out rather than as one more readout
   local pulse = 0.5 + 0.5 * sin(HUD.time * 2.4)
 
   UI.seat(x, y, bw, bh, 0.40 * aa)
   UI.panel(x, y, bw, bh, 0.70 * aa, 6, P.warn, (0.20 + 0.18 * pulse) * aa)
+
+  if L.tm then
+    -- On a phone this is not a prompt beside a key cap, it is the button. It
+    -- takes the bottom-centre band the build bar used to eat, it is centred so
+    -- neither thumb has a claim on it, and it says TAP because that is the
+    -- whole instruction.
+    local cx = x + bw * 0.5
+    UI.text(Script.hud.holdLabel, cx, y + 10, UI.ts.small, P.warn, "center", aa, 0.14)
+    UI.rule(x + 16, y + 30, bw - 32, P.warn, 0.16 * aa)
+    UI.prompt(cx, y + 40, "commit", holdBuy, UI.ts.micro, P.ink, aa, "center")
+    UI.caption(holdCost, cx, y + 58, UI.ts.micro,
+               UI.c(P.inkDim, 0.9 * aa), "center", nil, 1)
+    -- and it reads as a target: a live edge that breathes with the offer
+    Draw.setColor(UI.c(P.warn, (0.10 + 0.16 * pulse) * aa))
+    lg.setLineWidth(2)
+    Draw.roundRect("line", x - 3.5, y - 3.5, bw + 7, bh + 7, 8)
+    return
+  end
+
+  local rx = x + bw - 14              -- the inner edge everything hangs off
   UI.text(Script.hud.holdLabel, rx, y + 12, UI.ts.small, P.warn, "right", aa, 0.12)
   UI.rule(x + 14, y + 32, bw - 28, P.warn, 0.16 * aa)
   UI.prompt(rx, y + 44, "commit", holdBuy, UI.ts.micro, P.ink, aa, "right")
@@ -837,7 +1007,7 @@ end
 --- next to the other two counts, and it is the number that becomes the boss's
 --- health bar in the last three minutes anyway.
 local function drawResources(w, a)
-  local x, y = PAD, PAD
+  local x, y = L.resX, L.resY
   local shake = HUD.cobShake > 0 and sin(HUD.cobShake * 46) * HUD.cobShake * 5 or 0
   local flash = U.ease.outQuad(HUD.cobFlash)
 
@@ -874,7 +1044,7 @@ end
 local function drawHearts(w, a)
   local p = w.player
   if not p then return end
-  local x, y = PAD, L.sh - PAD - 26
+  local x, y = L.heartX, L.heartY
   local hurt = U.ease.outQuad(HUD.hurtFlash)
   local shake = hurt > 0 and sin(HUD.time * 60) * hurt * 3 or 0
   local n = p.maxHp or 3
@@ -917,9 +1087,12 @@ end
 --- of the game and it used to look exactly like a Builder saying hello.
 local function drawFeed(a)
   local x, baseY = L.feedX, L.feedY
+  local limit = L.feedLimit
   for i = 1, TOAST_MAX do
     local t = toasts[i]
-    if t.live and t.y then
+    -- On a phone the column has a floor: below it is the stick's landing
+    -- ground, and a toast a thumb is sitting on is not a toast.
+    if t.live and t.y and (limit <= 0 or baseY + t.y + t.h <= limit) then
       local loss = t.rank >= RANK_LOSS
       local inK  = U.ease.outCubic(U.saturate(t.t / (loss and 0.55 or 0.2)))
       local k    = U.saturate(min(inK, (t.dur - t.t) * (loss and 1.4 or 2.2)))
@@ -1351,7 +1524,7 @@ local function drawBossBar(w, a)
   -- rather than floating above an empty band.
   local bw = min(sw * 0.52, 760)
   local bh = 13
-  local bx, by = (sw - bw) * 0.5, sh - 108
+  local bx, by = (sw - bw) * 0.5, L.bossY
 
   local frac = boss and (boss.hp / boss.maxHp) or 0
   HUD._bossFrac = U.damp(HUD._bossFrac or frac, frac, 9, love.timer.getDelta())
@@ -1416,14 +1589,14 @@ function HUD.chromeAlpha() return HUD.alpha * HUD.chrome end
 --- tutorial hint drawn across HARVESTER PRIME is worse than no hint at all.
 function HUD.overlayFloor()
   local _, sh = lg.getDimensions()
-  return sh - TU.hud.overlayFloor
+  return sh - (touchMode() and TU.hud.touch.overlayFloor or TU.hud.overlayFloor)
 end
 
 function HUD.draw(w, cam)
   w = w or HUD.world
   if not w or HUD.hidden then return end
   local sw, sh = lg.getDimensions()
-  layout(sw, sh)
+  layout(sw, sh, touchMode())
   -- One multiplier for the whole layer: HUD.alpha is the pause and draft
   -- screens' dimmer, HUD.chrome is the cutscene letterbox.
   local a = HUD.alpha * HUD.chrome

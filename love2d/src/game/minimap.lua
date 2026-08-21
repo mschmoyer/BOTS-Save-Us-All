@@ -5,6 +5,9 @@ local P   = require("src.engine.palette")
 local Opt = require("src.core.optional")
 local TU  = require("src.game.tuning")
 local Input = require("src.engine.input")
+-- The HUD owns where the phone's right rail is, because it is the module that
+-- knows where the clock ends and where the thumbs begin.
+local HUD = Opt.require("src.game.hud")
 
 local Draw = Opt.require("src.engine.draw")
 local Text = Opt.require("src.engine.text")
@@ -65,14 +68,29 @@ function M.draw(world, cam, alpha)
   -- roster used to occupy this corner and the map was shoved 168 px up the
   -- screen to dodge it; the corner is the map's now, so it sits where a corner
   -- map belongs -- one safe inset in from both edges, above the build bar.
+  --
+  -- Except on a phone, where the bottom-right corner is not the map's and never
+  -- was: it is where a right thumb lives, and a plate under a hand is not a
+  -- readout. There the map climbs the right rail to sit under the clock, in the
+  -- top band where nothing is ever occluded -- and it becomes a *target*, since
+  -- there is no M key to press. engine/touch.lua tests the rect the HUD
+  -- publishes for it; this file only has to draw where that rect says.
   local k = U.ease.inOutCubic(M.open)
-  local corner = math.min(1, (sh - 250) / 400)      -- shrink on a short viewport
-  corner = math.max(0.62, corner)
+  local tl = HUD.touchLayout and HUD.touchLayout()
+  local touch = tl and tl.on and type(tl.mapW) == "number" and tl.mapW > 0
+  local corner, cornerX, cornerY
+  if touch then
+    corner = tl.mapW / M.w
+    cornerX, cornerY = tl.mapX, tl.mapY
+  else
+    corner = math.max(0.62, math.min(1, (sh - 250) / 400))   -- shrink on a short viewport
+    cornerX, cornerY = sw - PAD - M.w * corner, sh - PAD - 22 - M.h * corner
+  end
   local scale = U.lerp(corner, math.min(sw * 0.62 / M.w, sh * 0.68 / M.h), k)
   local w, h = M.w * scale, M.h * scale
-  local cx = U.lerp(sw - PAD - M.w * corner, (sw - w) / 2, k)
-  local cy = U.lerp(sh - PAD - 22 - M.h * corner, (sh - h) / 2, k)
-  local a = U.lerp(0.62, 0.97, k) * alpha
+  local cx = U.lerp(cornerX, (sw - w) / 2, k)
+  local cy = U.lerp(cornerY, (sh - h) / 2, k)
+  local a = U.lerp(touch and 0.74 or 0.62, 0.97, k) * alpha
 
   if k > 0.02 then
     g.setColor(P.black[1], P.black[2], P.black[3], 0.55 * k * alpha)
@@ -173,16 +191,28 @@ function M.draw(world, cam, alpha)
   if k > 0.35 and Text.display then
     Text.display("THE ISLAND", cx, cy - 34 * scale, 22 * scale,
                  { color = P.ink, alpha = k * alpha, tracking = 0.28 })
+    if touch and Text.display then
+      Text.display("TAP TO CLOSE", cx + w * 0.5, cy + h + 12, 12,
+                   { color = P.inkDim, alpha = k * alpha, tracking = 0.26,
+                     align = "center", shadow = 2 })
+    end
   elseif Text.display and k < 0.3 then
     -- What opens it. Nothing else on the screen says so, so it is worth a line
     -- of type -- but only while the player is still learning the island, not
-    -- for the whole run.
+    -- for the whole run. On a phone it goes *above* the plate: below it is the
+    -- rail, and under that the thumb.
     local age = world.time or 0
     local hint = (0.5 - k) * 1.2 * U.saturate((90 - age) / 20) * alpha
     if hint > 0.01 then
-      Text.display(Input.glyph("map") .. "  MAP", cx + w, cy + h + 8, 10,
-                   { color = P.inkDim, alpha = hint, tracking = 0.24,
-                     align = "right", shadow = 1 })
+      if touch then
+        Text.display("TAP  MAP", cx, cy - 13, 10,
+                     { color = P.inkDim, alpha = hint, tracking = 0.26,
+                       align = "left", shadow = 2 })
+      else
+        Text.display(Input.glyph("map") .. "  MAP", cx + w, cy + h + 8, 10,
+                     { color = P.inkDim, alpha = hint, tracking = 0.24,
+                       align = "right", shadow = 1 })
+      end
     end
   end
   g.setColor(1, 1, 1, 1)

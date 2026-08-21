@@ -1,17 +1,30 @@
 -- The iPhone control layer.
 --
 -- Design brief: a player must be able to *play* this game with two thumbs on a
--- 6-inch pane of glass. That means three things, and this module is only ever
--- allowed to be as complicated as those three things demand:
+-- 6-inch pane of glass held in landscape. Landscape is the whole constraint.
+-- The phone is gripped at the two bottom corners; the arcs a thumb sweeps out
+-- from those corners are the only ground on the screen that is simultaneously
+-- reachable and already hidden by a hand. Everything follows from that:
 --
---   1. A floating left stick. It spawns wherever the left thumb lands, follows
---      the thumb once it runs past the ring, and has a dead zone plus a small
---      "grip" so a resting thumb's micro-jitter never nudges the player.
---   2. A right-hand action cluster arranged on the thumb's natural arc -- a
---      diamond of four verbs around a centre the thumb can pivot to without
---      lifting, plus BUILD held outboard where the radial has room to open.
---      Every target is >= 44 pt of real glass with generous invisible padding.
---   3. Aim. Drag the right thumb on empty space to aim explicitly; otherwise
+--   1. A floating left stick, in the mirrored arc. It spawns wherever the left
+--      thumb lands, follows the thumb once it runs past the ring, has a dead
+--      zone plus a small "grip" so a resting thumb's micro-jitter never nudges
+--      the player -- and, until the player has actually used it, a *resting
+--      ghost* sits at the thumb's home position saying so. A first touch screen
+--      that shows five action buttons and no movement affordance teaches the
+--      wrong game.
+--   2. A right-hand cluster on two arcs. The near arc carries the three verbs
+--      you press without thinking -- shove, dash, and the contextual
+--      plant/carry -- one small pivot apart. The far arc carries the two
+--      deliberate ones: the pulse you hold, and BUILD, whose radial needs open
+--      screen to bloom into. Nothing is a diamond around a centre any more;
+--      a diamond puts two buttons on the same baseline and their captions run
+--      into each other. Every target is >= 44 pt of glass and carries its
+--      caption *inside* its own disc, where nothing can clip it.
+--   3. Utility above the thumbs. RALLY and MENU are not panic verbs, so they
+--      live on the right rail under the minimap, out of the sweep, where
+--      reaching for them is a deliberate act and a fumble cannot fire them.
+--   4. Aim. Drag the right thumb on empty space to aim explicitly; otherwise
 --      the game aims for you at the nearest threat inside a cone of travel.
 --
 -- Multi-touch is the whole difficulty. Every finger is a *slot* with an id and
@@ -24,9 +37,9 @@
 -- bottom) so no scene has to remember to forward events. Gameplay code only
 -- ever sees actions, through engine/input.lua's `touchModule` hook.
 --
--- Layout is resolution-independent: everything is a fraction of the short screen
--- edge, so the same numbers hold for a letterboxed browser canvas and a native
--- retina buffer. Nothing in update or draw allocates.
+-- Layout is resolution-independent -- everything is a fraction of the short
+-- screen edge -- and it lives in `game/tuning.lua`, not here. Nothing in update
+-- or draw allocates.
 local U        = require("src.core.util")
 local P        = require("src.engine.palette")
 local Draw     = require("src.engine.draw")
@@ -34,64 +47,27 @@ local Text     = require("src.engine.text")
 local Input    = require("src.engine.input")
 local Settings = require("src.game.settings")
 local TU       = require("src.game.tuning")
+local J        = require("src.engine.juice")
+local Opt      = require("src.core.optional")
+-- Read-only: the bot silhouettes (so a Sentry is the same shape in the radial
+-- as on the desktop bar) and the HUD's published hit targets. hud.lua never
+-- requires this file back -- it reaches the touch layer through package.loaded
+-- -- so this is a one-way edge.
+local HUD      = Opt.require("src.game.hud")
 
 local lg = love.graphics
 local cos, sin, atan2, sqrt = math.cos, math.sin, math.atan2, math.sqrt
 local min, max, abs, floor  = math.min, math.max, math.abs, math.floor
+local rad                   = math.rad
 local pi, TAU               = math.pi, U.TAU
 
 local Touch = {}
 
 ----------------------------------------------------------------------- config
 -- Fractions of S = min(screenW, screenH) unless the name says otherwise.
--- This is the single place the touch layout is defined (spec section 10).
-local CFG = {
-  maxTouches   = 10,
-
-  -- floating stick
-  stickRing    = 0.112,   -- ring radius: full deflection
-  stickNub     = 0.046,
-  stickDead    = 0.155,   -- fraction of the ring ignored at the centre
-  stickGrip    = 0.011,   -- absolute jitter floor before anything moves at all
-  stickCurve   = 1.25,    -- >1 = finer control near the centre
-  stickFollow  = 26,      -- damp rate at which the ring chases a runaway thumb
-  stickZoneX   = 0.52,    -- fraction of screen width owned by the stick
-  stickZoneTop = 0.10,    -- keeps the HUD strip tappable
-
-  -- action cluster
-  btn          = 0.070,   -- visual button radius
-  btnHitPad    = 1.46,    -- invisible hit radius multiplier
-  btnSlop      = 2.30,    -- drag this far off a button before it cancels
-  clusterR     = 0.118,   -- diamond radius around the cluster centre
-  clusterInX   = 0.190,   -- cluster centre inset from the safe right edge
-  clusterInY   = 0.205,   -- ... and from the safe bottom edge
-  buildOut     = 2.00,    -- BUILD sits this many cluster radii out, up-and-inboard
-
-  -- build radial
-  radialInner  = 0.072,
-  radialOuter  = 0.235,
-  radialGap    = 0.030,   -- wedge separation, radians
-  radialHold   = 0.15,    -- hold this long (or drag) to open
-  radialDrag   = 0.030,   -- ... or drag this far, whichever comes first
-
-  -- aim
-  aimDead      = 0.028,   -- drag before an aim touch commits
-  aimRange     = 430,     -- world units for auto-aim
-  aimCone      = 1.05,    -- half-angle of the travel cone, radians
-  aimStick     = 0.55,    -- how strongly a locked target is preferred
-
-  -- feel
-  fade         = 7.0,     -- opacity damp rate
-  press        = 26.0,    -- press-scale damp rate
-  latch        = 0.085,   -- min time a tapped action reports down
-  ripple       = 0.36,
-  hapticTap    = 0.011,
-  hapticSlide  = 0.006,
-  hapticFire   = 0.020,
-
-  safeMin      = 0.020,   -- fallback inset when the OS will not tell us
-  safeNotch    = 0.055,   -- assumed notch inset on iOS when the API is absent
-}
+-- This is the touch layout (spec section 10); it is defined in tuning.lua and
+-- only read here, so no geometry in this file is a magic number.
+local CFG = TU.touch
 Touch.cfg = CFG
 
 --------------------------------------------------------------------- public state
@@ -104,16 +80,27 @@ local manualOpacity = 1
 local visFade       = 0
 
 ---------------------------------------------------------------------- actions
--- Diamond order is deliberate. A right thumb resting at the bottom-right of the
--- cluster reaches DOWN first, then RIGHT; LEFT and UP cost a small pivot. So:
--- dash (constant) is down, shove (the fight) is right, pulse (a deliberate hold)
--- is up where its charge ring has air, and plant (calm, considered) is left.
+-- `ring` and `seat` index into the arcs defined in tuning: near arc first (the
+-- constant verbs), far arc second (the deliberate ones), rail last (the orders
+-- nobody gives in a panic). (`slot`, on the same tables, is the finger that is
+-- currently holding the button down -- a different thing entirely.)
+--
+-- Near-arc order is the whole ergonomic argument. DASH sits at the middle of
+-- the sweep because it is the verb a player presses without deciding to; SHOVE
+-- and the contextual PLANT/CARRY flank it one small pivot away on either side,
+-- so "drop the bot you are carrying and dash" is a thumb roll rather than a
+-- reach across the cluster.
 local ACT = {
-  { id = "dash",  label = "DASH",  ang = 0.5 * pi,  color = P.accentCool },
-  { id = "shove", label = "SHOVE", ang = 0,         color = P.warn },
-  { id = "pulse", label = "PULSE", ang = 1.5 * pi,  color = P.ramp.cobalt[4], hold = true },
-  { id = "plant", label = "PLANT", ang = pi,        color = P.ramp.leaf[3] },
-  { id = "build", label = "BUILD", ang = 1.25 * pi, color = P.accent, outboard = true, modal = true },
+  { id = "shove", label = "SHOVE", ring = "in",   seat = 1, color = P.warn },
+  { id = "dash",  label = "DASH",  ring = "in",   seat = 2, color = P.accentCool },
+  { id = "plant", label = "PLANT", ring = "in",   seat = 3, color = P.ramp.leaf[3],
+    context = true },
+  { id = "pulse", label = "PULSE", ring = "out",  seat = 1, color = P.ramp.cobalt[4],
+    hold = true },
+  { id = "build", label = "BUILD", ring = "out",  seat = 2, color = P.accent,
+    modal = true },
+  { id = "rally", label = "ORDER", ring = "rail", seat = 1, color = P.accent },
+  { id = "pause", label = "MENU",  ring = "rail", seat = 2, color = P.inkDim },
 }
 local ACT_N = #ACT
 local BY_ID = {}
@@ -124,21 +111,44 @@ for i = 1, ACT_N do
   b.x, b.y, b.r, b.hitR = 0, 0, 0, 0
   b.press, b.sc, b.ripple = 0, 1, 0
   b.slot, b.holdT = nil, 0
+  b.on = true                     -- rail buttons switch off where they have no room
 end
 Touch.buttons = ACT
+
+--- The contextual verb. `plant` is already three things on the keyboard --
+--- plant a sapling, pick a downed bot up, put it down again -- and which one it
+--- is depends only on where you are standing. On a phone the button has to say
+--- so: there is no key cap to read and no manual to have read.
+local CONTEXT = {
+  plant = { label = "PLANT", color = P.ramp.leaf[3] },
+  carry = { label = "CARRY", color = P.eyeDown },
+  drop  = { label = "DROP",  color = P.accent },
+}
+local context = "plant"
+
+--- Called by the HUD each frame (it is the module that already holds the world).
+--- "plant" | "carry" | "drop".
+function Touch.setContext(kind)
+  if CONTEXT[kind] then context = kind end
+end
+function Touch.getContext() return context end
 
 --- Latched actions: a tap that lasts less than a polled frame still has to be
 --- seen by input.lua, so every momentary press reports down for `CFG.latch`.
 local latch = {}
 for i = 1, ACT_N do latch[ACT[i].id] = 0 end
 for i = 1, #TU.bots.order do latch["build" .. i] = 0 end
+latch.map    = 0
+latch.commit = 0
 
 ------------------------------------------------------------------------ layout
 local L = {
   w = 0, h = 0, s = 0, scale = 1, side = "right",
   sl = 0, st = 0, sr = 0, sb = 0,          -- safe-area insets
-  cx = 0, cy = 0,                          -- cluster centre
-  stickX = 0, stickTop = 0,                -- stick zone bounds
+  px = 0, py = 0,                          -- the thumb pivot
+  stickX0 = 0, stickX1 = 0, stickTop = 0,
+  homeX = 0, homeY = 0, anchor = -1,
+  ringR = 0, nubR = 0,
   dirty = true,
 }
 local safeManual = false
@@ -152,6 +162,16 @@ function Touch.setSafeArea(l, t, r, b)
 end
 
 function Touch.getSafeArea() return L.sl, L.st, L.sr, L.sb end
+
+--- The insets anything on this screen should actually respect: the OS's, but
+--- never less than an absolute floor. A browser that swears there is no notch
+--- is still drawing a rounded display corner and a camera housing over the
+--- outermost band, and on a native build there is no shell to pad the canvas.
+--- The HUD reads this too, so the two layers agree about where the glass ends.
+function Touch.safeInsets()
+  local f = CFG.safeFloor
+  return max(L.sl, f), max(L.st, f), max(L.sr, f), max(L.sb, f)
+end
 
 local function readSafeArea(w, h, s)
   if safeManual then return end
@@ -185,41 +205,92 @@ local function layout()
   L.w, L.h, L.s, L.scale, L.side, L.dirty = w, h, s, scale, side, false
 
   readSafeArea(w, h, s)
+  local sl, st, sr, sb = Touch.safeInsets()
 
   local mirror = (side == "left") and -1 or 1
-  local btnR = s * CFG.btn * scale
-  local ringR = s * CFG.clusterR * scale
 
-  -- cluster centre, mirrored for left-handed players
-  local inX = s * CFG.clusterInX * scale
-  local inY = s * CFG.clusterInY * scale
-  local cx = (mirror > 0) and (w - L.sr - inX) or (L.sl + inX)
-  local cy = h - L.sb - inY
-  -- never let the diamond leave the safe box
-  cx = U.clamp(cx, L.sl + ringR + btnR, w - L.sr - ringR - btnR)
-  cy = U.clamp(cy, L.st + ringR + btnR, h - L.sb - ringR - btnR)
-  L.cx, L.cy = cx, cy
+  -- the thumb pivot: the grip corner itself, one small inset in from the glass
+  local pxI = s * CFG.pivotX * scale
+  local pyI = s * CFG.pivotY * scale
+  local px = (mirror > 0) and (w - sr - pxI) or (sl + pxI)
+  local py = h - sb - pyI
+  L.px, L.py = px, py
+
+  local rIn, rOut = s * CFG.arcIn * scale, s * CFG.arcOut * scale
+  local bIn, bOut = s * CFG.btnIn * scale, s * CFG.btnOut * scale
+  local bRail = s * CFG.btnRail * scale
+
+  -- The rail hangs off the bottom of the minimap plate, which the HUD owns and
+  -- publishes. Without it (a demo scene, a stub world) it falls back to a
+  -- sensible fraction of the way down the right edge.
+  local railX, railY, railStep
+  local tl = HUD.touchLayout and HUD.touchLayout()
+  if tl and tl.on and type(tl.mapW) == "number" and tl.mapW > 0 then
+    railX = (mirror > 0) and (tl.mapX - s * CFG.railDrop * scale - bRail)
+                          or (tl.mapX + tl.mapW + s * CFG.railDrop * scale + bRail)
+    railY = tl.mapY + bRail
+  else
+    railX = (mirror > 0) and (w - sr - bRail - s * CFG.railDrop * scale)
+                          or (sl + bRail + s * CFG.railDrop * scale)
+    railY = st + s * CFG.railFallback * scale
+  end
+  railStep = bRail * 2 + s * CFG.railGap * scale
 
   for i = 1, ACT_N do
     local b = ACT[i]
-    local a = b.ang
-    local rad = b.outboard and (ringR * CFG.buildOut) or ringR
-    if mirror < 0 then a = pi - a end   -- mirror the whole arrangement in x
-    b.r = btnR * (b.outboard and 0.88 or 1)
-    b.hitR = b.r * CFG.btnHitPad
-    b.x = U.clamp(cx + cos(a) * rad, L.sl + b.r, w - L.sr - b.r)
-    b.y = U.clamp(cy + sin(a) * rad, L.st + b.r, h - L.sb - b.r)
+    local a, R, r
+    if b.ring == "in" then
+      a, R, r = rad(CFG.innerAng[b.seat]), rIn, bIn
+    elseif b.ring == "out" then
+      a, R, r = rad(CFG.outerAng[b.seat]), rOut, bOut
+    else
+      a, R, r = nil, nil, bRail
+    end
+    b.r = r
+    b.hitR = r * CFG.btnHitPad
+    if a then
+      if mirror < 0 then a = pi - a end
+      b.x = U.clamp(px + cos(a) * R, sl + r, w - sr - r)
+      b.y = U.clamp(py + sin(a) * R, st + r, h - sb - r)
+      b.on = true
+    else
+      -- the rail stacks down the map's inboard edge
+      b.x = U.clamp(railX, sl + r, w - sr - r)
+      b.y = railY + railStep * (b.seat - 1)
+      b.on = true
+    end
   end
 
-  -- the stick owns the opposite half, minus the HUD strip
+  -- Whatever the screen shape, a rail button that has ended up inside the
+  -- thumb's sweep is worse than no rail button: it is an accidental pause in a
+  -- fight. Any that cannot keep clear of the arc simply switch off.
+  for i = 1, ACT_N do
+    local b = ACT[i]
+    if b.ring == "rail" then
+      b.y = U.clamp(b.y, st + b.r, h - sb - b.r)
+      for k = 1, ACT_N do
+        local o = ACT[k]
+        if o.ring ~= "rail" then
+          local dx, dy = b.x - o.x, b.y - o.y
+          local reach = (b.r + o.r) * CFG.btnHitPad
+          if dx * dx + dy * dy < reach * reach then b.on = false end
+        end
+      end
+    end
+  end
+
+  -- the stick owns the opposite half, below the readouts
   if mirror > 0 then
     L.stickX0, L.stickX1 = 0, w * CFG.stickZoneX
   else
     L.stickX0, L.stickX1 = w * (1 - CFG.stickZoneX), w
   end
-  L.stickTop = L.st + s * CFG.stickZoneTop
+  L.stickTop = st + s * CFG.stickZoneTop
   L.ringR = s * CFG.stickRing * scale
   L.nubR  = s * CFG.stickNub * scale
+  -- the ghost's resting place: where a left thumb actually sits
+  L.homeX = (mirror > 0) and (sl + s * CFG.homeX * scale) or (w - sr - s * CFG.homeX * scale)
+  L.homeY = h - sb - s * CFG.homeY * scale
 end
 
 --------------------------------------------------------------------- touch slots
@@ -235,6 +306,11 @@ Touch.slots = slots
 local stick = { slot = nil, cx = 0, cy = 0, x = 0, y = 0, mag = 0, dx = 0, dy = 0, fade = 0 }
 local aim   = { slot = nil, ox = 0, oy = 0, x = 0, y = 0, active = false, dx = 1, dy = 0, fade = 0 }
 Touch.stick, Touch.aimState = stick, aim
+
+-- How much of the movement lesson is still owed. Counts down only while the
+-- stick is actually being pushed, so a player who has not found it yet keeps
+-- being told, and one who has is never told again.
+local taught = 0
 
 local radial = {
   open = false, btn = nil, cx = 0, cy = 0, sel = 0, t = 0, fade = 0,
@@ -281,6 +357,22 @@ function Touch.setAimContext(fn, list) originFn, threatList = fn, list end
 --- Tell the build radial how much cobalt is in the bank, so wedges can grey out.
 function Touch.setCobaltSource(fn) cobaltFn = fn end
 
+--- What a bot actually costs right now.
+---
+--- `def.cost` is the sticker price and the world stopped charging it long ago:
+--- every bot of a type already standing raises the next one's price. This wheel
+--- is the *only* build UI a phone has, so it must quote the same figure the bar
+--- quotes and the world charges -- and show the sticker price struck through
+--- beside it, which is the only way the rule ever gets taught.
+local function priceOf(id, def)
+  local BM = package.loaded["src.game.buildmenu"]
+  if BM and BM.cost then
+    local ok, v = pcall(BM.cost, id)
+    if ok and type(v) == "number" and v > 0 then return v end
+  end
+  return def.cost
+end
+
 --------------------------------------------------------------------- activation
 function Touch.activate()
   if Touch.active then return end
@@ -318,7 +410,7 @@ local function hitButton(x, y)
   local best, bestD = nil, nil
   for i = 1, ACT_N do
     local b = ACT[i]
-    if b.slot == nil then
+    if b.slot == nil and b.on then
       local dx, dy = x - b.x, y - b.y
       local d2 = dx * dx + dy * dy
       if d2 <= b.hitR * b.hitR and (not bestD or d2 < bestD) then best, bestD = b, d2 end
@@ -329,6 +421,24 @@ end
 
 local function inStickZone(x, y)
   return x >= L.stickX0 and x <= L.stickX1 and y >= L.stickTop
+end
+
+local function inRect(x, y, r)
+  return r and r.w and r.w > 0
+     and x >= r.x and x <= r.x + r.w and y >= r.y and y <= r.y + r.h
+end
+
+--- Readouts that are also buttons. The map plate opens the map; the HOLD THE
+--- DAWN offer takes the trade. Both are already drawn, both already say what
+--- they do, and on a phone a thing that looks tappable and is not is a bug.
+--- Returns the action to latch, or nil.
+local function hitHud(x, y)
+  local tl = HUD.touchLayout and HUD.touchLayout()
+  if not (tl and tl.on) then return nil end
+  if tl.mapOpen then return "map" end          -- an open map closes on any tap
+  if tl.hold and tl.holdOn and inRect(x, y, tl.hold) then return "commit" end
+  if tl.map and inRect(x, y, tl.map) then return "map" end
+  return nil
 end
 
 ---------------------------------------------------------------------- pressing
@@ -402,6 +512,14 @@ function Touch.onPressed(id, x, y)
   local b = hitButton(x, y)
   if b then
     pressButton(b, sl)
+    return
+  end
+
+  local hud = hitHud(x, y)
+  if hud then
+    latch[hud] = max(latch[hud] or 0, CFG.latch * 1.5)
+    sl.role = "hud"
+    buzz(CFG.hapticTap)
     return
   end
 
@@ -498,6 +616,7 @@ local function updateStick(dt)
       m = m ^ CFG.stickCurve
       stick.mag = m
       stick.dx, stick.dy = dx / d, dy / d
+      taught = min(1, taught + dt / CFG.hintMove)
     end
   else
     stick.fade = U.damp(stick.fade, 0, 9, dt)
@@ -565,6 +684,12 @@ function Touch.update(dt)
     local osn = love.system and love.system.getOS() or ""
     if osn == "iOS" or osn == "Android" then Touch.activate() end
   end
+  -- The HUD owns the rail's anchor, so a moved map plate is a structural change
+  -- the same way a resize is. Compared rather than assumed: layout() is cheap
+  -- but it is not free, and this runs sixty times a second.
+  local tl = HUD.touchLayout and HUD.touchLayout()
+  local anchor = (tl and tl.on) and (tl.mapX + tl.mapY * 4096 + tl.mapW * 16) or -1
+  if anchor ~= L.anchor then L.anchor, L.dirty = anchor, true end
   layout()
 
   local visible = Touch.active and Touch.enabled and Input.scheme == "touch"
@@ -594,7 +719,13 @@ function Touch.update(dt)
   end
 
   radial.fade = U.damp(radial.fade, radial.open and 1 or 0, 18, dt)
-  if radial.open then radial.t = radial.t + dt end
+  if radial.open then
+    radial.t = radial.t + dt
+    -- the wheel holds time at a quarter, exactly as the desktop wheel does:
+    -- a build menu that fully pauses kills the tension, one that does not
+    -- punishes the slower hands a phone forces on you
+    J.dilate(CFG.radialDilate, 0.16)
+  end
 
   for k, v in pairs(latch) do
     if v > 0 then latch[k] = max(0, v - dt) end
@@ -653,7 +784,7 @@ local function arcStroke(x, y, r, width, a0, a1, color, alpha)
 end
 
 ------------------------------------------------------------------------ glyphs
--- Drawn, not typeset: five little diagrams of what the verb does.
+-- Drawn, not typeset: little diagrams of what the verb does.
 local function glyphDash(x, y, s, c, a)
   Draw.setColor(c, a)
   lg.setLineWidth(max(2, s * 0.17))
@@ -689,6 +820,18 @@ local function glyphPlant(x, y, s, c, a)
   Draw.blob(x + s * 0.40, y - s * 0.44, s * 0.36, 12, 9, 0.22, 0.78, "fill", -0.4)
 end
 
+--- A bot being lifted, or set down. The arrow is the whole message.
+local function glyphCarry(x, y, s, c, a, down)
+  lg.setLineWidth(max(2, s * 0.16))
+  Draw.setColor(c, a)
+  Draw.roundRect("line", x - s * 0.62, y - s * 0.10, s * 1.24, s * 0.86, s * 0.24)
+  lg.line(x - s * 0.24, y + s * 0.30, x - s * 0.24, y + s * 0.36)
+  lg.line(x + s * 0.24, y + s * 0.30, x + s * 0.24, y + s * 0.36)
+  Draw.setColor(c, a)
+  Draw.chevron(x, y - s * 0.72, s * 0.52, down and (pi * 0.5) or (-pi * 0.5),
+               max(2, s * 0.17), 0.8)
+end
+
 local function glyphBuild(x, y, s, c, a)
   Draw.setColor(c, a)
   lg.setLineWidth(max(2, s * 0.15))
@@ -697,27 +840,60 @@ local function glyphBuild(x, y, s, c, a)
   Draw.hexagon(x, y, s * 0.40, 0, "fill")
 end
 
+--- The standing order: a flag on a pole, with the ground it claims under it.
+local function glyphRally(x, y, s, c, a)
+  Draw.setColor(c, a)
+  lg.setLineWidth(max(1.8, s * 0.15))
+  lg.line(x - s * 0.34, y + s * 0.78, x - s * 0.34, y - s * 0.80)
+  lg.polygon("fill", x - s * 0.34, y - s * 0.80, x + s * 0.62, y - s * 0.44,
+             x - s * 0.34, y - s * 0.08)
+  Draw.setColor(c, a * 0.55)
+  lg.setLineWidth(max(1.5, s * 0.12))
+  lg.arc("line", "open", x - s * 0.34, y + s * 0.78, s * 0.72, -pi * 0.85, -pi * 0.15, 12)
+end
+
+--- Two bars. Nothing else has ever meant anything else.
+local function glyphPause(x, y, s, c, a)
+  Draw.setColor(c, a)
+  Draw.roundRect("fill", x - s * 0.52, y - s * 0.66, s * 0.34, s * 1.32, s * 0.12)
+  Draw.roundRect("fill", x + s * 0.18, y - s * 0.66, s * 0.34, s * 1.32, s * 0.12)
+end
+
 local GLYPH = { dash = glyphDash, shove = glyphShove, pulse = glyphPulse,
-                plant = glyphPlant, build = glyphBuild }
+                plant = glyphPlant, build = glyphBuild, rally = glyphRally,
+                pause = glyphPause }
 
 ------------------------------------------------------------------- stick draw
+--- The well the stick sits in: shared by the live stick and by the ghost that
+--- teaches it, so the thing the player is taught and the thing they get are
+--- visibly the same object.
+local function stickPlate(x, y, r, a, mag, dx, dy)
+  disc(x, y, r * 1.18, P.black, 0.22 * a, "smooth")
+  ringStroke(x, y, r, max(1.5, r * 0.022), P.ink, 0.20 * a, 56)
+  ringStroke(x, y, r * CFG.stickDead, max(1, r * 0.016), P.ink, 0.10 * a, 32)
+  if mag > 0.01 then
+    local ang = atan2(dy, dx)
+    local sweep = 0.42 + mag * 0.32
+    arcStroke(x, y, r, max(2.5, r * 0.055), ang - sweep, ang + sweep,
+              P.accent, (0.20 + 0.55 * mag) * a)
+  end
+end
+
+local function stickNub(x, y, r, nub, a, mag, dx, dy)
+  local nx = x + dx * mag * (r - nub * 0.55)
+  local ny = y + dy * mag * (r - nub * 0.55)
+  disc(nx, ny + nub * 0.16, nub * 1.05, P.black, 0.30 * a, "shadow")
+  disc(nx, ny, nub, P.black, 0.42 * a)
+  disc(nx, ny, nub * 0.86, P.ink, (0.16 + 0.18 * mag) * a, "smooth")
+  ringStroke(nx, ny, nub, max(1.8, nub * 0.10), P.ink, (0.45 + 0.35 * mag) * a, 40)
+end
+
 local function drawStick(alpha)
   local a = alpha * stick.fade
   if a < 0.01 then return end
   local x, y, r = stick.cx, stick.cy, L.ringR
 
-  -- seat: a dark well so the ring reads on grass as well as on water
-  disc(x, y, r * 1.18, P.black, 0.22 * a, "smooth")
-  ringStroke(x, y, r, max(1.5, r * 0.022), P.ink, 0.20 * a, 56)
-  ringStroke(x, y, r * CFG.stickDead, max(1, r * 0.016), P.ink, 0.10 * a, 32)
-
-  -- the push: an arc of light on the ring in the direction of travel
-  if stick.mag > 0.01 then
-    local ang = atan2(stick.dy, stick.dx)
-    local sweep = 0.42 + stick.mag * 0.32
-    arcStroke(x, y, r, max(2.5, r * 0.055), ang - sweep, ang + sweep,
-              P.accent, (0.20 + 0.55 * stick.mag) * a)
-  end
+  stickPlate(x, y, r, a, stick.mag, stick.dx, stick.dy)
 
   -- aim pip: where the game currently thinks you are pointing
   if (aim.active or Touch.autoAimId) and (aim.dx ~= 0 or aim.dy ~= 0) then
@@ -726,13 +902,32 @@ local function drawStick(alpha)
     Draw.chevron(px, py, r * 0.16, atan2(aim.dy, aim.dx), max(2, r * 0.03), 0.8)
   end
 
-  -- nub
-  local nx = x + stick.dx * stick.mag * (r - L.nubR * 0.55)
-  local ny = y + stick.dy * stick.mag * (r - L.nubR * 0.55)
-  disc(nx, ny + L.nubR * 0.16, L.nubR * 1.05, P.black, 0.30 * a, "shadow")
-  disc(nx, ny, L.nubR, P.black, 0.42 * a)
-  disc(nx, ny, L.nubR * 0.86, P.ink, (0.16 + 0.18 * stick.mag) * a, "smooth")
-  ringStroke(nx, ny, L.nubR, max(1.8, L.nubR * 0.10), P.ink, (0.45 + 0.35 * stick.mag) * a, 40)
+  stickNub(x, y, r, L.nubR, a, stick.mag, stick.dx, stick.dy)
+end
+
+--- The lesson. Until the player has actually walked with the stick, the stick
+--- is drawn where their thumb will find it, breathing, with the one line of
+--- type this layer is allowed. It retires itself and never comes back.
+local function drawStickGhost(alpha, time)
+  local k = (1 - taught) * (1 - stick.fade)
+  if k < 0.02 then return end
+  local a = alpha * CFG.ghostA * k * (0.72 + 0.28 * sin(time * CFG.ghostPulse * TAU))
+  if a < 0.01 then return end
+  local x, y, r = L.homeX, L.homeY, L.ringR
+
+  stickPlate(x, y, r, a, 0, 0, 0)
+  stickNub(x, y, r, L.nubR, a, 0, 0, 0)
+
+  -- four little chevrons around the well: it moves, and it moves any way
+  for i = 0, 3 do
+    local ang = i * pi * 0.5
+    Draw.setColor(P.accent, 0.6 * a)
+    Draw.chevron(x + cos(ang) * r * 1.30, y + sin(ang) * r * 1.30,
+                 r * 0.15, ang, max(2, r * 0.035), 0.8)
+  end
+  Text.display("DRAG TO MOVE", x, y + r * 1.52, max(10, r * 0.22),
+               { color = P.ink, alpha = min(1, 1.35 * a), align = "center",
+                 tracking = 0.26, weight = 0.12, shadow = 2, snap = true })
 end
 
 --------------------------------------------------------------------- aim draw
@@ -756,23 +951,28 @@ end
 ------------------------------------------------------------------ button draw
 local function drawButton(b, alpha)
   local a = alpha
-  if a < 0.01 then return end
+  if a < 0.01 or not b.on then return end
   local r = b.r * b.sc
   local hot = b.press
+  local col, label = b.color, b.label
+  if b.context then
+    local c = CONTEXT[context]
+    col, label = c.color, c.label
+  end
 
   -- contact shadow keeps the layer sitting *above* the world, not in it
   Draw.softShadow(b.x, b.y + b.r * 0.20, b.r * 1.02, b.r * 0.52, 0.30 * a)
 
-  disc(b.x, b.y, r, P.black, (0.38 + 0.14 * hot) * a)
-  disc(b.x, b.y, r * 0.94, b.color, (0.07 + 0.30 * hot) * a, "smooth")
-  ringStroke(b.x, b.y, r, max(1.8, r * 0.045), b.color, (0.42 + 0.55 * hot) * a, 52)
+  disc(b.x, b.y, r, P.black, (0.44 + 0.14 * hot) * a)
+  disc(b.x, b.y, r * 0.94, col, (0.08 + 0.30 * hot) * a, "smooth")
+  ringStroke(b.x, b.y, r, max(1.8, r * 0.045), col, (0.46 + 0.52 * hot) * a, 52)
   ringStroke(b.x, b.y, r * 0.86, max(1, r * 0.016), P.ink, 0.10 * a, 44)
 
   -- press ripple
   if b.ripple > 0 then
     local t = 1 - b.ripple
     ringStroke(b.x, b.y, r * (1 + t * 0.85), max(1.5, r * 0.05 * b.ripple),
-               b.color, 0.55 * b.ripple * a, 48)
+               col, 0.55 * b.ripple * a, 48)
   end
 
   -- hold-to-charge dial (pulse), drawn as a filling ring from the top
@@ -781,19 +981,29 @@ local function drawButton(b, alpha)
     arcStroke(b.x, b.y, r * 1.12, max(2.5, r * 0.075), -pi * 0.5, -pi * 0.5 + TAU * c,
               P.ink, 0.9 * a)
     if c >= 1 then
-      disc(b.x, b.y, r * 1.5, b.color, 0.35 * a, "glow")
+      disc(b.x, b.y, r * 1.5, col, 0.35 * a, "glow")
     end
   end
 
-  local gs = r * 0.44
-  local gf = GLYPH[b.id]
-  if gf then gf(b.x, b.y, gs, b.color, (0.80 + 0.20 * hot) * a) end
+  -- Glyph above centre, caption below it -- both *inside* the disc. Captions
+  -- hung underneath a button clip on the bottom row and collide with their
+  -- neighbours on the diagonal, and this screen has neither the height nor the
+  -- width to spare for either.
+  local labelled = Settings.get("touchLabels") and a > 0.35
+  local gs = r * (labelled and 0.40 or 0.46)
+  local gy = b.y + r * (labelled and CFG.glyphOff or 0)
+  local gf = GLYPH[b.context and "plant" or b.id]
+  if b.context and context ~= "plant" then
+    glyphCarry(b.x, gy, gs, col, (0.86 + 0.14 * hot) * a, context == "drop")
+  elseif gf then
+    gf(b.x, gy, gs, col, (0.86 + 0.14 * hot) * a)
+  end
   lg.setLineJoin("miter")
 
-  if Settings.get("touchLabels") and a > 0.35 then
-    Text.display(b.label, b.x, b.y + r * 0.99, max(8, r * 0.235),
-                 { color = b.color, alpha = 0.55 * a, align = "center",
-                   tracking = 0.18, weight = 0.11, snap = true })
+  if labelled then
+    Text.display(label, b.x, b.y + r * CFG.labelOff, max(8, r * CFG.labelSize),
+                 { color = col, alpha = (0.70 + 0.25 * hot) * a, align = "center",
+                   tracking = 0.14, weight = 0.11, snap = true })
   end
 end
 
@@ -833,7 +1043,7 @@ local function drawRadial(alpha)
   end
 
   -- scrim: the world dims so the menu is unambiguously modal
-  Draw.setColor(P.black, 0.30 * a)
+  Draw.setColor(P.black, 0.34 * a)
   lg.rectangle("fill", 0, 0, L.w, L.h)
   disc(cx, cy, r1 * 1.9, P.black, 0.35 * a, "smooth")
 
@@ -844,11 +1054,12 @@ local function drawRadial(alpha)
     local a1 = -pi * 0.5 + i * step - CFG.radialGap
     local mid = (a0 + a1) * 0.5
     local on = (radial.sel == i)
-    local afford = (cobalt == nil) or (cobalt >= def.cost)
+    local cost = priceOf(id, def)
+    local afford = (cobalt == nil) or (cobalt >= cost)
     local push = on and r1 * 0.045 or 0
     local wx, wy = cx + cos(mid) * push, cy + sin(mid) * push
 
-    Draw.setColor(P.black, (on and 0.62 or 0.44) * a)
+    Draw.setColor(P.black, (on and 0.66 or 0.50) * a)
     wedge(wx, wy, r0, r1 + push, a0, a1)
     Draw.setColor(P.accent, (on and 0.30 or 0.07) * a * (afford and 1 or 0.4))
     wedge(wx, wy, r0, r1 + push, a0, a1)
@@ -859,12 +1070,35 @@ local function drawRadial(alpha)
     local lx = cx + cos(mid) * (r0 + r1) * 0.5
     local ly = cy + sin(mid) * (r0 + r1) * 0.5
     local col = afford and (on and P.ink or P.inkDim) or P.inkFaint
-    Text.display(def.label, lx, ly - r1 * 0.13, r1 * (on and 0.115 or 0.10),
+    -- the silhouette first: on a phone this wheel is the *only* build UI, and
+    -- six words in a ring teach nothing the six shapes do not teach better
+    if HUD.botGlyph then
+      HUD.botGlyph(id, lx, ly - r1 * 0.20, r1 * CFG.radialGlyph * (on and 1.12 or 1),
+                   afford and P.ramp.metal[3] or P.inkFaint, (afford and 1 or 0.45) * a)
+    end
+    Text.display(def.label, lx, ly + r1 * 0.09, r1 * (on and 0.098 or 0.088),
                  { color = col, alpha = a, align = "center", tracking = 0.10,
                    weight = 0.11, snap = true })
-    Text.display(tostring(def.cost), lx, ly + r1 * 0.045, r1 * 0.10,
-                 { color = afford and P.ramp.cobalt[4] or P.danger, alpha = a * 0.9,
-                   align = "center", tracking = 0.06, weight = 0.11, snap = true })
+    local py2 = ly + r1 * 0.21
+    if cost > def.cost then
+      local bs = r1 * 0.072
+      local base = tostring(def.cost)
+      local bw = Text.measure(base, bs) or 0
+      Text.display(base, lx - r1 * 0.055, py2 + bs * 0.16, bs,
+                   { color = P.inkFaint, alpha = a * 0.85, align = "right",
+                     tracking = 0.06, weight = 0.11, snap = true })
+      Draw.setColor(P.inkFaint, a * 0.85)
+      lg.setLineWidth(1)
+      local sy = py2 + bs * 0.68
+      lg.line(lx - r1 * 0.055 - bw - 1, sy, lx - r1 * 0.05, sy)
+      Text.display(tostring(cost), lx - r1 * 0.03, py2, r1 * 0.088,
+                   { color = afford and P.ramp.cobalt[4] or P.danger, alpha = a * 0.9,
+                     align = "left", tracking = 0.06, weight = 0.11, snap = true })
+    else
+      Text.display(tostring(cost), lx, py2, r1 * 0.088,
+                   { color = afford and P.ramp.cobalt[4] or P.danger, alpha = a * 0.9,
+                     align = "center", tracking = 0.06, weight = 0.11, snap = true })
+    end
   end
 
   -- hub
@@ -893,7 +1127,9 @@ function Touch.draw()
   lg.setBlendMode("alpha", "alphamultiply")
   local lw, lj = lg.getLineWidth(), lg.getLineJoin()
   lg.setLineJoin("miter")
+  local time = love.timer and love.timer.getTime() or 0
 
+  drawStickGhost(a, time)
   drawStick(a)
   drawAim(a)
   for i = 1, ACT_N do
@@ -943,6 +1179,7 @@ function Touch.load()
   -- can be captured and looked at on a desktop or in the headless harness.
   if _G.BOTS_CFG and _G.BOTS_CFG("BOTS_INPUT") == "touch" then Touch.activate() end
   L.dirty = true
+  taught = 0
 end
 
 Input.touchModule = Touch

@@ -30,6 +30,13 @@
 --    direction leaves collapse when the tree is chewed. Sun parameters are one
 --    global uniform; each tree costs a single vec4 upload.
 --
+-- 5. TWO PASSES, NOT THREE. A canopy used to be drawn three times a frame: a
+--    projected shadow, the tree itself, and a third additive draw of the full
+--    canopy mesh for the backlight. In a forest where crowns overlap, that
+--    third pass was over half of all the fill in the frame for a term that is
+--    zero across most of the area it covered, so it now rides in the main
+--    shader as `uBack`.
+--
 -- API
 --   local Tree = require("src.entities.tree")
 --   Tree.prewarm()                       -- optional: build the mesh library up front
@@ -37,9 +44,11 @@
 --   local tr = Tree.new(x, y, seed, opts)
 --   tr:update(dt)
 --   tr:drawShadow(sunAngle, sunLength, ambient)
---   tr:draw(sunDirX, sunDirY)
---   tr:drawCanopyLight()
---   tr:startChew(who) / tr:stopChew(who) / tr:kill(cause) / tr:hit(dx, dy, power)
+--   tr:draw(sunDirX, sunDirY)        -- trunk, canopy, rim AND backlight
+--   tr:drawCanopyLight()             -- no-op, kept for the renderer's call site
+--   tr:startChew(who) / tr:stopChew(who) / tr:hit(dx, dy, power)
+--   tr:fell(cause)                   -- felled by the Blight; routes via World:fellTree
+--   tr:kill(cause)                   -- the fall itself; the world calls this
 local U     = require("src.core.util")
 local P     = require("src.engine.palette")
 local Class = require("src.core.class")
@@ -87,6 +96,13 @@ local TUNE = {
   rimPower      = 1.00,
   rimAlpha      = 0.10,
   rimElder      = 1.55,   -- elders take a golden rim
+  -- Canopy backlight (the term that used to be its own additive pass). The old
+  -- pass had no depth test and ran after the whole forest, so a hidden tree's
+  -- rim still landed on whatever stood in front of it; inside the shader only
+  -- the pixels a tree actually wins contribute. Same light, fewer surfaces, so
+  -- the constant is raised to put the forest back at the brightness it read at.
+  backAlpha     = 0.16,
+  backElder     = 0.22,
   shadowAlpha   = 0.60,
   shadowSquash  = 0.34,   -- vertical flattening of the projected canopy
   airDepth      = 0.34,   -- peak aerial-perspective blend at the top of the view
@@ -228,10 +244,12 @@ uniform mediump vec4 uT;   // x: sway  y: lagged sway  z: leaf loss  w: view dep
 local TREE_SHADER = SHARED_VS .. [[
 uniform mediump vec4 uSun;   // xy: direction to the sun  z: contrast  w: rim power
 uniform mediump vec4 uRim;   // rim colour, a = intensity
+uniform mediump vec4 uBack;  // backlight colour, a = intensity (was its own pass)
 uniform mediump vec4 uDeath; // rgb: dead tint  a: desaturation amount
 uniform mediump vec4 uAir;   // rgb: atmosphere colour  a: how much depth buys
 varying mediump vec3 vShade;
 varying mediump float vRim;
+varying mediump float vBack;
 #ifdef VERTEX
 vec4 position(mat4 tpm, vec4 vp) {
   float h = TreeData.x;
@@ -249,6 +267,9 @@ vec4 position(mat4 tpm, vec4 vp) {
   // away -- a blown canopy is a flat disc.
   vShade = vec3(1.0 + (l > 0.0 ? l * uSun.z * 0.30 : l * uSun.z));
   vRim = smoothstep(0.58, 0.995, l) * TreeData.w * uSun.w;
+  // The wider, hotter backlight the canopy used to get from a second additive
+  // draw of the same mesh. Same term, same falloff, one pass instead of two.
+  vBack = smoothstep(0.42, 1.0, l) * TreeData.w * uSun.w;
   return tpm * vp;
 }
 #endif
@@ -273,36 +294,20 @@ vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
   float air = uT.w * uAir.a;
   float gl = dot(c, vec3(0.2126, 0.7152, 0.0722));
   c = mix(c, uAir.rgb * (0.45 + 1.10 * gl), air);
+
+  // Backlight, added last and uncompressed: exactly where the separate additive
+  // pass used to land in the frame, so a canopy keeps its hot sunward edge.
+  c += uBack.rgb * (vBack * uBack.a);
   return vec4(c, color.a);
 }
 #endif
 ]]
 
-local RIM_SHADER = SHARED_VS .. [[
-uniform mediump vec4 uSun;
-uniform mediump vec4 uRim;
-varying mediump float vRim;
-#ifdef VERTEX
-vec4 position(mat4 tpm, vec4 vp) {
-  float h = TreeData.x;
-  float sway = mix(uT.x, uT.y, TreeData.y);
-  float b = sway * h * h;
-  vp.x += b;
-  vp.y += abs(b) * h * 0.22;
-  float loss = clamp((uT.z - TreeData.z) * 3.0, 0.0, 1.0);
-  vp.xy -= BlobOff * loss;
-  float nl = length(BlobOff);
-  float l = nl > 0.00001 ? dot(BlobOff / nl, uSun.xy) : 0.0;
-  vRim = smoothstep(0.42, 1.0, l) * TreeData.w * uSun.w;
-  return tpm * vp;
-}
-#endif
-#ifdef PIXEL
-vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
-  return vec4(uRim.rgb * (vRim * uRim.a * color.a), 1.0);
-}
-#endif
-]]
+-- (The canopy backlight used to be a third shader and a third full-mesh draw
+-- per tree, blended additively over the finished forest. It is now the `uBack`
+-- term inside TREE_SHADER above: same falloff, same colour, one pass. Removing
+-- it took an entire additive overdraw of every canopy out of the frame, which
+-- measured as just over half of all the fill in the game.)
 
 local SHADOW_SHADER = SHARED_VS .. [[
 uniform mediump vec4 uProj;   // xy: shadow direction  z: length (x height)  w: squash
@@ -334,19 +339,18 @@ local FORMAT = {
   { "BlobOff",        "float", 2 },
 }
 
-local shTree, shRim, shShadow
+local shTree, shShadow
 local shadersOK = false
 
 local function initShaders()
   if shTree ~= nil or shadersOK then return end
   local ok1, a = pcall(love.graphics.newShader, TREE_SHADER)
   local ok2, b = pcall(love.graphics.newShader, SHADOW_SHADER)
-  local ok3, c = pcall(love.graphics.newShader, RIM_SHADER)
-  if ok1 and ok2 and ok3 then
-    shTree, shShadow, shRim = a, b, c
+  if ok1 and ok2 then
+    shTree, shShadow = a, b
     shadersOK = true
   else
-    shTree, shShadow, shRim = false, false, false
+    shTree, shShadow = false, false
     shadersOK = false
     print("tree.lua: shader compile failed, falling back to flat drawing\n" ..
           tostring(a) .. "\n" .. tostring(b))
@@ -798,13 +802,14 @@ end
 local cur = {
   shader = nil, sunX = nil, sunY = nil, ambient = nil,
   sunAngle = nil, sunLen = nil, mode = nil,
-  rimKey = nil, deathKey = nil,
+  rimKey = nil, deathKey = nil, backKey = nil,
 }
 local uT   = { 0, 0, 0, 0 }
 local uAir = { 1, 1, 1, 0 }
 local uSun = { 0, 0, 0, 0 }
 local uPrj = { 0, 0, 0, 0 }
 local uRimC = { 0, 0, 0, 0 }
+local uBack = { 0, 0, 0, 0 }
 local uDth = { 0, 0, 0, 0 }
 local uShd = { 0, 0, 0, 0 }
 
@@ -895,7 +900,7 @@ local function bind(shader)
   if cur.shader ~= shader then
     love.graphics.setShader(shader or nil)
     cur.shader = shader
-    cur.rimKey, cur.deathKey = nil, nil
+    cur.rimKey, cur.deathKey, cur.backKey = nil, nil, nil
   end
 end
 
@@ -1004,6 +1009,7 @@ function Tree:refreshMesh()
   self.height = self.size * (self.meta.extentY or 1)
   self.canopyR = self.size * (self.meta.extentR or 0.4)
   self.radius = self.size * self.sp.trunkR * (1 + self.elderness * (TUNE.elderTrunk - 1))
+  if self.updatePose then self:updatePose() end
 end
 
 function Tree:refreshStage(silent)
@@ -1048,28 +1054,57 @@ function Tree:visible()
      and self.y + r >= view.y and self.y - r <= view.y + view.h
 end
 
+-- Ageing into an elder takes nine minutes, so `elderness` moves by 1/32400 a
+-- frame -- a change no eye can see, but enough to make `e ~= self.elderness`
+-- true on every frame of every mature tree in the forest and drag the whole
+-- library lookup and size recomputation along with it. Quantising it to 1/512
+-- means the derived size still climbs in steps of a twentieth of a pixel on a
+-- full-grown crown, and the recompute happens about once a second per tree
+-- instead of sixty times.
+local ELDER_STEP = 1 / 512
+
 function Tree:update(dt)
   local on = self:visible()
   self.onScreen = on
+
+  -- `dirty` tracks whether anything that feeds refreshStage actually moved.
+  -- For a mature, unbothered tree -- which is nearly the whole forest for
+  -- nearly the whole run -- the answer is no, and the stage/oxygen recompute
+  -- can be skipped entirely.
+  local dirty = false
+  local deathWas = self.death
 
   if self.alive then
     if self.growth < 1 then
       self.growth = min(1, self.growth + dt / T.growTime * self.growthMul)
       self:refreshMesh()
+      dirty = true
     elseif self.elderness < 1 and self.canElder then
       self.elderT = self.elderT + dt * self.growthMul
       local e = U.saturate(self.elderT / T.elderTime)
-      if e ~= self.elderness then
+      if e >= 1 or e - self.elderness >= ELDER_STEP then
         self.elderness = e
         self:refreshMesh()
+        dirty = true
       end
     end
 
     if self.chewers > 0 then
-      self.damage = self.damage + dt / T.chewTime
+      -- One timer, and it reads the chips. There used to be two: this one,
+      -- unmodified, and a duplicate on the chomper that did honour
+      -- `chips.chewTime`. Trees are swept before enemies, so the unmodified one
+      -- always finished first -- DEEP ROOTS bought a tree no time at all, and
+      -- because the tree killed itself directly instead of through
+      -- `World:fellTree`, the whole loss path (the tally, `tree_fall`, the
+      -- shake, the stump decal, the forest chime, CLEAR CUT's payout) was
+      -- silently skipped with the chip drafted. `stats.lost` read 0 for a run
+      -- while the forest fell.
+      local w = self.world
+      local mul = (w and w.chips and w.chips:get("chewTime", 1)) or 1
+      self.damage = self.damage + dt / (T.chewTime * mul)
       if self.damage >= 1 then
         self.damage = 1
-        self:kill("chewed")
+        self:fell("chewed")
       end
     elseif self.damage > 0 then
       self.damage = max(0, self.damage - dt * TUNE.chewRecover)
@@ -1091,7 +1126,14 @@ function Tree:update(dt)
     self.fade = U.saturate(1 - (self.deadT - 0.35) / TUNE.deadFade)
   end
 
-  self:refreshStage()
+  -- A dying or dead tree keeps recomputing: `stage` is driven by the topple
+  -- clock and the whole thing lasts a couple of seconds. A living one only
+  -- recomputes when its growth, its age or its damage actually moved.
+  if not self.alive or self.toppling then
+    self:refreshStage()
+  elseif dirty or self.death ~= deathWas then
+    self:refreshStage()
+  end
 
   -- squash & stretch spring after a stage change
   if self.popA > 0 then
@@ -1119,6 +1161,7 @@ function Tree:update(dt)
     self.windStr = str
     self:updateLeaves(dt, str)
     self:updateXray(dt)
+    self:updatePose()
   elseif (self.xray or 0) > 0 then
     self.xray = 0
   end
@@ -1143,6 +1186,14 @@ function Tree:hit(dx, dy, power)
   local nx = U.norm(dx or 1, dy or 0)
   self.hitV = self.hitV + nx * power * TUNE.hitScale * (1.4 - self.elderness * 0.7)
   self:shed(2 + floor(power * 2), 1.2)
+end
+
+--- Felled by the Blight. There is exactly one way a tree dies to a chomper and
+--- this is it: the world owns the consequences and calls back into `kill` for
+--- the fall itself. Nothing may shortcut straight to `kill` for a chew.
+function Tree:fell(cause)
+  local w = self.world
+  if w and w.fellTree then w:fellTree(self, cause or "chewed") else self:kill(cause) end
 end
 
 function Tree:kill(cause)
@@ -1213,7 +1264,15 @@ local AMB_FLY    = { power = 1 }
 --- of it, ramped so it fades rather than pops.
 function Tree:updateXray(dt)
   local want = 0
-  if fociN > 0 and self.onScreen and self.growth > 0.30 and self.fade > 0 then
+  local had = self.xray or 0
+  -- Almost every tree in the forest is neither over a focus nor fading back
+  -- from having been: get those out before doing any arithmetic at all.
+  if fociN == 0 then
+    if had == 0 then return end
+    self.xray = U.damp(had, 0, TUNE.xrayRate, dt)
+    return
+  end
+  if self.onScreen and self.growth > 0.30 and self.fade > 0 then
     for i = 1, fociN do
       local f = foci[i]
       if self.y > f.y - 6 then
@@ -1225,7 +1284,8 @@ function Tree:updateXray(dt)
       end
     end
   end
-  self.xray = U.damp(self.xray or 0, want, TUNE.xrayRate, dt)
+  if want == 0 and had == 0 then return end
+  self.xray = U.damp(had, want, TUNE.xrayRate, dt)
 end
 
 function Tree:updateLeaves(dt, windStr)
@@ -1344,8 +1404,7 @@ function Tree:drawShadow(sunAngle, sunLength, ambient)
     end
     sendTreeUniform(shShadow, self)
     love.graphics.setColor(1, 1, 1, self.fade)
-    love.graphics.draw(mesh, self.x, self.y, self:drawRot(), self.size * self:popX(),
-                       self.size * self:popY())
+    love.graphics.draw(mesh, self.x, self.y, self.drot, self.dsx, self.dsy)
   else
     -- no-shader fallback: a flat contact ellipse
     bind(nil)
@@ -1383,6 +1442,17 @@ function Tree:drawRot()
   return rot
 end
 
+--- Rotation and squash are the same for every pass a tree takes in a frame, and
+--- they are pure functions of state that only `update` moves. Computing them
+--- once and reading three fields is worth doing when there are four hundred
+--- trees, two passes each, and no JIT on the shipping target.
+function Tree:updatePose()
+  self.drot = self:drawRot()
+  local sz = self.size
+  self.dsx = sz * self:popX()
+  self.dsy = sz * self:popY()
+end
+
 --- Trunk + canopy. `sunDirX, sunDirY` point *towards* the sun in world space.
 function Tree:draw(sunDirX, sunDirY)
   if not self.onScreen then return end
@@ -1390,6 +1460,7 @@ function Tree:draw(sunDirX, sunDirY)
 
   local zoom = Tree.zoom or 1
   local px = self.height * zoom
+  local big = px >= TUNE.rimPixels
   local mesh = (px < TUNE.lodPixels) and LIB.lod[self.key] or LIB.full[self.key]
   if not mesh then mesh = LIB.full[self.key] end
   if not mesh then return end
@@ -1431,6 +1502,17 @@ function Tree:draw(sunDirX, sunDirY)
       uDth[4] = dk / 16
       shTree:send("uDeath", uDth)
     end
+    -- The canopy backlight. Quantised on the same two axes as the rim above so
+    -- that a whole forest of identical mature trees shares one upload; `big` is
+    -- the old `rimPixels` gate, which still keeps it off small crowns.
+    local bk = (big and 1 or 0) + dk * 2 + step * 34
+    if cur.backKey ~= bk then
+      cur.backKey = bk
+      local rc = step > 0 and RIM_GOLD or RIM_WARM
+      uBack[1], uBack[2], uBack[3] = rc[1], rc[2], rc[3]
+      uBack[4] = big and (TUNE.backAlpha + (step / 8) * TUNE.backElder) * (1 - dk / 16) or 0
+      shTree:send("uBack", uBack)
+    end
     sendTreeUniform(shTree, self)
   else
     bind(nil)
@@ -1438,34 +1520,21 @@ function Tree:draw(sunDirX, sunDirY)
 
   local a = self.fade * (1 - (self.xray or 0) * TUNE.xrayAlpha)
   love.graphics.setColor(self.tintR, self.tintG, self.tintB, a)
-  love.graphics.draw(mesh, self.x, self.y, self:drawRot(),
-                     self.size * self:popX(), self.size * self:popY())
+  love.graphics.draw(mesh, self.x, self.y, self.drot, self.dsx, self.dsy)
 
   if not self.alive and self.toppleT > TUNE.toppleTime * 0.6 then self:drawStump() end
   if self.lpn > 0 then self:drawLeaves() end
 end
 
---- Optional additive pass: rim light and backlight through the canopy.
-function Tree:drawCanopyLight()
-  if not shadersOK or not self.onScreen or self.fade <= 0 then return end
-  if self.height * (Tree.zoom or 1) < TUNE.rimPixels then return end
-  local mesh = LIB.full[self.key]
-  if not mesh then return end
-  if cur.shader ~= shRim then
-    bind(shRim)
-    shRim:send("uSun", uSun)
-    love.graphics.setBlendMode("add", "alphamultiply")
-    cur.mode = "rim"
-  end
-  local rc = self.elderness > 0.05 and RIM_GOLD or RIM_WARM
-  uRimC[1], uRimC[2], uRimC[3] = rc[1], rc[2], rc[3]
-  uRimC[4] = (0.16 + self.elderness * 0.22) * (1 - self.death)
-  shRim:send("uRim", uRimC)
-  sendTreeUniform(shRim, self)
-  love.graphics.setColor(1, 1, 1, self.fade)
-  love.graphics.draw(mesh, self.x, self.y, self:drawRot(),
-                     self.size * self:popX(), self.size * self:popY())
-end
+--- Kept as a no-op so the renderer's additive canopy loop still finds it.
+--- The backlight it used to draw -- a second, additive, full-detail draw of
+--- every canopy mesh over the finished forest -- is now the `uBack` term in the
+--- main tree shader. It was the single most expensive thing in the frame: the
+--- extraction scene measured 786 ms/frame with it and 377 ms/frame without,
+--- because every canopy in an overlapping forest paid a full blended overdraw
+--- for a term that is zero over most of its own area.
+--- src/world/world.lua can drop the loop that calls this entirely.
+function Tree:drawCanopyLight() end
 
 function Tree:drawStump()
   if self.growth < 0.2 then return end

@@ -367,10 +367,7 @@ function World:spawnBot(x, y, botType, free)
       if lx then x, y = lx, ly else return false end
     else return false end
   end
-  if free == "half" then
-    local cost = math.ceil(self:botCost(botType) * 0.5)
-    if not self:spendCobalt(cost) then return false end
-  elseif not free then
+  if not free then
     local cost = self:botCost(botType)
     if not self:spendCobalt(cost) then
       Audio.play("ui_back")
@@ -763,7 +760,8 @@ function World:beginExtraction()
     if lx then x, y = lx, ly end
   end
   -- the fight's clock, scaled so it is always the same length
-  self.bossDrainRate = math.max(TU.boss.extractFloor, self.o2) / TU.boss.extractWindow
+  self.bossDrainRate = math.max(1, self.o2) / TU.boss.extractWindow
+  self.extractRaw = self.o2Raw or self.o2
   local crew = self:botCount()
   self.boss = Boss.new(x, y, self, crew)
   self.rebelSent = 0
@@ -932,6 +930,14 @@ function World:applyOxygen(dt)
   -- first saplings visibly and makes the last stretch the hard one.
   local frac = U.saturate(points / (self.fullForest or TU.o2.fullForest))
   local raw = TU.o2.target * frac ^ 0.78
+  self.o2Raw = raw
+  -- Once the rig is on the ground the meter may only fall. Saplings put in
+  -- during the last cycle were still maturing while the rig drained, so for the
+  -- first half-minute of the extraction the reading went *up* underneath a line
+  -- of dialogue reading "it is taking the air back".
+  if self.phase == "extraction" and self.extractRaw then
+    raw = math.min(raw, self.extractRaw)
+  end
   -- Siphon debt is capped relative to the reading, so a bad night is a real bite
   -- out of your progress but can never erase the whole run's work.
   self.o2DebtCap = math.min(TU.o2.debtCap, math.max(6, raw * 0.28))

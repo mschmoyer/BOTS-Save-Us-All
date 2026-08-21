@@ -51,6 +51,10 @@ function Boss:update(dt)
   self:updateCommon(dt)
   self.stateT = self.stateT + dt
   self.hover = self.hover + dt * 1.3
+  -- the rig's sound bed: heartbeat-driven, so it fades itself out if this ever
+  -- stops being called. It has to run above the arrival early-out -- the drone
+  -- and the landing cue start with the landing.
+  Audio.rigSet(self.x, self.y, self.coreOpen, self.phase, self:hpFrac())
   local w = self.world
   local p = w and w.player
 
@@ -124,7 +128,7 @@ function Boss:enterPhase(n)
   self.state, self.stateT = "hunt", 0
   J.shake(0.8) J.stop(0.12)
   J.flashScreen(0.25, P.ramp.blight[4][1], P.ramp.blight[4][2], P.ramp.blight[4][3])
-  Audio.play("boss_hurt", { pitch = 0.7 })
+  Audio.play("rig_plate", { x = self.x, y = self.y })
   if n == 2 then
     VFX.emit("armour_break", self.x, self.y, { power = 1.5 })
     self.plates = 3
@@ -254,7 +258,7 @@ function Boss:onDeath()
   self.alive = false
   self.dying = true
   J.shake(1) J.dilate(0.25, 2.2)
-  Audio.play("boss_hurt", { pitch = 0.5 })
+  Audio.play("boss_fall")
   Signal.emit("boss:died", self)
 end
 
@@ -286,7 +290,7 @@ local A = {
   thighW     = 0.122, kneeW = 0.092, shinW = 0.078, ankleW = 0.048,
   collarY    = -0.48, collarR = 0.24, collarSq = 0.42,
   mouthY     = -1.16, mouthR  = 0.60, mouthSq = 0.34,
-  irisIn     = 0.30, irisOut = 0.52,   -- the core aperture ringing the throat
+  irisIn     = 0.20, irisOut = 0.38,   -- the core aperture ringing the throat
   ventR      = 0.64,                    -- where the louvre banks sit on the deck
   beaconAt   = 2.45,                    -- the beacon mast's bearing on the deck
   boltR      = 0.028,
@@ -498,6 +502,14 @@ function Boss:tick()
   if hb > (self._blockSeen or 0) + 1e-3 then rec = math.min(1, rec + AR.recoilBlock) end
   self._flashSeen, self._blockSeen = f, hb
   self._recoil = math.max(0, rec - dt * AR.recoilDecay)
+
+  -- where the beam housing is pointed. It tracks the sweep exactly while the
+  -- beam is out and lags the walk direction otherwise, which is what makes a
+  -- turret read as aimed rather than decorative.
+  local target = (self.state == "beam" and self.beamAngle)
+                 or math.atan2(self.faceY or 1, self.faceX or 0)
+  if not self._aim then self._aim = target
+  else self._aim = U.dampAngle(self._aim, target, self.state == "beam" and 14 or 3, dt) end
 
   local spin = AR.drillRps * (1 + (self.phase - 1) * AR.drillPhaseUp)
   self._spin   = (self._spin or 0) + dt * TAU * spin
@@ -1031,6 +1043,15 @@ function Boss:drawDeck(lift)
     Draw.glow(0, deckY, r * (0.16 + 0.30 * open) * pulse, C.molten, 0.20 + 0.35 * open)
   end)
 
+  -- the machined ring the leaves run in, and its bolts: without it a closed
+  -- aperture is a grey disc and nothing says it is a door
+  plate(0, deckY, 0, TAU, rOut * 1.02, rOut * 1.20, isq, C.void, C.deep, 1, 22)
+  plate(0, deckY, 0, TAU, rOut * 1.16, rOut * 1.20, isq, C.lit, C.lit, 0.7, 22)
+  for k = 0, 11 do
+    local a = k / 12 * TAU + 0.12
+    bolt(cos(a) * rOut * 1.11, deckY + sin(a) * rOut * 1.11 * isq, r * 0.019, 0.9)
+  end
+
   -- molten cracks spidering out of the core once it is open
   if self.coreOpen > 0 then
     Draw.additive(function()
@@ -1085,6 +1106,73 @@ function Boss:drawDeck(lift)
   Draw.setColor(C.hazard, 0.9)
   LG.circle("fill", mx + cos(ba) * r * 0.026, lampY + sin(ba) * r * 0.014, r * 0.040, 8)
   Draw.glow(mx, lampY, r * 0.22, C.hazard, 0.45)
+
+  self:drawTurret(lift)
+end
+
+--- Where the beam actually comes out of. The rig is radially symmetrical in
+--- every other respect, and a machine with no front is a machine with no face:
+--- this is the one element that says which way it is looking.
+function Boss:emitterPos(lift)
+  local r = self.radius
+  local a = self._aim or 0
+  return cos(a) * r * 0.66, lift + r * A.deckY + sin(a) * r * 0.46, a
+end
+
+function Boss:drawTurret(lift)
+  local r = self.radius
+  local tx, ty, a = self:emitterPos(lift)
+  -- the barrel runs along the screen-projected bearing, not the world one
+  local bx, by = cos(a), sin(a) * 0.68
+  local ang = math.atan2(by, bx)
+  local charge = self.beamCharging or 0
+  local firing = (self.state == "beam" and self.beamCharging == nil) and 1 or 0
+  -- recoil while it is firing
+  local kick = firing * (0.5 + 0.5 * sin(self.age * 37)) * r * 0.03
+
+  -- the ring bearing it turns on
+  Draw.setColor(C.void)
+  LG.ellipse("fill", tx, ty + r * 0.02, r * 0.20, r * 0.13)
+  plate(tx, ty, 0, TAU, r * 0.11, r * 0.18, 0.66, C.deep, P.mix(C.hull, C.lit, 0.4), 1, 16)
+
+  LG.push()
+  LG.translate(tx - bx * kick, ty - by * kick)
+  LG.rotate(ang)
+  -- housing
+  Draw.setColor(C.void)
+  Draw.roundRect("fill", -r * 0.19, -r * 0.145, r * 0.40, r * 0.29, r * 0.04)
+  Draw.linearGradient(-r * 0.165, -r * 0.122, r * 0.35, r * 0.244,
+                      P.mix(C.hull, C.lit, 0.75), C.void, math.pi * 0.5)
+  Draw.setColor(C.rim, 0.55)
+  LG.setLineWidth(3)
+  LG.line(-r * 0.165, -r * 0.120, r * 0.16, -r * 0.120)
+  bolt(-r * 0.13, -r * 0.090, r * 0.021, 0.9)
+  bolt(-r * 0.13, r * 0.090, r * 0.021, 0.9)
+  -- a hazard chip on the shoulder of the housing
+  hazard(-r * 0.05, -r * 0.128, r * 0.20, r * 0.052, r * 0.038, self.age * 4, 0.95)
+  -- the barrel and its muzzle brake
+  limb(r * 0.14, 0, r * 0.40, 0, r * 0.080, r * 0.060, C.void)
+  limb(r * 0.14, -r * 0.016, r * 0.37, -r * 0.013, r * 0.048, r * 0.034,
+       P.mix(C.deep, C.lit, 0.55))
+  for k = 0, 2 do
+    Draw.setColor(C.void, 0.95)
+    LG.rectangle("fill", r * (0.20 + k * 0.058), -r * 0.062, r * 0.020, r * 0.124)
+  end
+  Draw.setColor(C.void)
+  LG.ellipse("fill", r * 0.415, 0, r * 0.050, r * 0.072)
+  Draw.setColor(P.mix(C.hull, C.lit, 0.5))
+  LG.ellipse("fill", r * 0.405, 0, r * 0.040, r * 0.060)
+  -- the lens: dark until it is asked for
+  local heat = math.max(charge, firing)
+  Draw.setColor(P.mix(C.void, P.danger, 0.25 + 0.75 * heat), 1)
+  LG.ellipse("fill", r * 0.41, 0, r * 0.022, r * 0.040)
+  LG.pop()
+
+  if heat > 0.02 then
+    local mx = tx + bx * r * 0.41 - bx * kick
+    local my = ty + by * r * 0.41 - by * kick
+    Draw.glow(mx, my, r * (0.10 + 0.45 * heat), P.danger, 0.4 + 0.8 * heat)
+  end
 end
 
 ------------------------------------------------------------ intake assembly
@@ -1103,11 +1191,11 @@ function Boss:drawIntake(lift)
   -- four struts from the deck up to the collar
   for k = 0, 3 do
     local a = k * TAU / 4 + math.pi / 4
-    local sx = cos(a) * r * 0.50
-    local sy = lift + r * A.deckY + sin(a) * r * 0.34
-    limb(sx, sy, cos(a) * cr * 0.85, cy + sin(a) * crY * 0.85, r * 0.044, r * 0.028, C.void)
-    limb(sx, sy, cos(a) * cr * 0.85, cy + sin(a) * crY * 0.85, r * 0.026, r * 0.015,
-         P.mix(C.deep, C.lit, 0.4 + 0.6 * cos(a - math.pi * 1.25)))
+    local sx = cos(a) * r * 0.64
+    local sy = lift + r * A.deckY + sin(a) * r * 0.44
+    limb(sx, sy, cos(a) * cr * 0.85, cy + sin(a) * crY * 0.85, r * 0.036, r * 0.024, C.void)
+    limb(sx, sy, cos(a) * cr * 0.85, cy + sin(a) * crY * 0.85, r * 0.020, r * 0.012,
+         P.mix(C.deep, C.hull, 0.3 + 0.7 * cos(a - math.pi * 1.25)))
   end
 
   -- the cone wall, lit from up-left and falling into shadow at its base
@@ -1396,7 +1484,8 @@ function Boss:drawTelegraph(arrive)
   if self.beamCharging then
     local k = self.beamCharging
     local a = self.beamAngle
-    local x0, y0 = self.x, self.y - r * 0.15
+    local tx, ty, ta = self:emitterPos(0)
+    local x0, y0 = self.x + tx + cos(ta) * r * 0.41, self.y + ty + sin(ta) * 0.68 * r * 0.41
     local range = AR.beamRange
     -- the lane it will burn
     Draw.setColor(P.danger, 0.16 + 0.20 * k)
@@ -1418,11 +1507,10 @@ function Boss:drawTelegraph(arrive)
     end
     -- the emitter winding up: a ring closing on it, and a lock flash at the end
     Draw.ring(x0, y0, r * (2.2 - 1.5 * k), 3, 0, TAU, P.danger, 3)
-    Draw.glow(x0 + dxn * r * 0.6, y0 + dyn * r * 0.45, r * (0.25 + 0.75 * k), P.danger, 0.4 + k)
     if k > 0.88 then
       Draw.additive(function()
         Draw.setColor(P.white, (k - 0.88) / 0.12 * 0.7)
-        LG.circle("fill", x0 + dxn * r * 0.6, y0 + dyn * r * 0.45, r * 0.30, 16)
+        LG.circle("fill", x0, y0, r * 0.26, 16)
       end)
     end
     LG.setLineWidth(1)
@@ -1433,8 +1521,9 @@ end
 function Boss:drawBeam(lift)
   local r = self.radius
   local a = self.beamAngle
-  local ex = self.x + cos(a) * r * 0.62
-  local ey = self.y + lift + sin(a) * r * 0.44 - r * 0.10
+  local tx, ty, ta = self:emitterPos(lift)
+  local ex = self.x + tx + cos(ta) * r * 0.41
+  local ey = self.y + ty + sin(ta) * 0.68 * r * 0.41
   local range = AR.beamRange
   local x2, y2 = ex + cos(a) * range, ey + sin(a) * range
 

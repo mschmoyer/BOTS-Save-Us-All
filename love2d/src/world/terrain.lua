@@ -311,12 +311,15 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // Bare stone is the one surface nothing roots in, so the spines are the
   // permanent clearings the forest can never close. They have to look chosen.
   float rk = rockMask(slope, elev);
-  // A wide, slow edge: the stone does not stop at a line, it goes to rubble
-  // first. `rockT` is the bedrock, `screeT` the apron of broken stone at its
-  // feet, and the two together are what makes the join to soil read.
-  float rkw = rk + (d1 - 0.5) * 0.26 + (d2 - 0.5) * 0.16;
-  float rockT  = smoothstep(0.46, 0.70, rkw);
-  float screeT = smoothstep(0.20, 0.52, rkw) * (1.0 - rockT);
+  // Stone does not stop at a line, it goes to rubble first: `rockT` is the
+  // bedrock and `screeT` the apron of broken stone at its feet, and the two
+  // together are what makes the join to soil read. Bite the whole boundary with
+  // pixel-scale noise -- left to the bilinear field alone, stone dissolves into
+  // grass across an airbrushed band a hundred pixels wide, which reads as fog
+  // rolling off the headland.
+  float rkw = rk + (d1 - 0.5) * 0.30 + (d2 - 0.5) * 0.26 + (d3 - 0.5) * 0.11;
+  float rockT  = smoothstep(0.50, 0.66, rkw);
+  float screeT = smoothstep(0.30, 0.54, rkw) * (1.0 - rockT);
   rockT  *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);   // sand wins at the tideline
   screeT *= 0.30 + 0.70 * smoothstep(0.0, beachW * 1.1, sdw);
 
@@ -344,14 +347,14 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // A slab's tone is mostly the region it is in and only partly its own. Purely
   // random slab tones tessellate into crazy paving: every edge shouts equally
   // and there are no larger masses for the eye to hold on to.
-  float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 1.0), hsh(ca.xy + 11.3), 0.52);
+  float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 0.86), hsh(ca.xy + 11.3), 0.44);
   float ha   = hsh(ca.xy * 1.7 + 3.0);            // ...and how high it stands
   float hb   = hsh(cb.xy * 1.7 + 3.0);
   vec3 rockC = ramp(cStone[0], cStone[1], cStone[2], cStone[3],
-                    0.34 + tone * 1.60 + broad * 0.55 + elev * 0.26);
+                    0.26 + tone * 1.34 + broad * 0.40 + elev * 0.18) * 0.92;
   // shadowed stone runs cool and lit stone runs warm: without the temperature
   // split a grey ramp is just grey, and the sun has nothing to land on
-  rockC *= mix(vec3(0.92, 0.97, 1.07), vec3(1.04, 1.00, 0.95), tone);
+  rockC *= mix(vec3(0.93, 0.97, 1.06), vec3(1.03, 1.00, 0.96), tone);
   // a slab is not a flat swatch of paint
   rockC *= 0.94 + 0.12 * fbm3(w * 0.0125 + 5.0);
   // Light the step: if the slab seven pixels up-sun stands higher we are in its
@@ -387,9 +390,9 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 
   // The scree apron: broken stone half-buried in the soil it is sliding over.
   vec3 screeC = mix(ramp(cStone[0], cStone[1], cStone[2], cStone[3],
-                         0.70 + broad * 0.90 + (d2 - 0.5) * 0.70),
-                    ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.85 + d1 * 1.10),
-                    0.40 - screeT * 0.22);
+                         0.35 + broad * 0.70 + (d2 - 0.5) * 0.95 + (d3 - 0.5) * 0.40),
+                    ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.80 + d1 * 1.00),
+                    0.56 - screeT * 0.26);
   col = mix(col, screeC, screeT * 0.80);
   col = mix(col, rockC, rockT);
   col *= 1.0 - shadow * 0.42 * (1.0 - rockT * 0.5);
@@ -455,7 +458,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     // the floor of a fissure, only at the heart of a scar, and only in the one
     // fissure in four that the plate hash lets glow at all.
     float live = smoothstep(0.68, 0.86, hsh(pa.xy * 2.3 + 7.1));
-    dead += cBlight[3] * smoothstep(0.012, 0.0, pa.z * cvz) * deep * deep * live * 0.22;
+    dead += cBlight[3] * smoothstep(0.010, 0.0, pa.z * cvz) * deep * deep * live * 0.17;
     col = mix(col, dead, scarT);
     // The rot rim: living ground going grey a few metres before it dies. Value
     // and saturation, not hue -- a violet halo round every scar was the tell.
@@ -1418,7 +1421,7 @@ function Terrain:_scatterMarks(tile, part, parts)
           -- toward soil, because the cold blue of `rock` on green grass read
           -- as a scattering of blueberries.
           local r = 1.8 + rng:next() * 3.4
-          local body = P.mix(P.shade(R.stone, 2.5 + rng:next() * 0.9), R.soil[3], 0.26)
+          local body = P.mix(P.shade(R.stone, 2.4 + rng:next() * 0.9), R.soil[3], 0.16)
           love.graphics.setColor(P.alpha(P.darken(R.soil[1], 0.15), 0.30))
           love.graphics.ellipse("fill", lx + 1.3, ly + 1.1, r, r * 0.7, 6)
           love.graphics.setColor(body)

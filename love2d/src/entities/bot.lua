@@ -236,11 +236,13 @@ function Bot:update_builder(dt)
       VFX.emit("cobalt_pickup", self.x, self.y)
     end
   end
-  if self.actionT <= 0 and self.carry > 0 then
-    -- "half" still walks the escalation curve, so builder-spam is not free
+  local buildCost = self.def.buildCost or 2
+  if self.actionT <= 0 and self.carry >= buildCost then
+    -- Out of its own carry, and nothing out of the player's bank: the cobalt
+    -- it walked over is the cobalt the Planter is made of.
     if self.world and self.world:spawnBot(self.x + self.rng:range(-20, 20),
-                                          self.y + self.rng:range(10, 26), "planter", "half") then
-      self.carry = self.carry - 1
+                                          self.y + self.rng:range(10, 26), "planter", true) then
+      self.carry = self.carry - buildCost
       self.built = self.built + 1
       self.actionT = self.def.buildEvery / (self.world.chips and self.world.chips:get("buildRate", 1) or 1)
       self.squashT = 0.4

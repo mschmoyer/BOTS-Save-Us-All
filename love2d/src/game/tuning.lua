@@ -59,6 +59,12 @@ T.cobalt = {
   nodeMax        = 34,
   nodeFloor      = 14,          -- the island always has this many out there
   chunkValue     = 2,          -- cobalt banked per chunk
+  -- A deposit gives up one chunk at a time, to anybody. The player was
+  -- throttled by T.player.mineEvery and the bots were not throttled at all --
+  -- they called consumeCobaltNear every frame, so a Harvester emptied a
+  -- seven-chunk node in seven frames and deposits evaporated as you walked
+  -- toward them. The rate belongs to the rock, not to who is hitting it.
+  mineEvery      = 0.28,
   driftSpeed     = 460,        -- fly-to-player speed
   magnetRange    = 90,
   startingCobalt = 30,
@@ -81,6 +87,13 @@ T.bots = {
   builder = {
     label = "BUILDER", prefix = "FRAME", cost = 35, hp = 5, radius = 15, speed = 66,
     buildEvery = 14.0, carryStart = 3, carryMax = 6,
+    -- What a Builder spends out of its *own* pockets to make a Planter. It used
+    -- to charge half an escalating price to the player's bank, every fourteen
+    -- seconds, per builder, with no way to see it, dismiss it or turn it off:
+    -- three builders and fifteen planters drained more than a player earns
+    -- standing on a deposit. It says "builds new Planters from cobalt it
+    -- finds", and now that is what it does.
+    buildCost = 1,
     desc = "Builds new Planters from cobalt it finds.",
   },
   repulsor = {
@@ -148,10 +161,17 @@ T.o2 = {
   -- The sky is full when the island is. Islands vary a lot by seed, so this is
   -- derived from plantable land rather than being a constant that some seeds
   -- could never reach: trees-worth of area, clamped so extremes stay sane.
-  fullForest    = 950,          -- fallback when there is no terrain
-  forestPerArea = 1 / 4300,   -- per square unit of land; not all of it is plantable     -- tree-points per square world unit of land
-  forestMin     = 520,
-  forestMax     = 1250,            -- tree-points that read as a fully restored sky
+  -- A full sky was pegged at one tree-point per 4300 square units of land, and
+  -- clamped over a range wide enough that a big island demanded nearly two and
+  -- a half times what a small one did. A forest does not scale with an island
+  -- that way -- the player's time does not -- so the large seeds could not be
+  -- filled and the meter finished in the sixties whatever the player did.
+  -- Traced across three seeds, this lands a thoughtless autoplay run at 81-100%
+  -- rather than 65-96%, which leaves a real player somewhere they can finish.
+  fullForest    = 780,          -- fallback when there is no terrain
+  forestPerArea = 1 / 4900,     -- tree-points per square world unit of plantable land
+  forestMin     = 500,
+  forestMax     = 920,          -- tree-points that read as a fully restored sky
   rise        = 0.42,           -- how fast the reading climbs toward the forest
   fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
   weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 1.5 },
@@ -170,8 +190,13 @@ T.cycle = {
   holdExtra  = 30,
   holdBudget = 1.45,
   nightLen   = { 52, 62, 70, 78, 86, 94, 104 },
-  budget     = { 26, 46, 74, 108, 150, 200, 262 },   -- floor for the night's spend
-  budgetPerTree = 0.28,        -- ...plus this much for every tree you have grown
+  -- The night's spend used to be mostly a function of how big your forest was:
+  -- 0.28 a tree meant every tree you grew bought the Blight more of a night,
+  -- in exact proportion, so growth was self-punishing and loss was
+  -- self-relieving. The pressure is authored per cycle now and the forest term
+  -- is a much smaller reminder that a bigger wood is a longer perimeter.
+  budget     = { 26, 46, 78, 120, 172, 236, 310 },   -- floor for the night's spend
+  budgetPerTree = 0.16,        -- ...plus this much for every tree you have grown
   maxAlive   = { 14, 20, 26, 32, 38, 44, 52 },
   maxAlivePerTree = 0.016,
 }
@@ -199,7 +224,7 @@ T.boss = {
   -- most of it. What the size of your crew changes is not how long the fight is
   -- -- it is how much each individual bot is worth when it goes.
   hpBase       = 1000,
-  hpPerBot     = 6.0,
+  hpPerBot     = 2.0,
   hpFloor      = 620,
   dartResist   = 0.28,         -- seed-darts plink off a rig this size
   -- One point of player damage, against a hull this size. Shove is 1 damage on
@@ -212,9 +237,13 @@ T.boss = {
   -- is a lie to pretend they do; sixty can, and should. This is the curve that
   -- makes the eleven minutes of building before the rig lands *matter* -- a
   -- bigger crew is not more damage per bot, it is less of the fight left to you.
-  rebelShareMin   = 0.42,
-  rebelShareMax   = 0.72,
-  rebelSharePerBot = 0.006,
+  -- Tuned so building the crew visibly *removes work* from the player rather
+  -- than adding hull for them to chew. At thirteen bots the player owes about
+  -- 560 of the rig; at sixty, about 240. Eleven minutes of building used to buy
+  -- a 27% shorter final fight, which is not enough to be worth eleven minutes.
+  rebelShareMin   = 0.34,
+  rebelShareMax   = 0.78,
+  rebelSharePerBot = 0.009,
 
   -- The procession. Cohort size scales with the crew so the rebellion always
   -- takes about the same number of waves, whether you built twelve bots or
@@ -224,11 +253,21 @@ T.boss = {
   -- mercy in the ending, and also the reason there is anybody left standing in
   -- the ring at dawn. Without this the whole crew was always spent and the
   -- last shot of the game was the player alone on a beach.
-  rebelStopAt  = 0.16,         -- hull fraction below which no new cohort leaves
+  -- Low enough that most of the ones who are willing actually get there. At
+  -- 0.16 a crew of forty-five sent thirty of its thirty-eight and the player
+  -- picked up the slack: the measured burden fell only 24% between a crew of
+  -- thirteen and a crew of forty-five, when the whole point of the curve is
+  -- that a big workforce takes the fight off you.
+  rebelStopAt  = 0.07,         -- hull fraction below which no new cohort leaves
   rebelKeep    = 0.15,         -- and this share of the crew never leaves at all
   rebelKeepMin = 3,
   rebelWaves   = 14,
-  rebelCohort  = 2,            -- floor on a wave, for very small crews
+  -- One, so that rebelWaves is the authority on the *shape* of the procession
+  -- at every crew size. At two, a crew of thirteen sent ten bots in five waves
+  -- and was finished forty-six seconds into a hundred-and-fifty second fight:
+  -- the climax was over in the first third and the rest was a solo damage race
+  -- against a bar with nothing left to give.
+  rebelCohort  = 1,
   rebelEvery   = 6.5,
   rebelDelay   = 8.5,
 
@@ -252,8 +291,12 @@ T.boss = {
   -- The rig always takes the same *share* of whatever sky it found, so a run
   -- that reached the deadline at 30% still gets a real fight instead of an
   -- automatic loss.
+  -- Every run gets the same number of seconds, whatever the meter read when
+  -- the rig landed. The old floor did the opposite of what its comment claimed:
+  -- max(45, o2) / 200 gave a run arriving at 100% the full two hundred seconds
+  -- and a run arriving at 22% only ninety-three, so it *shortened* the fight
+  -- for exactly the runs that were already behind.
   extractWindow = 200,         -- seconds from arrival to an empty sky
-  extractFloor  = 45,          -- the sky it pretends to find, if you had less
   beamCharge   = 1.5,
   beamSweep    = 3.2,
   slamEvery    = 6.0,
@@ -275,7 +318,7 @@ T.boss = {
     recoilDecay   = 3.0,    -- 1/s: how fast a landed hit's shudder dies
     recoilHit     = 0.6,    -- shudder added by a hit that lands
     recoilBlock   = 0.4,    -- ...and by one the plates refuse
-    descend       = 620,    -- how far above the canopy the arrival starts
+    descend       = 400,    -- how far above the canopy the arrival starts
     gaitLift      = 0.22,   -- foot lift, in rig radii
     gaitReach     = 0.15,   -- foot swing along the heading, in rig radii
     columnMotes   = 34,
@@ -313,6 +356,30 @@ T.hud = {
   -- No world-anchored overlay may reach into the bottom band, which belongs to
   -- the build bar and, during the extraction, to the boss's health.
   overlayFloor = 168,
+
+  -- The phone layout. On a 6-inch pane held in landscape the two bottom corners
+  -- are under thumbs and the hands that carry them, so the whole "what you have"
+  -- column -- cobalt, forest, crew, integrity and the event feed -- moves into
+  -- the top-left, the feed grows downward out of it instead of upward out of the
+  -- floor, and the right rail carries the clock, the map and the two orders
+  -- nobody gives in a panic.
+  touch = {
+    pad       = 14,    -- grid inset *inside* the safe box
+    colW      = 300,   -- the left column's width, for the chatter keep-out
+    heartGap  = 10,    -- below the resources block
+    heartH    = 44,
+    feedGap   = 10,    -- below the hearts
+    feedMax   = 0.62,  -- the feed may not grow past this fraction of the height
+    dialR     = 29,    -- the cycle dial shrinks: it is a clock, not a feature
+    mapW      = 168,   -- the minimap plate, on the right rail under the clock
+    mapGap    = 14,    -- below the dial
+    holdW     = 260,   -- HOLD THE DAWN moves to the freed bottom-centre band and
+    holdH     = 74,    -- becomes a tap target rather than a key prompt
+    holdUp    = 26,    -- above the bottom safe edge
+    bossUp    = 118,   -- the boss bar's baseline above the bottom safe edge
+    overlayFloor = 214,
+    o2Max     = 400,   -- the oxygen arc never grows past this on a phone
+  },
 
   -- HOLD THE DAWN, under the cycle dial: a decision about the clock, drawn
   -- beside the clock. It is one of the two real decisions in a run, so it gets
@@ -405,7 +472,7 @@ T.touch = {
   -- so it is drawn at the thumb's actual rest position, not in a corner.
   homeX        = 0.235,   -- in from the safe left edge
   homeY        = 0.215,   -- up from the safe bottom edge
-  ghostA       = 0.42,    -- ghost opacity, relative to the layer
+  ghostA       = 0.62,    -- ghost opacity, relative to the layer
   ghostPulse   = 1.1,     -- breaths per second while it is still being taught
   hintMove     = 2.6,     -- seconds of actual stick use before the ghost retires
   hintFade     = 1.6,     -- 1/s it retires at
@@ -416,23 +483,35 @@ T.touch = {
   -- below 180 would fall off the bottom of the phone.
   pivotX       = 0.105,   -- pivot inset from the safe right edge
   pivotY       = 0.020,   -- ... and up from the safe bottom edge
-  arcIn        = 0.288,   -- near arc: the constant verbs
-  arcOut       = 0.452,   -- far arc: the deliberate ones
+  arcIn        = 0.272,   -- near arc: the constant verbs
+  arcOut       = 0.424,   -- far arc: the deliberate ones
   innerAng     = { 187, 226, 265 },
-  outerAng     = { 202, 248 },
+  -- BUILD takes the inboard seat on the far arc: it is the frequent one of the
+  -- two, the thumb reaches it by lying flat rather than stretching up, and its
+  -- wheel blooms into open screen instead of over the map.
+  outerAng     = { 248, 202 },
   btnIn        = 0.067,   -- near-arc button radius
   btnOut       = 0.055,   -- far-arc button radius
   btnRail      = 0.042,   -- right-rail utility button radius
   btnHitPad    = 1.44,    -- invisible hit radius multiplier
   btnSlop      = 2.30,    -- drag this far off a button before it cancels
-  labelGap     = 1.16,    -- caption baseline, in button radii from the centre
-  labelSize    = 0.255,   -- caption size, in button radii
+  -- Glyph and caption both live *inside* the disc. A caption hung underneath a
+  -- button clips on the bottom row of the arc and collides with its neighbour
+  -- on the diagonal, and a landscape phone has neither the height nor the width
+  -- to spare for either.
+  glyphOff     = -0.24,   -- glyph centre, in button radii from the disc centre
+  labelOff     = 0.30,    -- caption top, likewise
+  labelSize    = 0.30,    -- caption size, in button radii
 
   ------------------------------------------------------------------- right rail
   -- Utility verbs nobody presses in a panic: they sit above the thumb arc,
   -- grouped under the map, where reaching for them is a deliberate act.
+  -- The rail stacks down the *inboard* edge of the minimap plate rather than
+  -- under it: under it is where the far arc's top button already is, and two
+  -- controls that nearly touch are two controls a thumb will confuse.
   railGap      = 0.032,   -- between rail buttons
-  railDrop     = 0.026,   -- below the minimap plate
+  railDrop     = 0.030,   -- inboard of the minimap plate
+  railFallback = 0.400,   -- down the right edge, where there is no map to hang off
 
   -------------------------------------------------------------------- build radial
   radialInner  = 0.072,

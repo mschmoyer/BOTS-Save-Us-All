@@ -18,6 +18,8 @@
 --   Audio.rigOpen() / rigStop(hard)   -- bracket the rig's drone
 --   Audio.rigSet(x, y, core, phase, hp)   -- per frame while the rig lives
 --   Audio.rebelCohort(n)              -- a wave of the workforce turns around
+--   Audio.siphonFeeding(x, y)         -- per frame per feeding Siphon
+--   Audio.setSuspended(on)            -- hold the beds silent under a pause
 --
 -- Nothing here assumes an audio device exists: every love.audio call is guarded
 -- so the headless CI run (SDL_AUDIODRIVER=dummy) behaves exactly the same, and
@@ -740,28 +742,66 @@ def("player_hurt", {
   end,
 })
 
--- PLAYER_DOWN -- the suit failing: everything drops an octave, a heartbeat-ish
--- sub thud, and the world muffles (a long lowpass sweep down to almost nothing).
+-- PLAYER_DOWN -- the suit failing.
+--
+-- The idea was always right: everything drops an octave, there is a heartbeat,
+-- and the world muffles. The execution put 70% of the cue below 80 Hz and closed
+-- the lowpass to 260 Hz, so on a phone the player going down -- which costs six
+-- seconds and a quarter of their carried cobalt -- made no sound at all.
+--
+-- The muffling is a *relative* move, not an absolute one: it still closes, but
+-- to 620 Hz, and what it closes over is a new layer that carries the whole
+-- reading in a band that ships. The suit has its own tone, and the tone gives
+-- up: two pulses a hair apart gliding down a minor third and going flat as they
+-- die, in 340-660 Hz. That is the sound of a machine on you failing, and it is
+-- the part you hear on a laptop.
+--
+-- The heartbeat is now two beats, slowing, each with a chest knock on it so it
+-- is heard as well as felt -- and the second is quieter than the first, which is
+-- the only thing in the cue that says which way this is going.
 def("player_down", {
   rate = 11025,
   gain = 0.9, variants = 3, duckMusic = 0.6, duckTime = 2.0, limit = 1,
   build = function(v, n, r)
-    local beat = r:range(0.56, 0.68)
+    local beat = r:range(0.5, 0.6)
+    local al = 640 * ({ 1, 0.94, 1.07 })[v]
+    -- one beat: a knock and a body, used twice
+    local heart = { dur = 0.5, layers = {
+      { osc = "sub", at = 0, amp = 1.5, spec = { dur = 0.12, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.004, curve = 3 }, amp = 1 } },
+        fx = { { "svf", type = "hp", cutoff = 420, q = 0.7 },
+               { "resonate", mix = 0.6, gain = 1.6, modes = wetModes(560) } },
+        normalize = 0.85, trim = false } },
+      { osc = "sine", freq = { from = 116, to = 62, tau = 0.05 },
+        env = { type = "perc", a = 0.002, d = 0.24, curve = 2.2 }, amp = 0.85 },
+    }, fx = { { "svf", type = "hp", cutoff = 54, q = 0.7 } }, normalize = 0.9, trim = false }
     return { dur = 2.7, layers = {
-      { osc = "sine", freq = { from = 190, to = 44, tau = 0.5 },
+      -- the suit's tone giving up
+      { osc = "square", duty = 0.42, freq = { from = al, to = al * 0.52, tau = 1.15 },
+        env = { type = "bp", points = { { 0, 0 }, { 0.02, 0.6 }, { 0.9, 0.44 }, { 1.8, 0.17 },
+                                        { 2.45, 0 } } }, amp = 0.32 },
+      { osc = "square", duty = 0.36, freq = { from = al * 1.008, to = al * 0.5, tau = 1.15 },
+        env = { type = "bp", points = { { 0, 0 }, { 0.03, 0.52 }, { 0.9, 0.4 }, { 1.8, 0.15 },
+                                        { 2.45, 0 } } }, amp = 0.27 },
+      -- the drop: everything an octave down, but landing on 62 rather than 44
+      { osc = "sine", freq = { from = 220, to = 62, tau = 0.5 },
         env = { type = "bp", points = { { 0, 0 }, { 0.015, 1 }, { 0.9, 0.35 }, { 2.4, 0 } } },
-        amp = 0.7 },
-      { osc = "sine", freq = 55, env = { type = "perc", a = 0.005, d = 0.5, curve = 2 }, amp = 0.4 },
-      { osc = "sine", freq = 52, env = { type = "bp", points = { { 0, 0 }, { beat, 0 },
-                                                                 { beat + 0.03, 0.7 },
-                                                                 { beat + 0.35, 0 } } }, amp = 0.4 },
-      { osc = "pink", env = { type = "bp", points = { { 0, 0.5 }, { 0.4, 0.2 }, { 2.4, 0 } } },
+        amp = 0.5 },
+      { osc = "tri", freq = { from = 330, to = 124, tau = 0.5 },
+        env = { type = "bp", points = { { 0, 0 }, { 0.02, 0.5 }, { 1.1, 0.16 }, { 2.4, 0 } } },
         amp = 0.2 },
-      { osc = "square", duty = 0.5, freq = { from = 440 * r:range(0.9, 1.1), to = 110, tau = 0.8 },
-        env = { type = "bp", points = { { 0, 0.2 }, { 1.6, 0.05 }, { 2.4, 0 } } }, amp = 0.12 },
+      -- two beats, slowing and fading
+      { osc = "sub", at = beat, amp = 1.0, spec = heart },
+      { osc = "sub", at = beat + 0.92, amp = 0.62, spec = heart },
+      -- the world going away
+      { osc = "pink", env = { type = "bp", points = { { 0, 0.5 }, { 0.4, 0.22 }, { 2.4, 0 } } },
+        amp = 0.22 },
     }, fx = {
-      { "svf", type = "lp", cutoff = { from = 4000, to = 260, tau = 0.7 }, q = 1 },
-      { "bitcrush", bits = 7, rateDiv = 2 },
+      { "svf", type = "lp", cutoff = { from = 5200, to = 620, tau = 0.7 }, q = 1 },
+      -- kept: the grit is the system failing, and it is the cue's signature.
+      -- 8 bits rather than 7 so it is a fault and not a texture.
+      { "bitcrush", bits = 8, rateDiv = 2 },
+      { "svf", type = "hp", cutoff = 62, q = 0.7 },
       { "reverb", mix = 0.35, room = 0.88, damp = 0.25 },
     }, loudness = 0.17, loudWin = 0.4 }
   end,
@@ -798,21 +838,42 @@ def("enemy_step", {
   end,
 })
 
+-- ENEMY_HURT -- the most frequently heard combat sound in the game, and it was
+-- parked on top of the melody. Its wet formant ran 320-620 Hz and its saw
+-- settled at 90; measured, half its energy sat in 250-800, which is precisely
+-- where the bell and the pluck live (both play an octave over the bed, so the
+-- tune spans about 260 Hz to 2 kHz with its weight at the bottom of that). Forty
+-- of these a minute, each one masking the thing the score is trying to say.
+--
+-- It moves up. The Blight stays wet -- same low-Q detuned resonator family, same
+-- brown noise -- but a *hurt* is a squeal, not a body: the formant now sits at
+-- 760-1320 and there is a hard wet contact on the front mixed hot, so it reads
+-- at low level in a crowd instead of needing volume. That also finally separates
+-- it from enemy_die, which is the low wet burst. The two were nearly the same
+-- sound at two lengths.
 def("enemy_hurt", {
   gain = 0.55, variants = 6, pitchVar = 0.1, limit = 5, minGap = 0.03,
   build = function(v, n, r)
-    local form = r:range(320, 620)
+    local form = r:range(760, 1320)
     local wob = r:range(14, 26)
-    return { dur = 0.32, layers = {
+    return { dur = 0.3, layers = {
+      -- the contact
+      { osc = "sub", at = 0, amp = 1.5, spec = { dur = 0.1, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0025, curve = 3 }, amp = 1 } },
+        fx = { { "svf", type = "hp", cutoff = 1200, q = 0.7 },
+               { "resonate", mix = 0.4, gain = 1.4, modes = wetModes(form * 1.6) } },
+        normalize = 0.9, trim = false } },
       { osc = "saw", freq = function(t)
-          return (380 * math.exp(-t / 0.05) + 90) * (1 + 0.06 * math.sin(t * wob))
+          return (900 * math.exp(-t / 0.05) + 300) * (1 + 0.06 * math.sin(t * wob))
         end,
-        env = { type = "perc", a = 0.001, d = r:range(0.11, 0.19), curve = 2.6 }, amp = 0.4 },
-      { osc = "noise", env = { type = "perc", a = 0.0006, d = 0.05, curve = 4 }, amp = 0.3 },
-      { osc = "brown", env = { type = "perc", a = 0.003, d = 0.13, curve = 2.2 }, amp = 0.28 },
+        env = { type = "perc", a = 0.001, d = r:range(0.09, 0.15), curve = 2.8 }, amp = 0.36 },
+      { osc = "noise", env = { type = "perc", a = 0.0006, d = 0.045, curve = 4 }, amp = 0.28 },
+      { osc = "brown", env = { type = "perc", a = 0.003, d = 0.1, curve = 2.2 }, amp = 0.16 },
     }, fx = {
       { "resonate", mix = 0.62, gain = 1.5, modes = wetModes(form) },
-      { "svf", type = "lp", cutoff = 3600, q = 1 },
+      -- off the melody's floor entirely
+      { "svf", type = "hp", cutoff = 220, q = 0.7 },
+      { "svf", type = "lp", cutoff = 5400, q = 1 },
       { "softclip", drive = 2, mix = 0.6 },
     }, loudness = 0.14, loudWin = 0.15 }
   end,
@@ -927,28 +988,80 @@ def("spit", {
   end,
 })
 
--- SIPHON_DRAIN -- a loop you want to end. Two saws a semitone apart (beating),
--- amplitude-wobbled, through a nasal wet formant with a sub underneath.
--- Crossfade-spliced into a genuine seamless loop: the old one faded in and out
--- every two seconds, so the drone breathed at 0.5 Hz and gave itself away.
+-- SIPHON_DRAIN -- a loop you want to end.
+--
+-- This has existed since the first audio pass and has never once been played:
+-- nothing in the game called it. The Siphon is the only enemy that attacks the
+-- meter rather than the forest -- it floats over the canopy and takes the sky
+-- directly -- and it did it in total silence, which meant the one threat the
+-- player cannot see the effect of on the ground was also the one they could not
+-- hear. Audio.siphonFeeding drives it now; see the bed further down.
+--
+-- Rebuilt as well as wired. It sat at 92 Hz with a 46 Hz sub octave under it,
+-- which put it in the same octave as the score's bass *and* the same territory
+-- as the rig's intake drone -- two "something is taking the air" sounds that
+-- would have been indistinguishable if they had ever played together. The rig
+-- is cold and enormous and low; the Siphon is wet and small and nasal, so it
+-- moves up an octave to 124 Hz with its formant at 900, and the sub octave is
+-- cut to a trace. The band-pass walks upward once a loop: the sky going up the
+-- tube, rather than a generator running.
+--
+-- Built periodic in its 2.0 s loop body (every partial a whole multiple of
+-- 0.5 Hz, no detune) and spliced with the linear crossfade, for the reason
+-- written up on rig_intake.
 def("siphon_drain", {
   rate = 11025,
-  gain = 0.4, variants = 3, loop = true, pitchVar = 0.02,
-  build = function(v, n, r)
-    local base = 92 + v * 3
-    return { dur = 2.6, layers = {
-      { osc = "saw", freq = base, amp = 0.26, detune = -14 },
-      { osc = "saw", freq = base * 1.0595, amp = 0.24, detune = 11 },
-      { osc = "sine", freq = base * 0.5, amp = 0.3 },
+  gain = 0.45, variants = 1, loop = true, pitchVar = 0, gainVar = 0, limit = 1,
+  build = function()
+    local base = 248 / 2                              -- 124 Hz, 248 cycles in the body
+    return { dur = 2.4, layers = {
+      { osc = "saw", freq = base, amp = 0.24 },
+      { osc = "saw", freq = 263 / 2, amp = 0.22 },     -- 131.5, a semitone up: the beat
+      { osc = "sine", freq = base * 0.5, amp = 0.1 },  -- a trace of octave, not a bed
       { osc = "square", duty = 0.2, freq = base * 2,
-        env = function(t) return 0.5 + 0.5 * math.sin(t * 5.5 * 6.2831853) end, amp = 0.1 },
+        env = function(t) return 0.5 + 0.5 * math.sin(t * 5.5 * TAU) end, amp = 0.12 },
       { osc = "brown", amp = 0.12 },
     }, fx = {
-      { "resonate", mix = 0.55, gain = 1.4, modes = wetModes(620) },
-      { "svf", type = "lp", cutoff = 2400, q = 0.8 },
+      { "resonate", mix = 0.55, gain = 1.4, modes = wetModes(900) },
+      -- the tube: one slow sweep upward per loop
+      { "svf", type = "bp",
+        cutoff = function(t) return 780 + 460 * math.sin(t * 0.5 * TAU - 1.5708) end, q = 0.9 },
+      { "svf", type = "hp", cutoff = 78, q = 0.7 },
+      { "svf", type = "lp", cutoff = 3200, q = 0.8 },
       { "softclip", drive = 1.5, mix = 0.5 },
-      { "chorus", mix = 0.25, rate = 0.23 },
-    }, trim = false, loop = true, xfade = 0.6, loudness = 0.12, loudWin = 0.5 }
+    }, trim = false, loop = true, xfade = 0.4, xfadeShape = "lin",
+       loudness = 0.12, loudWin = 0.5 }
+  end,
+})
+
+-- SIPHON_LATCH -- one of them has found a tree and started feeding. The drone
+-- alone is a state; this is the event, and the player needs the event or the
+-- first they know of it is the meter already falling.
+def("siphon_latch", {
+  gain = 0.6, variants = 3, pitchVar = 0.07, limit = 2, minGap = 0.35,
+  build = function(v, n, r)
+    local form = r:range(680, 1050)
+    return { dur = 0.85, layers = {
+      -- the reach: a wet inhale that rises
+      { osc = "brown", env = { type = "bp", points = { { 0, 0 }, { 0.26, 0.7 }, { 0.34, 0.2 },
+                                                       { 0.7, 0 } } }, amp = 0.45 },
+      { osc = "saw", freq = { from = 190, to = 620 * r:range(0.9, 1.15), tau = 0.3,
+                              curve = "lin" },
+        env = { type = "bp", points = { { 0, 0 }, { 0.28, 0.5 }, { 0.34, 0 } } }, amp = 0.2 },
+      -- and the seal
+      { osc = "sub", at = 0.3, amp = 1.2, spec = { dur = 0.5, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0006, d = 0.02, curve = 4 }, amp = 1 },
+        { osc = "sine", freq = { from = 300, to = 96, tau = 0.04 },
+          env = { type = "perc", a = 0.001, d = 0.16, curve = 2.6 }, amp = 0.55 },
+      }, fx = { { "resonate", mix = 0.7, gain = 1.7, modes = wetModes(form) },
+                { "svf", type = "hp", cutoff = 150, q = 0.7 } },
+        normalize = 0.9, trim = false } },
+    }, fx = {
+      { "svf", type = "bp", cutoff = { from = 700, to = 1500, tau = 0.3, curve = "lin" }, q = 1.2 },
+      { "svf", type = "hp", cutoff = 130, q = 0.7 },
+      { "softclip", drive = 1.6, mix = 0.5 },
+      { "reverb", mix = 0.2, room = 0.8 },
+    }, loudness = 0.14, loudWin = 0.2 }
   end,
 })
 
@@ -1900,36 +2013,72 @@ end })
 
 -- Percussion (pitchless, so it lives in the music bank with 3 variants each).
 local PERC = {
-  -- the kick used to be pure sub under a 2.6 kHz lowpass; it now has a beater
-  -- click so it reads as a pulse on a laptop instead of a pressure change
-  kick = { gain = 0.85, rate = 11025, spec = function(r) return { dur = 0.7, layers = {
-    { osc = "sine", freq = { from = 178 * r:range(0.94, 1.07), to = 54, tau = 0.03 },
-      env = { type = "perc", a = 0.001, d = r:range(0.24, 0.34), curve = 1.9 }, amp = 0.85 },
-    { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 0.5 },
-    { osc = "tri", freq = 104, env = { type = "perc", a = 0.001, d = 0.09, curve = 3 }, amp = 0.24 },
+  -- THE KICK, and the reason TRIM.perc was wrong.
+  --
+  -- The note that used to be here said this had a beater click and read as a
+  -- pulse on a laptop rather than a pressure change. Measured, it was 98.2% of
+  -- its energy below 80 Hz: the "click" was three milliseconds of noise against
+  -- a 54 Hz sine ringing for a third of a second, and it came to 2% of the
+  -- total. So the whole kit had to be pulled down 4.7 dB (TRIM.perc = 0.58) to
+  -- stop one inaudible sine eating the headroom -- and the hat, the shaker and
+  -- the tom, which are the parts a laptop actually reproduces, went down with
+  -- it. One layer's fault, paid for by four.
+  --
+  -- Now the sub lands at 64 and stops ringing at 0.2 s, the beater is mixed six
+  -- times hotter and struck through a tight resonance so it has a pitch, and
+  -- there is a shell body around 190 Hz. It is still a kick. It is now a kick
+  -- with a top on it, and TRIM.perc is set from what the kit needs.
+  kick = { gain = 0.85, rate = 11025, spec = function(r) return { dur = 0.5, layers = {
+    { osc = "sine", freq = { from = 190 * r:range(0.94, 1.07), to = 64, tau = 0.028 },
+      env = { type = "perc", a = 0.001, d = r:range(0.16, 0.22), curve = 2.1 }, amp = 0.8 },
+    -- the shell
+    { osc = "tri", freq = { from = 240, to = 158, tau = 0.03 },
+      env = { type = "perc", a = 0.001, d = 0.085, curve = 2.8 }, amp = 0.5 },
+    -- the beater. Mixed several times hotter than looks reasonable on paper,
+    -- for exactly the reason shove_hit's contact is -- see the note there.
+    { osc = "sub", at = 0, amp = 1.9, spec = { dur = 0.14, layers = {
+      { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0035, curve = 3 }, amp = 1 },
+      { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.028, curve = 5 }, amp = 0.24 } },
+      fx = { { "svf", type = "hp", cutoff = 900, q = 0.7 },
+             { "resonate", mix = 0.35, gain = 1.5,
+               modes = { { 1750, 5, 1 }, { 3100, 4, 0.4 } } } },
+      normalize = 0.9, trim = false } },
   }, fx = { { "softclip", drive = 1.7, mix = 0.6 },
-            { "svf", type = "hp", cutoff = 56, q = 0.7 },
-            { "svf", type = "lp", cutoff = 4200, q = 0.8 } },
-    normalize = 0.85, trim = false } end },
+            { "svf", type = "hp", cutoff = 46, q = 0.7 },
+            { "svf", type = "lp", cutoff = 6200, q = 0.8 } },
+    -- loudness-matched, like the rest of the bank. Peak-normalising a drum is
+    -- self-defeating: the beater is the tallest sample in the buffer, so it eats
+    -- the entire scaling headroom and pushes the shell and the body down with
+    -- it -- the click gets louder and the drum gets quieter. Matching RMS and
+    -- letting the limiter catch the transient is what every other sound here
+    -- does, and it is why the four kit pieces can share one TRIM.
+    loudness = 0.19, loudWin = 0.14, ceiling = 0.96, trim = false } end },
   hat = { gain = 0.3, spec = function(r) return { dur = 0.28, layers = {
     { osc = "noise", env = { type = "perc", a = 0.0004, d = r:range(0.025, 0.1), curve = 4 },
       amp = 0.5 } },
     fx = { { "svf", type = "hp", cutoff = r:range(4600, 6400), q = 1.1 },
            { "resonate", mix = 0.25, gain = 1.2, modes = glassModes(r:range(7000, 9000)) } },
-    normalize = 0.6, trim = false } end },
+    loudness = 0.085, loudWin = 0.06, trim = false } end },
   shaker = { gain = 0.3, spec = function(r) return { dur = 0.32, layers = {
     { osc = "pink", env = { type = "bp", points = { { 0, 0 }, { r:range(0.008, 0.02), 1 },
                                                     { r:range(0.07, 0.14), 0 } } }, amp = 0.5 } },
     fx = { { "svf", type = "bp", cutoff = r:range(3400, 5400), q = 1.4 } },
-    normalize = 0.55, trim = false } end },
+    loudness = 0.085, loudWin = 0.06, trim = false } end },
   tom = { gain = 0.55, rate = 11025, spec = function(r) return { dur = 0.6, layers = {
     { osc = "sine", freq = { from = 210 * r:range(0.85, 1.2), to = 82, tau = r:range(0.06, 0.13) },
       env = { type = "perc", a = 0.001, d = r:range(0.28, 0.42), curve = 2 }, amp = 0.8 },
+    -- a stick, so a fill is heard and not only felt. 99.9% of this sat in one
+    -- octave at 80-250 Hz and the only thing above it was 50 ms of hiss.
+    { osc = "sub", at = 0, amp = 1.1, spec = { dur = 0.1, layers = {
+      { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 1 } },
+      fx = { { "svf", type = "hp", cutoff = 1100, q = 0.7 },
+             { "resonate", mix = 0.4, gain = 1.4, modes = { { 2100, 6, 1 }, { 3600, 5, 0.35 } } } },
+      normalize = 0.85, trim = false } },
     { osc = "noise", env = { type = "perc", a = 0.001, d = 0.05, curve = 4 }, amp = 0.16 },
-  }, fx = { { "svf", type = "lp", cutoff = 3400, q = 0.9 },
-            { "svf", type = "hp", cutoff = 55, q = 0.7 },
+  }, fx = { { "svf", type = "lp", cutoff = 4600, q = 0.9 },
+            { "svf", type = "hp", cutoff = 62, q = 0.7 },
             { "reverb", mix = 0.18 } },
-    normalize = 0.8, trim = false } end },
+    loudness = 0.165, loudWin = 0.14, ceiling = 0.96, trim = false } end },
 }
 
 --------------------------------------------------------------------- loading
@@ -2288,6 +2437,7 @@ function Audio.stopAll()
   for i = #Audio.voices, 1, -1 do Audio.killVoice(i) end
   Audio.clearScheduled()
   if Audio.rigStop then Audio.rigStop(true) end
+  if Audio.siphonStop then Audio.siphonStop() end
 end
 
 function Audio.isPlaying(name)
@@ -2425,9 +2575,25 @@ end
 
 function Audio.rigActive() return RIG.on end
 
---- Keep one of the bed's looping voices at the right level and bearing. Returns
+------------------------------------------------------------------- shared bed
+-- Two things in this game make a continuous noise that has to follow a position
+-- and cannot be allowed to outlive whatever is making it: the extraction rig,
+-- and the Siphons draining the sky. Both are driven the same way -- a heartbeat
+-- from the entity, a watchdog here -- so the two pieces they share live here.
+
+--- Distance falloff and bearing for a bed at a world position. Beds never fully
+--- disappear (`floor`): both of the things that use this are attacking something
+--- the player cares about from somewhere they may not be standing.
+local function bedPlace(x, y, near, far, floor)
+  local dx = x - listener.x
+  local d = U.len(dx, y - listener.y)
+  local n = 1 - U.smoothstep(near, far, d)
+  return floor + (1 - floor) * n, U.clamp(dx / (PAN_WIDTH * 1.6), -1, 1), n
+end
+
+--- Keep one of a bed's looping voices at the right level and bearing. Returns
 --- nil if the voice was taken (Audio.stopAll), so the caller re-acquires it.
-local function rigVoice(v, gain, pan)
+local function bedVoice(v, gain, pan)
   if not v or v.dead then return nil end
   v.gain = gain
   v.pan = pan
@@ -2439,18 +2605,36 @@ local function rigVoice(v, gain, pan)
   return v
 end
 
+-- Suspended: the pause menu does not tick the game scene, so nothing calls
+-- Audio.update and a bed's watchdog never runs. Left alone, a paused game keeps
+-- the rig's drone playing at whatever level it was at. This mutes the beds
+-- without tearing them down, so unpausing puts them back exactly as they were.
+local suspended = false
+
+--- Hold the beds silent (and the watchdogs frozen) without releasing them.
+function Audio.setSuspended(on)
+  on = on and true or false
+  if on == suspended then return end
+  suspended = on
+  if on then
+    for i = 1, #Audio.voices do
+      local v = Audio.voices[i]
+      if v.loop and v.src then safe(v.src.setVolume, v.src, 0) end
+    end
+  end
+end
+
+function Audio.isSuspended() return suspended end
+
 local function updateRig(dt)
   if not RIG.on then return end
   RIG.silence = RIG.silence + dt
   local want = (RIG.stopping or RIG.silence > 0.55) and 0 or 1
 
-  local dx = RIG.x - listener.x
-  local dist = U.len(dx, RIG.y - listener.y)
-  local near = 1 - U.smoothstep(RIG_NEAR, RIG_FAR, dist)
-  local pan = U.clamp(dx / (PAN_WIDTH * 1.6), -1, 1)
+  local place, pan, near = bedPlace(RIG.x, RIG.y, RIG_NEAR, RIG_FAR, RIG_FLOOR)
 
   -- the bed itself, and a little extra rasp as the hull fails
-  local g = want * (RIG_FLOOR + (1 - RIG_FLOOR) * near) * (0.88 + 0.12 * (1 - RIG.hp))
+  local g = want * place * (0.88 + 0.12 * (1 - RIG.hp))
   RIG.level = RIG.level + (g - RIG.level) * min(1, dt * (want > 0 and 1.6 or 2.8))
   -- the core reads as something *inside* the machine, so it is more directional
   local cg = want * RIG.core * (0.45 + 0.55 * near)
@@ -2464,8 +2648,8 @@ local function updateRig(dt)
       RIG.coreV = Audio.play("rig_core", { volume = 0.0015, loop = true, pan = pan })
     end
   end
-  RIG.intake = rigVoice(RIG.intake, RIG.level * 0.92, pan * 0.55)
-  RIG.coreV  = rigVoice(RIG.coreV,  RIG.coreLevel,    pan * 0.4)
+  RIG.intake = bedVoice(RIG.intake, RIG.level * 0.92, pan * 0.55)
+  RIG.coreV  = bedVoice(RIG.coreV,  RIG.coreLevel,    pan * 0.4)
 
   if want <= 0 and RIG.level < 0.006 then
     if RIG.intake then Audio.stop(RIG.intake) end
@@ -2485,6 +2669,86 @@ local function updateRig(dt)
         Audio.play("rig_creak", { volume = 0.5 + 0.5 * RIG.level, pan = pan * 0.7 })
       end
     end
+  end
+end
+
+---------------------------------------------------------------- the siphons
+-- The Siphon attacks the O2 meter directly and there may be several of them at
+-- once. Six loops for six Siphons would be six voices and a mush, so this is an
+-- *aggregate*: one drone, pinned to the nearest one that is actually feeding,
+-- thickening as more of them latch on. What the player needs to know is "the sky
+-- is being taken, and roughly from over there", not which of six is doing it.
+--
+-- Driven exactly like the rig bed: each feeding Siphon reports itself once per
+-- frame and the watchdog does the rest, so nothing has to remember to stop it
+-- when one dies, gets shoved off, or the night simply ends.
+local SIPH = {
+  on = false, count = 0, x = 0, y = 0, level = 0, silence = 0, voice = nil,
+  latchT = 0, pendN = 0, pendD = 1e9, pendX = 0, pendY = 0,
+}
+local SIPH_NEAR, SIPH_FAR, SIPH_FLOOR = 260, 2000, 0.22
+
+--- One Siphon, feeding, this frame. Call once per frame per feeding Siphon;
+--- allocation-free, and the order they arrive in does not matter.
+function Audio.siphonFeeding(x, y)
+  if not Audio.loaded then return end
+  SIPH.pendN = SIPH.pendN + 1
+  local d = U.len((x or 0) - listener.x, (y or 0) - listener.y)
+  if d < SIPH.pendD then
+    SIPH.pendD, SIPH.pendX, SIPH.pendY = d, x or 0, y or 0
+  end
+end
+
+--- Drop the drone now (a scene switch, where nothing will tick the watchdog).
+function Audio.siphonStop()
+  if SIPH.voice then Audio.stop(SIPH.voice) end
+  SIPH.voice, SIPH.on, SIPH.count, SIPH.level = nil, false, 0, 0
+  SIPH.pendN, SIPH.pendD = 0, 1e9
+end
+
+function Audio.siphonCount() return SIPH.on and SIPH.count or 0 end
+
+local function updateSiphon(dt)
+  local n = SIPH.pendN
+  if n > 0 then
+    SIPH.x, SIPH.y = SIPH.pendX, SIPH.pendY
+    SIPH.silence = 0
+    if not SIPH.on then
+      SIPH.on = true
+      SIPH.level = 0
+      SIPH.latchT = 0.7
+      Audio.play("siphon_latch", { x = SIPH.x, y = SIPH.y })
+    elseif n > SIPH.count and SIPH.latchT <= 0 then
+      -- another one has found a tree: the event, over the state. Feeding is a
+      -- hard distance test on the Siphon's side, so one hovering on the boundary
+      -- can flicker in and out frame to frame; the cooldown stops that turning
+      -- into a stutter of latches.
+      SIPH.latchT = 0.7
+      Audio.play("siphon_latch", { x = SIPH.x, y = SIPH.y, volume = 0.7 })
+    end
+    SIPH.count = n
+  end
+  SIPH.pendN, SIPH.pendD = 0, 1e9
+  if not SIPH.on then return end
+
+  SIPH.latchT = max(0, SIPH.latchT - dt)
+  SIPH.silence = SIPH.silence + dt
+  local want = (SIPH.silence > 0.35) and 0 or 1
+  local place, pan = bedPlace(SIPH.x, SIPH.y, SIPH_NEAR, SIPH_FAR, SIPH_FLOOR)
+  -- more of them is thicker, with diminishing returns: two Siphons is worse than
+  -- one and five is not five times worse than one, it is just steadier
+  local thick = 1 - 0.55 ^ max(1, SIPH.count)
+  local g = want * place * (0.5 + 0.62 * thick)
+  SIPH.level = SIPH.level + (g - SIPH.level) * min(1, dt * (want > 0 and 2.2 or 3.2))
+
+  if want > 0 and not SIPH.voice then
+    SIPH.voice = Audio.play("siphon_drain", { volume = 0.0015, loop = true, pan = pan })
+  end
+  SIPH.voice = bedVoice(SIPH.voice, SIPH.level, pan * 0.6)
+
+  if want <= 0 and SIPH.level < 0.006 then
+    if SIPH.voice then Audio.stop(SIPH.voice) end
+    SIPH.voice, SIPH.on, SIPH.count = nil, false, 0
   end
 end
 
@@ -2531,7 +2795,10 @@ function Audio.update(dt, lx, ly)
                    min(1, dt * (dialogue.on and 6 or 2.5))
 
   updateSched(dt)
-  updateRig(dt)
+  if not suspended then
+    updateRig(dt)
+    updateSiphon(dt)
+  end
 
   for _, m in pairs(meters) do m.rms = 0 m.voices = 0 end
   local mm = meters.master
@@ -2552,7 +2819,7 @@ function Audio.update(dt, lx, ly)
       mm.voices = mm.voices + 1
       -- keep live voices tracking bus/duck changes
       if v.src and (v.loop or v.bus == "music" or dialogue.level > 0.01) then
-        safe(v.src.setVolume, v.src, U.saturate(v.gain * bg))
+        safe(v.src.setVolume, v.src, suspended and v.loop and 0 or U.saturate(v.gain * bg))
       end
     end
   end

@@ -58,9 +58,66 @@ local function itos(n)
   return s
 end
 
-local function costOf(def, world)
+--- What a bot costs *now*.
+---
+--- This used to apply the cost-cutting chips and nothing else, which meant the
+--- one number the whole economy turns on was a lie everywhere it was printed.
+--- `World:botCost` is the real rule: the price of a type climbs by `costGrowth`
+--- for every one of that type already standing, capped at `costGrowthMax`. At
+--- cycle five with eighteen bots alive the bar read PLANTER 10 for a planter
+--- that cost 41 -- and, worse, `afford` was computed from the fake figure, so a
+--- slot lit up as buyable and then the world refused it. Ask the world.
+local function costOf(id, def, world)
+  if world and world.botCost then
+    local ok, v = pcall(world.botCost, world, id)
+    if ok and type(v) == "number" then return v end
+  end
   local mul = (world and world.chips and world.chips.get) and world.chips:get("botCost", 1) or 1
   return math.ceil(def.cost * mul)
+end
+
+--- Published for engine/touch.lua, whose radial is the only build UI a phone
+--- has and must quote the same price as everything else.
+function BuildMenu.cost(id)
+  local def = TU.bots[id]
+  if not def then return 0 end
+  return costOf(id, def, BuildMenu.world)
+end
+
+--- The sticker price, for the strike-through. The escalation is, by its own
+--- note in tuning.lua, "what stops a runaway workforce, and why the cost-cutting
+--- chips matter" -- and until now the player had no way at all to discover it.
+--- Every place a price is printed prints the old one beside it, struck.
+function BuildMenu.basePrice(id)
+  local def = TU.bots[id]
+  return def and def.cost or 0
+end
+
+--- One price, drawn once, in the one visual grammar: a cobalt shard, the live
+--- figure, and -- only when the world has raised it -- the sticker price struck
+--- through, small and dim, ahead of it. Returns the total width drawn.
+--- `x` is the left edge; `size` the numeral size.
+local function drawPrice(x, y, id, def, world, afford, a, size)
+  local cost = costOf(id, def, world)
+  local base = def.cost
+  local w = 0
+  if cost > base then
+    local bs = size * 0.78
+    local bw = Text.measure(itos(base), bs, nil)
+    UI.text(itos(base), x, y + (size - bs) * 0.5, bs,
+            UI.c(P.inkFaint, (afford and 0.85 or 0.6) * a), "left", a, 0.02)
+    Draw.setColor(UI.c(P.inkFaint, (afford and 0.85 or 0.6) * a))
+    lg.setLineWidth(1)
+    local sy = y + (size - bs) * 0.5 + bs * 0.52
+    lg.line(x - 1, sy, x + bw + 1, sy)
+    w = bw + 7
+  end
+  Draw.setColor(UI.c(afford and P.ramp.cobalt[3] or P.inkFaint, (afford and 1 or 0.6) * a))
+  Draw.diamond(x + w + 4, y + size * 0.5, size * 0.26, size * 0.34, "fill")
+  local col = afford and P.ramp.cobalt[4] or P.ramp.cobalt[3]
+  local cw = UI.text(itos(cost), x + w + 12, y, size,
+                     UI.c(col, (afford and 1 or 0.7) * a), "left", a, 0.02)
+  return w + 12 + cw
 end
 
 --- The radius the bot actually works over, so the ghost tells the truth.
@@ -227,7 +284,7 @@ end
 local function drawSlot(i, x, y, w, h, world, a)
   local id = ORDER[i]
   local def = TU.bots[id]
-  local cost = costOf(def, world)
+  local cost = costOf(id, def, world)
   local have = world and world.cobalt or 0
   local afford = have >= cost
   local progress = cost > 0 and U.saturate(have / cost) or 1
@@ -286,14 +343,16 @@ local function drawSlot(i, x, y, w, h, world, a)
   -- *not* red: six red numerals along the bottom of the screen the moment you
   -- go broke shouts as loudly as taking damage does, and the eye cannot tell
   -- the two apart mid-fight. Red here belongs to the refusal shake alone.
-  local costCol = deny > 0.02 and P.danger
-                  or (afford and P.ramp.cobalt[4] or P.ramp.cobalt[3])
+  --
+  -- When the world has raised the price, the sticker price is struck through
+  -- ahead of it. That is the whole of the escalation rule's teaching: the
+  -- number the player memorised on cycle one, visibly crossed out, next to what
+  -- it costs now. Nothing else in the game had ever said it.
   local cw = Text.measure(itos(cost), UI.ts.small, nil)
-  local cxx = x + w * 0.5 - (cw + 13) * 0.5
-  Draw.setColor(UI.c(afford and P.ramp.cobalt[3] or P.inkFaint, (afford and 1 or 0.6) * a))
-  Draw.diamond(cxx + 4, costTop + 8, 3.2, 4.2, "fill")
-  UI.text(itos(cost), cxx + 12, costTop, UI.ts.small,
-          UI.c(costCol, (afford and 1 or 0.7) * a), "left", a, 0.02)
+  local bw2 = (cost > def.cost)
+              and (Text.measure(itos(def.cost), UI.ts.small * 0.78, nil) + 7) or 0
+  local cxx = x + w * 0.5 - (cw + 13 + bw2) * 0.5
+  drawPrice(cxx, costTop, id, def, world, afford and deny <= 0.02, a, UI.ts.small)
 
   -- the bottom edge: an accent underline when you can build it, a cobalt
   -- progress sliver when you cannot
@@ -316,7 +375,13 @@ local function drawSlot(i, x, y, w, h, world, a)
   return ka
 end
 
+--- The bar is a keyboard and a mouse's way in. Touch has its own -- the radial
+--- that blooms out of the BUILD button under the thumb -- and drawing both is
+--- the same affordance twice, in a band a 545 px-tall phone cannot spare. So on
+--- touch there is no bar; the wheel is the whole build UI, and `drawTouchGhost`
+--- below gives it the one thing it was missing.
 function BuildMenu.drawBar(a)
+  if Input.scheme == "touch" then return end
   local world = BuildMenu.world
   a = (a or 1) * BuildMenu.barAlpha * (1 - BuildMenu.open * 0.75) * (BuildMenu.lockFade or 1)
   if a <= 0.01 then return end
@@ -343,7 +408,7 @@ local function drawGhost(a)
   local sx, sy = cam:toScreen(wx, wy)
   local z = cam.zoom or 1
   local pulse = 0.6 + 0.4 * sin(BuildMenu.time * 4)
-  local afford = (w.cobalt or 0) >= costOf(def, w)
+  local afford = (w.cobalt or 0) >= costOf(id, def, w)
   local col = afford and P.accent or P.danger
 
   -- working radius
@@ -387,7 +452,7 @@ function BuildMenu.drawWheel(a)
   for i = 1, N do
     local id = ORDER[i]
     local def = TU.bots[id]
-    local cost = costOf(def, world)
+    local cost = costOf(id, def, world)
     local afford = (world and world.cobalt or 0) >= cost
     local hov = hoverK[i]
     local a0 = -pi * 0.5 + (i - 1) * step - step * 0.5 + 0.028
@@ -414,9 +479,20 @@ function BuildMenu.drawWheel(a)
     HUD.botGlyph(id, gx, gy, 17 + hov * 3,
                  afford and P.ramp.metal[3] or P.inkFaint, (afford and 1 or 0.4) * aa)
 
-    -- cost, outboard of the glyph
+    -- cost, outboard of the glyph -- with the sticker price struck above it
+    -- when the world has raised it, exactly as the bar shows it
     local kx = cx + cos(mid) * (ro - 17)
     local ky = cy + sin(mid) * (ro - 17)
+    if cost > def.cost then
+      local bs = UI.ts.micro
+      local bw3 = Text.measure(itos(def.cost), bs, nil)
+      UI.text(itos(def.cost), kx, ky - UI.ts.small * 0.5 - bs - 2, bs,
+              UI.c(P.inkFaint, 0.85 * aa), "center", aa, 0.02)
+      Draw.setColor(UI.c(P.inkFaint, 0.85 * aa))
+      lg.setLineWidth(1)
+      local sy = ky - UI.ts.small * 0.5 - bs - 2 + bs * 0.52
+      lg.line(kx - bw3 * 0.5 - 1, sy, kx + bw3 * 0.5 + 1, sy)
+    end
     UI.text(itos(cost), kx, ky - UI.ts.small * 0.5, UI.ts.small,
             UI.c(afford and P.ramp.cobalt[4] or P.danger, (afford and 1 or 0.6) * aa),
             "center", aa, 0.02)
@@ -461,13 +537,19 @@ function BuildMenu.drawWheel(a)
     UI.panel(px, py, pw, ph, 0.72 * pa2, UI.r, P.accent, 0.2 * pa2)
     UI.text(def.label, px + 20, py + 14, UI.ts.h3, UI.c(P.ink, pa2), "left", pa2, 0.1)
     local lw = Text.measure(def.label, UI.ts.h3, nil)
-    local cost = costOf(def, BuildMenu.world)
+    local cost = costOf(id, def, BuildMenu.world)
     local afford = (BuildMenu.world and BuildMenu.world.cobalt or 0) >= cost
     Draw.setColor(UI.c(afford and P.ramp.cobalt[3] or P.danger, pa2))
     Draw.diamond(px + 20 + lw + 20, py + 24, 4.5, 6, "fill")
     UI.text(itos(cost), px + 20 + lw + 32, py + 14, UI.ts.h4,
             UI.c(afford and P.ramp.cobalt[4] or P.danger, pa2), "left", pa2, 0.02)
     UI.body(def.desc, px + 21, py + 42, UI.bs.base, UI.c(P.inkDim, 0.92 * pa2), pw - 42)
+    if cost > def.cost then
+      -- The plate is the only place in the interface with room for a sentence,
+      -- so it is where the escalation gets explained rather than merely shown.
+      UI.caption("EACH ONE MAKES THE NEXT DEARER", px + 21, py + ph - 20, UI.ts.micro,
+                 UI.c(P.ramp.cobalt[3], 0.9 * pa2), "left", nil, 1)
+    end
     if not afford then
       UI.caption("NOT ENOUGH COBALT", px + pw - 20, py + 14, UI.ts.micro,
                  UI.c(P.danger, pa2), "right", nil, 1)
@@ -475,6 +557,24 @@ function BuildMenu.drawWheel(a)
     UI.prompt(px + pw - 20, py + ph - 20, "radial", "RELEASE TO PLACE", UI.ts.micro,
               P.inkDim, 0.85 * pa2, "right")
   end
+end
+
+--------------------------------------------------------- the touch wheel's ghost
+--- engine/touch.lua draws its own radial -- thumb-anchored, because on a phone
+--- the menu has to open where the finger already is. What it cannot draw is
+--- this: the bot previewed at world scale, on the ground it would actually
+--- stand on, with the radius it would actually work over. That preview is the
+--- best thing about the desktop wheel and there is no reason a phone should go
+--- without it, so the touch layer's selection is read here and drawn in the
+--- right place in the draw order -- under the HUD, under the wheel itself.
+local function drawTouchGhost(a)
+  local T = package.loaded["src.engine.touch"]
+  local r = T and T.radial
+  if not r or (r.fade or 0) <= 0.02 then return end
+  local sel = (r.sel and r.sel > 0) and r.sel or r.last
+  if not sel or sel < 1 or sel > N then return end
+  BuildMenu.sel = sel
+  drawGhost(a * U.saturate(r.fade * 1.4))
 end
 
 ----------------------------------------------------------------------- draw
@@ -496,6 +596,7 @@ function BuildMenu.draw(cam, a)
   local prev = lg.getLineWidth()
   BuildMenu.drawBar(a)
   BuildMenu.drawWheel(a)
+  if Input.scheme == "touch" then drawTouchGhost(a) end
   lg.setLineWidth(prev)
   lg.setColor(1, 1, 1, 1)
 end

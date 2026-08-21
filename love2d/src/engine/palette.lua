@@ -32,7 +32,7 @@ P.ramp = {
   -- standing cliff face needs a ramp that *warms* as it rises, or the sun has
   -- nothing to land on and the whole headland reads as slate. Lower in value
   -- than `rock` too, so a spine does not glow through a night grade.
-  stone  = { hex "#15161a", hex "#2f3134", hex "#55534e", hex "#8a8375" },
+  stone  = { hex "#15171b", hex "#2d2f33", hex "#4e4f50", hex "#7b7a74" },
   water  = { hex "#031321", hex "#093c5b", hex "#0f86a3", hex "#a9f0f2" },
   bark   = { hex "#26170f", hex "#412b1a", hex "#634427", hex "#8c6339" },
   leaf   = { hex "#0f3a2a", hex "#1d7047", hex "#37a95a", hex "#6ed861" },

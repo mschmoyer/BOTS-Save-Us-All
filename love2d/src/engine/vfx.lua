@@ -1265,44 +1265,52 @@ local function buildBatches()
   local invCell = 1 / (CELL * 0.9)
   for i = 1, alive do
     local p = parts[i]
-    local e = p.e
-    local t = p.age / p.life
-    if t > 1 then t = 1 end
-    local cr, cg, cb, ca = evalColor(e.colors, e.nCol, t)
-    local a = ca * e.alFn(t) * p.ta
-    if e.pulse > 0 then
-      local s = sin(now * e.pulseFreq * TAU + p.seed * TAU)
-      a = a * (1 - e.pulse + e.pulse * s * s)
-    end
-    if a > 0.002 and
-       (not cullOn or (p.kind ~= KIND_SPR) or
-        (p.x > cullX0 and p.x < cullX1 and p.y > cullY0 and p.y < cullY1)) then
-      p.ca = a
-      p.cr, p.cg, p.cb = cr * p.tr, cg * p.tg, cb * p.tb
-      if p.kind == KIND_SPR then
-        local sz = p.sz * e.szFn(t)
-        if sz > 0.05 then
-          local sx = sz * invCell
-          local sy = sx
-          if e.stretch > 0 then
-            local sp = sqrt(p.vx * p.vx + p.vy * p.vy)
-            sx = sx * (1 + sp * e.stretch)
+    -- Cull FIRST. Off-screen sprites used to walk a colour ramp, evaluate an
+    -- alpha curve and a pulse before being thrown away; on a big island most of
+    -- the pool is off-screen most of the time, and none of that work was ever
+    -- going to reach a pixel.
+    local kind = p.kind
+    if cullOn and kind == KIND_SPR
+       and (p.x <= cullX0 or p.x >= cullX1 or p.y <= cullY0 or p.y >= cullY1) then
+      culled = culled + 1
+    else
+      local e = p.e
+      local t = p.age / p.life
+      if t > 1 then t = 1 end
+      local cr, cg, cb, ca = evalColor(e.colors, e.nCol, t)
+      local a = ca * e.alFn(t) * p.ta
+      if e.pulse > 0 then
+        local s = sin(now * e.pulseFreq * TAU + p.seed * TAU)
+        a = a * (1 - e.pulse + e.pulse * s * s)
+      end
+      if a > 0.002 then
+        p.ca = a
+        p.cr, p.cg, p.cb = cr * p.tr, cg * p.tg, cb * p.tb
+        if kind == KIND_SPR then
+          local sz = p.sz * e.szFn(t)
+          if sz > 0.05 then
+            local sx = sz * invCell
+            local sy = sx
+            if e.stretch > 0 then
+              local sp = sqrt(p.vx * p.vx + p.vy * p.vy)
+              sx = sx * (1 + sp * e.stretch)
+            end
+            if e.tumble > 0 then
+              sy = sy * (0.25 + 0.75 * abs(cos(now * e.tumble + p.seed * TAU)))
+            end
+            local b = batches[e.li][e.bi]
+            b:setColor(p.cr, p.cg, p.cb, a)
+            b:add(quads[e.quad], p.x, p.y, p.rot, sx, sy, half, half)
           end
-          if e.tumble > 0 then
-            sy = sy * (0.25 + 0.75 * abs(cos(now * e.tumble + p.seed * TAU)))
-          end
-          local b = batches[e.li][e.bi]
-          b:setColor(p.cr, p.cg, p.cb, a)
-          b:add(quads[e.quad], p.x, p.y, p.rot, sx, sy, half, half)
+        else
+          local g = geo[e.li][e.bi]
+          local n = g.n + 1
+          g.n = n
+          g[n] = p
         end
       else
-        local g = geo[e.li][e.bi]
-        local n = g.n + 1
-        g.n = n
-        g[n] = p
+        culled = culled + 1
       end
-    else
-      culled = culled + 1
     end
   end
   VFX.stats.culled = culled

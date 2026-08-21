@@ -308,7 +308,9 @@ function Game:telemetry(dt)
   local w = self.world
   if not self.telemetryHeader then
     self.telemetryHeader = true
-    print("TRACE,t,cycle,phase,pt,pd,trees,mature,elders,bots,blight,o2,cobalt,nodes,boss,planted,lost,botsLost")
+    print(string.format("FOREST,fullForest=%.0f,landArea=%.0f",
+      w.fullForest or 0, (w.terrain and w.terrain.landArea) or 0))
+    print("TRACE,t,cycle,phase,pt,pd,trees,mature,elders,bots,blight,o2,cobalt,nodes,boss,planted,lost,botsLost,points")
   end
   local nodes = 0
   for i = 1, #w.cobalts do if w.cobalts[i].node then nodes = nodes + 1 end end
@@ -321,7 +323,8 @@ function Game:telemetry(dt)
       (function() local n = 0 for i = 1, #w.bots do
          if w.bots[i].state == "rebel" then n = n + 1 end end return n end)(),
       tostring(w.botsRebelled)) or "-",
-    w.stats.planted, w.stats.lost, w.stats.botsLost))
+    w.stats.planted, w.stats.lost, w.stats.botsLost) .. "," ..
+    string.format("%.0f", w.forestPoints or 0))
 
 end
 

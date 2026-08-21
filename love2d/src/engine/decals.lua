@@ -80,14 +80,19 @@ STAMP.scorch = function(x, y, r, ang, a)
 end
 
 STAMP.blight_stain = function(x, y, r, ang, a)
+  -- A bruise, not a sweet. The stain is carried by the two near-neutral stops
+  -- of the ramp; the hot stop is a bead at the centre and never a magenta haze
+  -- the width of the whole mark, which is what it used to be.
   for i = 1, 5 do
     local an, d = random() * TAU, r * 0.4 * random()
-    pre(P.mix(R.blight[1], R.blight[2], random() * 0.8), a * 0.30)
+    pre(P.mix(R.blight[1], R.blight[2], random() * 0.8), a * 0.32)
     blob("blob", x + cos(an) * d, y + sin(an) * d, r * (0.5 + 0.55 * random()),
          random() * TAU, 0.75 + 0.5 * random())
   end
-  pre(R.blight[3], a * 0.16)
+  pre(R.blight[2], a * 0.18)
   blob("smoke", x, y, r * 0.8, random() * TAU)
+  pre(R.blight[3], a * 0.20)
+  blob("blob", x, y, r * 0.16, random() * TAU)
 end
 
 STAMP.acid_stain = function(x, y, r, ang, a)
@@ -308,10 +313,13 @@ function D.draw(cam)
   local inv = 1 / CFG.res
   if cam and cam.viewRect then
     local vx, vy, vw, vh = cam:viewRect(48)
-    local x0 = U.clamp((vx - ox) * CFG.res, 0, cw)
-    local y0 = U.clamp((vy - oy) * CFG.res, 0, ch)
-    local x1 = U.clamp((vx + vw - ox) * CFG.res, 0, cw)
-    local y1 = U.clamp((vy + vh - oy) * CFG.res, 0, ch)
+    -- Snap the blit to whole canvas texels. On a fractional viewport the
+    -- half-resolution canvas is resampled off-centre every frame and the whole
+    -- decal layer crawls and softens as the camera moves.
+    local x0 = floor(U.clamp((vx - ox) * CFG.res, 0, cw))
+    local y0 = floor(U.clamp((vy - oy) * CFG.res, 0, ch))
+    local x1 = math.ceil(U.clamp((vx + vw - ox) * CFG.res, 0, cw))
+    local y1 = math.ceil(U.clamp((vy + vh - oy) * CFG.res, 0, ch))
     if x1 - x0 > 0.5 and y1 - y0 > 0.5 then
       quad:setViewport(x0, y0, x1 - x0, y1 - y0, cw, ch)
       g.draw(canvas, quad, ox + x0 * inv, oy + y0 * inv, 0, inv, inv)
