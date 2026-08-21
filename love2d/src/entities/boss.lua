@@ -20,8 +20,16 @@ function Boss:init(x, y, world, botCount)
   self.kind   = "boss"
   self.world  = world
   self.radius = 62
-  self.maxHp  = math.floor(math.max(T.hpFloor, botCount * T.hpPerBot))
+  self.maxHp  = math.floor(math.max(T.hpFloor, T.hpBase + (botCount or 0) * T.hpPerBot))
   self.hp     = self.maxHp
+  -- The rig sits in the enemy hash, so every chip that reads an enemy reads
+  -- these: BRITTLE wants a stun timer, PIN BREAKER wants a definition table.
+  -- Nothing staggers a thing this size, and it has no armour flag -- but the
+  -- fields have to exist or owning either chip crashes the climax.
+  self.stun   = 0
+  self.def    = { armoured = false, armour = 0 }
+  self.rebelLanded = 0
+  self.hullBlock   = 0
   self.phase  = 1
   self.state  = "arrive"
   self.stateT = 0
@@ -55,9 +63,16 @@ function Boss:update(dt)
   -- and the ground slam each need a moment on screen or they never happen.
   local f = self:hpFrac()
   self.sincePhase = (self.sincePhase or T.phaseGap) + dt
+  self.hullBlock = math.max(0, self.hullBlock - dt * 2.2)
+  -- The plates come off when the workforce arrives. Phases used to key off
+  -- health, which meant a player with a good shove rhythm blew through all
+  -- three in eight seconds and the rebellion -- the thing the whole run is
+  -- about -- never got to leave the treeline.
   if self.sincePhase >= T.phaseGap then
-    if self.phase == 1 and f <= T.phase2At then self:enterPhase(2)
-    elseif self.phase == 2 and f <= T.phase3At then self:enterPhase(3) end
+    local landed = self:landedFrac()
+    local stalled = self.sincePhase >= T.phaseStall
+    if self.phase == 1 and (landed >= T.phase2Land or stalled) then self:enterPhase(2)
+    elseif self.phase == 2 and (landed >= T.phase3Land or stalled) then self:enterPhase(3) end
   end
 
   if self.state == "beam" then self:updateBeam(dt) return end
@@ -176,15 +191,51 @@ end
 --- The player's shove and a sentry dart both route through here. Armour plates
 --- soak most of it early; once the core is exposed you can really hurt it.
 function Boss:shove(dx, dy, force, damage, stun)
-  -- Armour plates blunt you; once the core is open you hurt it properly. The
-  -- bots pay for about half the fight, and this is how you pay the rest.
-  local dmg = (damage or 0) * (self.plates > 0 and 2.5 or 5)
   if self.plates > 0 then
     VFX.emit("hit_spark", self.x + dx * 0.4, self.y + dy * 0.4, { color = P.warn })
   end
   self.stagger = math.min(1, (self.stagger or 0) + 0.25)
-  self:damage(math.max(1, math.floor(dmg)), self.x - dx, self.y - dy)
+  self:damage(damage or 0, self.x - dx, self.y - dy)
   return true
+end
+
+--- What fraction of the crew that stood up for this has already reached it.
+function Boss:landedFrac()
+  local crew = (self.world and self.world.rebelCrew) or 0
+  if crew <= 0 then return 0 end
+  return math.min(1, self.rebelLanded / crew)
+end
+
+--- The floor the hull will not pass from player damage in this phase.
+function Boss:hullFloor()
+  return self.maxHp * (T.phaseFloor[self.phase] or 0)
+end
+
+--- Everything that hurts the rig comes through here.
+---
+--- A bot that reaches the hull always lands its full share. Anything else --
+--- the player's shove, a repulsor pulse, a sentry's seed-dart -- is scaled up
+--- to hull terms and then clamped to the phase floor, so the plates hold until
+--- the procession takes them off. That clamp is the whole fight: without it the
+--- player deletes the rig in eight seconds and nobody ever has to leave.
+function Boss:damage(n, sx, sy, opts)
+  n = n or 0
+  if opts and opts.source == "bot" then
+    self.rebelLanded = self.rebelLanded + 1
+    return Boss.super.damage(self, n, sx, sy, opts)
+  end
+  n = n * T.hullScale * (self.plates > 0 and T.platePenalty or 1)
+  -- a phase transition gets its beat: the sweep and the slam need a moment on
+  -- screen, and they never got one while the bar was still falling
+  if (self.sincePhase or T.phaseGap) < T.phaseGap * 0.5 then n = 0 end
+  local room = self.hp - self:hullFloor()
+  if n > room then n = room end
+  if n <= 0.001 then
+    self.hullBlock = 1
+    if sx then VFX.emit("hit_spark", sx, sy, { color = P.warn, power = 0.6 }) end
+    return false
+  end
+  return Boss.super.damage(self, n, sx, sy, opts)
 end
 
 function Boss:onDamage(n, sx, sy)

@@ -1143,13 +1143,26 @@ local function drawBossBar(w, a)
   Draw.setColor(P.danger, 0.95 * aa)
   Draw.roundRect("fill", bx, by, bw * frac, bh, 3)
 
-  -- one notch per bot of health: the rebellion is legible as a countdown
+  -- one notch per bot: the rebellion is legible as a countdown, and each notch
+  -- that goes is one of them
   if boss then
-    local notches = min(boss.maxHp, 60)
+    local notches = min(w.rebelCrew or 40, 60)
     Draw.setColor(P.black, 0.35 * aa)
     for i = 1, notches - 1 do
       local x = bx + bw * (i / notches)
       lg.rectangle("fill", x, by, 1, bh)
+    end
+    -- The plate line. Player damage stops here until the next cohort lands, so
+    -- the bar stalling against a lit rule is the fight explaining itself: this
+    -- is not yours to finish, and they are still walking.
+    local fl = boss.hullFloor and boss:hullFloor() / boss.maxHp or 0
+    if fl > 0.001 then
+      local fx = bx + bw * fl
+      local pulse = 0.55 + 0.45 * (boss.hullBlock or 0)
+      Draw.setColor(P.warn, (0.5 + 0.5 * (boss.hullBlock or 0)) * aa)
+      lg.rectangle("fill", fx - 1, by - 4, 3, bh + 8)
+      Draw.setColor(P.warn, 0.18 * pulse * aa)
+      lg.rectangle("fill", fx, by, bw * frac - (fx - bx), bh)
     end
   end
 
@@ -1157,6 +1170,12 @@ local function drawBossBar(w, a)
   -- "zero tables per frame", and they only ran during the boss fight where the
   -- frame budget is tightest. UI.text reuses one shared options table.
   UI.text("HARVESTER PRIME", bx, by - 21, UI.ts.label, P.danger, "left", 0.85 * aa, 0.3)
+  -- what the plates are, in three words, only while they are actually stopping
+  -- you: a stalled bar with no explanation reads as a bug
+  if boss and (boss.hullBlock or 0) > 0.05 and boss.plates > 0 then
+    UI.text("ARMOUR HOLDING", bx + bw * 0.5, by - 21, UI.ts.micro, P.warn,
+            "center", 0.9 * (boss.hullBlock or 0) * aa, 0.34)
+  end
   if boss then
     UI.text(itos(math.ceil(boss.hp)), bx + bw, by - 21, UI.ts.label,
             P.ink, "right", 0.8 * aa, 0.16)

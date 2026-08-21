@@ -444,11 +444,11 @@ function World:coneShove(x, y, angle, half, range, force, damage, stun)
     if not e.alive or e.fleeing then return end
     if not U.inCone(e.x, e.y, x, y, angle, half, range + e.radius) then return end
     local dmg = damage
-    if self.chips:has("brittle") and e.stun > 0 then dmg = dmg * 2 end
+    if self.chips:has("brittle") and (e.stun or 0) > 0 then dmg = dmg * 2 end
     local moved
-    if pin and e.def.armoured and e.type ~= "maw" then
+    if pin and e.def and e.def.armoured and e.type ~= "maw" then
       e:push(e.x - x, e.y - y, force * 0.6)
-      e.stun = math.max(e.stun, stun * 0.6)
+      e.stun = math.max(e.stun or 0, stun * 0.6)
       e:damage(dmg, x, y)
       moved = true
     else
@@ -484,7 +484,7 @@ function World:hitEnemyAt(x, y, r, damage, vx, vy)
   local e = self.hEnemy:nearest(x, y, r, function(ee) return ee.alive and not ee.fleeing end)
   if not e then return false end
   local dmg = damage
-  if self.chips:has("brittle") and e.stun > 0 then dmg = dmg * 2 end
+  if self.chips:has("brittle") and (e.stun or 0) > 0 then dmg = dmg * 2 end
   -- A Sentry firing seeds at the extraction rig should chip it, not shred it:
   -- a handful of them were deleting the whole health bar in five seconds.
   if e.kind == "boss" then dmg = dmg * TU.boss.dartResist end
@@ -711,15 +711,23 @@ function World:updateRebellion(dt)
     self.botsRebelled = true
     Signal.emit("bots:rebel")
   end
+  -- A wave is a share of the crew, not a fixed five: twelve bots and sixty bots
+  -- both take about ten waves to go, so the procession is the same length of
+  -- thing to sit through either way.
+  local size = math.max(TU.boss.rebelCohort,
+                        math.ceil((self.rebelCrew or 0) / TU.boss.rebelWaves))
   local sent = 0
   for i = 1, #self.bots do
     local b = self.bots[i]
-    if (b.state == "work" or b.mood == "confused") and sent < TU.boss.rebelCohort then
+    if b.alive and b.state == "work" and sent < size then
       b:rebel(self.boss)
       sent = sent + 1
     end
   end
-  if sent > 0 then Signal.emit("bots:cohort", sent) end
+  if sent > 0 then
+    self.rebelSent = (self.rebelSent or 0) + sent
+    Signal.emit("bots:cohort", sent)
+  end
 end
 
 --- The rig finished what it came for.
@@ -749,10 +757,20 @@ function World:beginExtraction()
   self.bossDrainRate = math.max(TU.boss.extractFloor, self.o2) / TU.boss.extractWindow
   local crew = self:botCount()
   self.boss = Boss.new(x, y, self, crew)
+  self.rebelSent = 0
   -- The workforce always pays exactly the same share of the rig, however big it
   -- is. Before this, forty bots standing near the landing site deleted the whole
   -- health bar in ten seconds and none of the three authored phases ever played.
-  self.rebelDamage = math.max(0.5, self.boss.maxHp * TU.boss.rebelShare / math.max(1, crew))
+  -- Only the ones actually standing can go, and the phase gates are measured
+  -- against that number: counting bots that are mid-boot or being carried would
+  -- stall the fight on a cohort that is never coming.
+  local able = 0
+  for i = 1, #self.bots do
+    local b = self.bots[i]
+    if b.alive and b.state ~= "dead" then able = able + 1 end
+  end
+  self.rebelCrew = math.max(1, able)
+  self.rebelDamage = math.max(0.5, self.boss.maxHp * TU.boss.rebelShare / self.rebelCrew)
   -- the boss lives in the enemy hash so shoves, pulses and sentry darts find it
   self.hEnemy:insert(self.boss)
   for i = 1, #self.bots do

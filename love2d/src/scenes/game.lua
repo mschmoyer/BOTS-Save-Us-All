@@ -108,6 +108,10 @@ function Game:devJump(what)
     local x, y = w.homeX + rng:range(-320, 320), w.homeY + rng:range(-320, 320)
     w:spawnBot(x, y, TU.bots.order[(i % #TU.bots.order) + 1], true)
   end
+  for i = 1, #w.bots do
+    local b = w.bots[i]
+    if b.state == "boot" then b.bootT = 0 b.state = "work" b.stateT = 0 end
+  end
   w.cobalt = 120
   -- the meter is normally full when the rig arrives; the jump has to match or
   -- the extraction clock starts already expired
@@ -252,7 +256,8 @@ function Game:telemetry(dt)
   print(string.format("TRACE,%.0f,%d,%s,%.0f,%.0f,%d,%d,%d,%d,%d,%.2f,%d,%d,%s,%d,%d,%d",
     w.time, w.cycle, w.phase, w.phaseT, w.phaseDur, w.treeCount, w.matureTrees or 0,
     w.elderTrees or 0, w:botCount(), #w.enemies, w.o2, w.cobalt, nodes,
-    w.boss and string.format("%d/%d r%d/%s", w.boss.hp, w.boss.maxHp,
+    w.boss and string.format("%d/%d p%d L%d/%d r%d/%s", w.boss.hp, w.boss.maxHp,
+      w.boss.phase, w.boss.rebelLanded or 0, w.rebelCrew or 0,
       (function() local n = 0 for i = 1, #w.bots do
          if w.bots[i].state == "rebel" then n = n + 1 end end return n end)(),
       tostring(w.botsRebelled)) or "-",

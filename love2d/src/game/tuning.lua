@@ -195,21 +195,40 @@ T.enemy = {
 
 -------------------------------------------------------------------------- boss
 T.boss = {
-  -- The size of your workforce is the difficulty of the fight, exactly as in the
-  -- 2019 original - but the bots only carry about three quarters of it, so the
-  -- last stretch is always yours.
-  hpPerBot     = 2.0,
-  hpFloor      = 60,
+  -- The rig's hull is a fixed job with a fixed shape, and the workforce pays for
+  -- most of it. What the size of your crew changes is not how long the fight is
+  -- -- it is how much each individual bot is worth when it goes.
+  hpBase       = 1000,
+  hpPerBot     = 6.0,
+  hpFloor      = 620,
   dartResist   = 0.28,         -- seed-darts plink off a rig this size
+  -- One point of player damage, against a hull this size. Shove is 1 damage on
+  -- a 0.3s cooldown, so an open core is about 14 damage a second and armour
+  -- plates cut that to six: the numbers the fight is actually paced around.
+  hullScale    = 4.4,
+  platePenalty = 0.42,
   rebelShare   = 0.70,         -- the fraction of the rig the workforce pays for
-  rebelCohort  = 5,            -- bots charge in waves, so the sacrifice has rhythm
-  rebelEvery   = 4.2,
+
+  -- The procession. Cohort size scales with the crew so the rebellion always
+  -- takes about the same number of waves, whether you built twelve bots or
+  -- sixty: the rhythm of the thing is authored, its weight is not.
+  rebelWaves   = 10,
+  rebelCohort  = 2,            -- floor on a wave, for very small crews
+  rebelEvery   = 7.0,
+  rebelDelay   = 7.5,
+
+  -- The hull will not go below this fraction of maximum from player damage
+  -- alone. The plates come off when the bots arrive, not when you hit hard
+  -- enough -- so the player cannot end the fight before the rebellion does, and
+  -- the bar visibly stalls at a line until the next cohort lands.
+  phaseFloor   = { 0.66, 0.34, 0.0 },
+  phase2Land   = 0.24,         -- fraction of the crew that must have landed
+  phase3Land   = 0.58,
+  phaseStall   = 26,           -- failsafe: a phase never lasts longer than this
   phaseGap     = 6.0,          -- a phase always gets its moment before the next
+
   speed        = 108,
   contactDmg   = 1,
-  phase2At     = 0.66,
-  phase3At     = 0.33,
-  rebelDelay   = 6.5,
   -- The rig always takes the same *share* of whatever sky it found, so a run
   -- that reached the deadline at 30% still gets a real fight instead of an
   -- automatic loss.
