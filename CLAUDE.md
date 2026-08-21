@@ -112,21 +112,53 @@ BOTS_AUTOPLAY=1 BOTS_SPEED=8 BOTS_SCENE=src.scenes.game \
   tools/shot.sh 24000 8000,16000,24000 /tmp/run   # a whole run + a CSV balance trace
 BOTS_JUMP=night BOTS_JUMP_TREES=600 ...           # start a session late
 BOTS_W=1280 BOTS_H=560 ...                        # a phone-landscape aspect
-tools/build_web.sh build/index.html               # the single-file WebAssembly build
-NODE_PATH=/home/user/.toolchain/node_modules node tools/webshot.js build/index.html out.png 14000
+tools/build_web.sh build/web                      # hosted WebAssembly build (default)
+tools/build_web.sh --single build/one.html        # one self-contained file, no server
+node tools/serve.js build/web 8123                # serve it: streaming needs HTTP
+NODE_PATH=/home/user/.toolchain/node_modules \
+  node tools/webperf.js http://127.0.0.1:8123/index.html 20000 1280 720
 ```
 
 `tools/shot.sh` only renders the frames it photographs, so a full 20-minute session captures in
 seconds. **Read the PNGs.** Nothing about this game can be judged from the source alone.
 
+**Three traps in that harness**, each of which has produced a confident wrong number:
+
+- The autoplay **trace** is not reproducible run to run on a contended machine — two identical
+  runs ended at 466 and 250 trees. Do not A/B with it.
+- The autoplay **capture** is not a valid pixel A/B: two runs of identical code differ on 96%
+  of pixels by ±1, because the grade is wall-clock dependent. Use a fixed deterministic probe
+  scene for pixel regression.
+- Headless capture only calls `love.draw()` on photographed frames, so `Tree.setViewFromCamera`
+  never runs and **every tree reports on-screen** — which silently invalidates any measurement
+  of view-culling or anything else that depends on the camera.
+
 ### Two things that have bitten repeatedly
 
-- **The browser is the ship target, and it is not the same renderer.** Three bugs reached the
-  build that native LÖVE never showed: a zero-length line segment that WebGL culls (every `U`
-  rendered as a `J`), `string.format("%F")` (rejected by the WebAssembly Lua), and unqualified
+- **The browser is the ship target, and it is not the same renderer.** Bugs that reached the
+  build and that native LÖVE never showed: a zero-length line segment that WebGL culls (every
+  `U` rendered as a `J`), `string.format("%F")` (rejected by the WebAssembly Lua), unqualified
   shader precision (`highp` in the vertex stage, `mediump` in the fragment stage links on
-  desktop GL and fails under GLSL ES). Verify visual and shader work in `tools/build_web.sh`
-  output, not only natively.
+  desktop GL and fails under GLSL ES), and — found while attempting the terrain GPU port —
+  **`rgba8` canvases do not exist under love.js.** `getCanvasFormats()` there reports
+  `depth16, hdr, normal, rgb565, rgb5a1, rgba16f, rgba4, srgba8, stencil8`; there is no
+  `rgba8`, and `normal` resolves to **`rgba4` — four bits a channel**. Worse, requesting an
+  unsupported format does not fail softly: LÖVE's "format is not supported by your graphics
+  drivers" error **escapes `pcall`** inside love.js and takes the frame down. Any GPU pass
+  that needs 8-bit channels must ask for `rgba16f` or handle four bits, and must not assume
+  `pcall` will catch the failure.
+
+  Two more, from the same attempt. `setBlendMode("replace")` alone is not enough for a data
+  canvas — LÖVE rewrites `srcRGB` to `SRC_ALPHA` under the default `alphamultiply`, so packed
+  RGB comes back scaled by the packed alpha byte; use `("replace", "premultiplied")`. And
+  **`fract(sin(x) * 43758.5453)` noise cannot be ported to the GPU**: a float32 sine is
+  granular at 6e-8, which times 43758 puts about one hash in two hundred on the wrong side of
+  an integer, wrong by a whole unit. That is not a precision qualifier you can fix — it is the
+  float32 floor. See `docs/PERFORMANCE_SPEC.md` item L2.
+
+  Verify visual and shader work in `tools/build_web.sh` output, not only natively — and note
+  that build is **multi-file** now and must be served over HTTP (`tools/serve.js`), because
+  emscripten skips its streaming path for a `file://` URI.
 - **Appending to a list while iterating it.** The entity sweep and the timer both compacted
   their arrays and left a hole where callbacks had appended. Both now slide new entries down;
   the same pattern will bite anywhere else it is repeated.
