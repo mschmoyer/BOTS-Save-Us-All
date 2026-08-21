@@ -208,21 +208,27 @@ Tree.stages = STAGES
 ------------------------------------------------------------------- shaders
 -- Wind, sun shading, leaf loss and the shadow projection all live on the GPU
 -- so the CPU only ever uploads one vec4 per tree.
+-- GLSL ES 1.0 (the love.js / WebGL target) requires that any uniform or varying
+-- visible to both stages carries the *same* precision qualifier in both. LOVE
+-- injects `highp` defaults into the vertex stage and `mediump` into the fragment
+-- stage, so an unqualified shared uniform links fine on desktop GL and fails to
+-- link in a browser -- which silently drops every tree onto the fallback path.
+-- Every shared uniform and varying below is therefore qualified explicitly.
 local SHARED_VS = [[
 #ifdef VERTEX
 attribute vec4 TreeData;   // x: height 0..1  y: canopy lag  z: blob id  w: rim weight
 attribute vec2 BlobOff;    // offset from this vertex's blob/segment centre
 #endif
-uniform vec4 uT;           // x: sway  y: lagged sway  z: leaf loss  w: unused
+uniform mediump vec4 uT;   // x: sway  y: lagged sway  z: leaf loss  w: view depth
 ]]
 
 local TREE_SHADER = SHARED_VS .. [[
-uniform vec4 uSun;         // xy: direction to the sun  z: contrast  w: rim power
-uniform vec4 uRim;         // rim colour, a = intensity
-uniform vec4 uDeath;       // rgb: dead tint  a: desaturation amount
-uniform vec4 uAir;         // rgb: atmosphere colour  a: how much of it depth buys
-varying vec3 vShade;
-varying float vRim;
+uniform mediump vec4 uSun;   // xy: direction to the sun  z: contrast  w: rim power
+uniform mediump vec4 uRim;   // rim colour, a = intensity
+uniform mediump vec4 uDeath; // rgb: dead tint  a: desaturation amount
+uniform mediump vec4 uAir;   // rgb: atmosphere colour  a: how much depth buys
+varying mediump vec3 vShade;
+varying mediump float vRim;
 #ifdef VERTEX
 vec4 position(mat4 tpm, vec4 vp) {
   float h = TreeData.x;
@@ -257,9 +263,9 @@ vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
 ]]
 
 local RIM_SHADER = SHARED_VS .. [[
-uniform vec4 uSun;
-uniform vec4 uRim;
-varying float vRim;
+uniform mediump vec4 uSun;
+uniform mediump vec4 uRim;
+varying mediump float vRim;
 #ifdef VERTEX
 vec4 position(mat4 tpm, vec4 vp) {
   float h = TreeData.x;
@@ -283,8 +289,8 @@ vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
 ]]
 
 local SHADOW_SHADER = SHARED_VS .. [[
-uniform vec4 uProj;        // xy: shadow direction  z: length (x tree height)  w: squash
-uniform vec4 uShadow;      // shadow colour, a = strength
+uniform mediump vec4 uProj;   // xy: shadow direction  z: length (x height)  w: squash
+uniform mediump vec4 uShadow; // shadow colour, a = strength
 #ifdef VERTEX
 vec4 position(mat4 tpm, vec4 vp) {
   float h = TreeData.x;

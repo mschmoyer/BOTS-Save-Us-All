@@ -51,6 +51,10 @@ Audio.enabled = true
 Audio.loaded = false
 
 local duck      = { amount = 0, decay = 0, target = 0 }
+-- A held duck for cutscenes. Impacts duck the score for half a second; a line of
+-- dialogue needs the score held down for as long as it is being typed, which a
+-- decaying duck cannot do. Call Audio.setDialogue(true/false) around a line.
+local dialogue  = { on = false, level = 0 }
 local lastPlay  = {}           -- name -> time of last trigger, for the throttle
 local clock     = 0            -- seconds since load, advanced by Audio.update
 local forest    = 0            -- 0..1 forest progress, drives the plant chime
@@ -1482,13 +1486,19 @@ function Audio.duck(amount, dur)
   duck.decay = max(0.05, dur or 0.5)
 end
 
+--- Hold the score (and the world) down under a line of dialogue, and let it
+--- back up when the line is done. Ramped, never switched.
+function Audio.setDialogue(on) dialogue.on = on and true or false end
+function Audio.dialogueDuck() return dialogue.level end
+
 --- 0..1 forest progress: how far up the pentatonic the plant chime rings.
 function Audio.setForestProgress(p) forest = U.saturate(p or 0) end
 function Audio.getForestProgress() return forest end
 
 local function busGain(bus)
   local g = (Audio.bus[bus] or 1) * Audio.bus.master
-  if bus == "music" then g = g * (1 - duck.amount * 0.75) end
+  if bus == "music" then g = g * (1 - duck.amount * 0.75) * (1 - dialogue.level * 0.5) end
+  if bus == "sfx" then g = g * (1 - dialogue.level * 0.35) end
   return g
 end
 Audio.busGain = busGain
@@ -1741,6 +1751,9 @@ function Audio.update(dt, lx, ly)
   if duck.amount > 0 then
     duck.amount = max(0, duck.amount - dt / duck.decay)
   end
+  local dTarget = dialogue.on and 1 or 0
+  dialogue.level = dialogue.level + (dTarget - dialogue.level) *
+                   min(1, dt * (dialogue.on and 6 or 2.5))
 
   for _, m in pairs(meters) do m.rms = 0 m.voices = 0 end
   local mm = meters.master
@@ -1760,7 +1773,7 @@ function Audio.update(dt, lx, ly)
       if m then m.voices = m.voices + 1 end
       mm.voices = mm.voices + 1
       -- keep live voices tracking bus/duck changes
-      if v.src and (v.loop or v.bus == "music") then
+      if v.src and (v.loop or v.bus == "music" or dialogue.level > 0.01) then
         safe(v.src.setVolume, v.src, U.saturate(v.gain * bg))
       end
     end

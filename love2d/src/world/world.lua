@@ -717,11 +717,6 @@ function World:update(dt)
     end
   end
 
-  -- recount trees after the sweep so the HUD never lies
-  local n = 0
-  for i = 1, #self.trees do if self.trees[i].alive then n = n + 1 end end
-  self.treeCount = n
-
   self:updateSpread(dt)
 
   -- chorus chip: bots near friends work faster
@@ -767,10 +762,23 @@ end
 --- Oxygen reads the standing forest. Saplings count a little, elders count
 --- double, and siphons apply a debt that bleeds off once they are driven away.
 local O2W = TU.o2.weight
+--- Walks the whole forest, so it runs on a slice cadence rather than every
+--- frame: at nine hundred trees this was the single most expensive thing in the
+--- update, and the reading does not need to be resampled 60 times a second.
 function World:updateOxygen(dt)
-  local mature, elders, points = 0, 0, 0
+  self.o2Accum = (self.o2Accum or 0) + dt
+  self.o2Frame = (self.o2Frame or 0) + 1
+  if self.o2Frame < 4 and self.forestPoints then
+    self:applyOxygen(dt)
+    return
+  end
+  local sliceDt = self.o2Accum
+  self.o2Accum, self.o2Frame = 0, 0
+
+  local mature, elders, points, alive = 0, 0, 0, 0
   for i = 1, #self.trees do
     local t = self.trees[i]
+    if t.alive then alive = alive + 1 end
     if t.alive and t.stage ~= "dead" and t.stage ~= "dying" then
       local s = t.stage
       if s == "elder" then elders = elders + 1
@@ -781,7 +789,14 @@ function World:updateOxygen(dt)
     end
   end
   self.matureTrees, self.elderTrees, self.forestPoints = mature, elders, points
+  self.treeCount = alive
+  self:applyOxygen(sliceDt)
+end
 
+--- The cheap per-frame half: ease the reading toward whatever the last census
+--- said the forest is worth, and run the win/lose checks.
+function World:applyOxygen(dt)
+  local points = self.forestPoints or 0
   local raw = TU.o2.target * U.saturate(points / TU.o2.fullForest)
   -- Siphon debt is capped relative to the reading, so a bad night is a real bite
   -- out of your progress but can never erase the whole run's work.
