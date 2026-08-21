@@ -184,12 +184,23 @@ local TUNE = {
   atlas         = false,
   atlasPixels   = 1e9,
   atlasCell     = 128,
+  --   atlasTall    cell HEIGHT as a multiple of atlasCell. Left at 1 because
+  --                it does not pay with ONE cell shape for every species: a
+  --                broadleaf crown is as wide as the tree is tall and its
+  --                width is what binds, so a tall cell buys it nothing while
+  --                costing the memory. A conifer would take 3.0 happily. The
+  --                obvious next move here is a per-species cell aspect, which
+  --                is a packing job nobody has done.
+  atlasTall     = 1.0,
   atlasPad      = 3,      -- transparent gutter per cell, against linear bleed
   atlasBands    = 8,
   atlasSwayLag  = 0.75,
   atlasSwayGain = 1.00,
   atlasSunStep  = 0.10,   -- sun/rim movement that forces a re-bake of the page
-  atlasShadow   = true,   -- project the same sprite for the shadow pass
+  atlasShadow   = true,   -- project a baked silhouette for the shadow pass
+  atlasShadowCell = 1.0,  -- shadow page cell, as a fraction of atlasCell. Half
+                          -- costs a quarter of the memory and loses the trunk's
+                          -- shadow, which is a line about one pixel wide there.
 }
 
 ---------------------------------------------------------------- the species
@@ -1389,11 +1400,11 @@ local atlas = {
   canvas = nil, scanvas = nil, batch = nil, sbatch = nil,
   quad = {}, scale = {}, baseY = {},
   squad = {}, sscale = {}, sbaseY = {},
-  cell = 0, cols = 0, pad = 0, ox = 0, page = 0,
-  scell = 0, sox = 0, spage = 0,
+  cell = 0, cellH = 0, cols = 0, pad = 0, ox = 0, page = 0, pageH = 0,
+  scell = 0, scellH = 0, sox = 0, spage = 0, spageH = 0,
   format = nil, ready = false, failed = false,
   key = nil, rebuilds = 0, n = 0, sn = 0, band = -1,
-  buildMs = 0,
+  buildMs = 0, sunX = 0, sunY = -1,
 }
 Tree.atlas = atlas
 
@@ -1469,45 +1480,54 @@ local function atlasBuild(sunX, sunY)
   local t0 = love.timer and love.timer.getTime() or 0
 
   if not atlas.canvas then
-    local cell = max(16, atlasCellPx or TUNE.atlasCell)
+    local cw = max(16, atlasCellPx or TUNE.atlasCell)
+    local ch = max(16, floor(cw * (TUNE.atlasTall or 1)))
     local cols = 1
     while cols * cols < CELLS do cols = cols + 1 end
-    -- One square page keeps the whole forest on one texture, which is the whole
-    -- point: two pages would be two batches and two draw calls a band.
-    while cols * cell > 4096 do cell = floor(cell / 2) end
-    local side = cols * cell
+    -- One page keeps the whole forest on one texture, which is the whole point:
+    -- two pages would be two batches and two draw calls a band. Shrink rather
+    -- than split if the driver's maximum will not take it.
+    while cols * cw > 4096 or cols * ch > 4096 do
+      cw = floor(cw / 2); ch = floor(ch / 2)
+    end
+    local pw, ph = cols * cw, cols * ch
     local cands = atlasFormats()
     for i = 1, #cands do
-      local ok, c = pcall(lg.newCanvas, side, side, { format = cands[i] })
+      local ok, c = pcall(lg.newCanvas, pw, ph, { format = cands[i] })
       if ok and c then atlas.canvas, atlas.format = c, cands[i] break end
     end
     if not atlas.canvas then atlas.failed = true; return false end
     atlas.canvas:setFilter("linear", "linear")
     atlas.canvas:setWrap("clamp", "clamp")
-    atlas.cell, atlas.cols, atlas.pad = cell, cols, TUNE.atlasPad
-    atlas.ox, atlas.page = cell * 0.5, side
+    atlas.cell, atlas.cellH, atlas.cols, atlas.pad = cw, ch, cols, TUNE.atlasPad
+    atlas.ox, atlas.page, atlas.pageH = cw * 0.5, pw, ph
     atlas.batch  = lg.newSpriteBatch(atlas.canvas, 1024, "stream")
-    -- The shadow silhouette is its own page, at half the canopy's resolution.
-    -- It has to be its own page because it is its own geometry: the shadow mesh
-    -- is a coarser, part-transparent tree PLUS the soft ground-contact ellipse
-    -- that the canopy mesh does not have, and reusing the canopy's alpha for it
-    -- - which the first version of this did - paints a hard, opaque, full-detail
-    -- crown on the ground where a soft blur belongs. Half resolution because it
-    -- is a blurred dark shape and nothing in it is legible.
-    local scell = max(16, floor(cell / 2))
-    local sside = cols * scell
+    -- The shadow silhouette is its own page. It has to be: the shadow mesh is
+    -- its own geometry - a coarser, part-transparent tree PLUS the soft
+    -- ground-contact ellipse the canopy mesh does not have - and reusing the
+    -- canopy's alpha for it, which the first version of this did, paints a
+    -- hard, opaque, full-detail crown on the ground where a soft blur belongs.
+    -- It was then tried at half resolution, on the theory that a shadow is a
+    -- blur and nothing in it is legible. That is wrong twice over: the trunk's
+    -- shadow is a line one pixel wide at half scale and simply disappears, and
+    -- the branch structure inside the crown shadow is most of what makes a
+    -- forest floor read as a forest floor.
+    local k = TUNE.atlasShadowCell or 1
+    local sw = max(16, floor(cw * k))
+    local sh = max(16, floor(ch * k))
     for i = 1, #cands do
-      local ok, c = pcall(lg.newCanvas, sside, sside, { format = cands[i] })
+      local ok, c = pcall(lg.newCanvas, cols * sw, cols * sh, { format = cands[i] })
       if ok and c then atlas.scanvas = c break end
     end
     if not atlas.scanvas then atlas.failed = true; return false end
     atlas.scanvas:setFilter("linear", "linear")
     atlas.scanvas:setWrap("clamp", "clamp")
-    atlas.scell, atlas.sox, atlas.spage = scell, scell * 0.5, sside
+    atlas.scell, atlas.scellH = sw, sh
+    atlas.sox, atlas.spage, atlas.spageH = sw * 0.5, cols * sw, cols * sh
     atlas.sbatch = lg.newSpriteBatch(atlas.scanvas, 1024, "stream")
   end
 
-  local cell, cols, pad = atlas.cell, atlas.cols, atlas.pad
+  local cell, cellH, cols, pad = atlas.cell, atlas.cellH, atlas.cols, atlas.pad
   local prevCanvas = lg.getCanvas()
   local prevBlend, prevAlpha = lg.getBlendMode()
   local sx, sy, sw, sh = lg.getScissor()
@@ -1555,19 +1575,18 @@ local function atlasBuild(sunX, sunY)
           -- A cell holds the tree plus a tenth of its height below the root,
           -- because a drooping conifer skirt hangs below y = 0 and `extentY`
           -- only ever measured upwards.
-          local usable = cell - pad * 2
-          local s = min(usable / (er * 2), usable / (ey * 1.10))
+          local s = min((cell - pad * 2) / (er * 2), (cellH - pad * 2) / (ey * 1.10))
           local col, row = i % cols, floor(i / cols)
           local cx = col * cell + cell * 0.5
-          local by = row * cell + pad + ey * s
-          atlas.quad[key]  = lg.newQuad(col * cell, row * cell, cell, cell,
-                                        atlas.page, atlas.page)
+          local by = row * cellH + pad + ey * s
+          atlas.quad[key]  = lg.newQuad(col * cell, row * cellH, cell, cellH,
+                                        atlas.page, atlas.pageH)
           atlas.scale[key] = s
-          atlas.baseY[key] = by - row * cell
+          atlas.baseY[key] = by - row * cellH
           -- Scissored per cell: a crown that overruns its cell would otherwise
           -- smear into its neighbour and every tree of that variant would wear
           -- a piece of another species.
-          lg.setScissor(col * cell + 1, row * cell + 1, cell - 2, cell - 2)
+          lg.setScissor(col * cell + 1, row * cellH + 1, cell - 2, cellH - 2)
           lg.draw(m, cx, by, 0, s, s)
         end
         i = i + 1
@@ -1578,7 +1597,7 @@ local function atlasBuild(sunX, sunY)
   -- ... and the shadow page, from the shadow meshes, with the projection left
   -- at identity: the projection is a shear and a y-scale, and both are applied
   -- per sprite at draw time so the sun can move without a re-bake.
-  local scell = atlas.scell
+  local scell, scellH = atlas.scell, atlas.scellH
   lg.setCanvas(atlas.scanvas)
   lg.clear(0, 0, 0, 0)
   lg.setShader(shShadow)
@@ -1596,17 +1615,16 @@ local function atlasBuild(sunX, sunY)
         if m and meta then
           local ey = max(meta.extentY or 1, 0.001)
           local er = max(meta.extentR or 0.4, 0.001)
-          local usable = scell - pad * 2
           -- the contact ellipse is wider at the root than the crown is, and
           -- `extentR` was measured off the canopy mesh, so leave it room
-          local sc = min(usable / (er * 2.30), usable / (ey * 1.15))
+          local sc = min((scell - pad * 2) / (er * 2.30), (scellH - pad * 2) / (ey * 1.15))
           local col, row = i % cols, floor(i / cols)
-          atlas.squad[key]  = lg.newQuad(col * scell, row * scell, scell, scell,
-                                         atlas.spage, atlas.spage)
+          atlas.squad[key]  = lg.newQuad(col * scell, row * scellH, scell, scellH,
+                                         atlas.spage, atlas.spageH)
           atlas.sscale[key] = sc
           atlas.sbaseY[key] = pad + ey * sc
-          lg.setScissor(col * scell + 1, row * scell + 1, scell - 2, scell - 2)
-          lg.draw(m, col * scell + scell * 0.5, row * scell + pad + ey * sc, 0, sc, sc)
+          lg.setScissor(col * scell + 1, row * scellH + 1, scell - 2, scellH - 2)
+          lg.draw(m, col * scell + scell * 0.5, row * scellH + pad + ey * sc, 0, sc, sc)
         end
         i = i + 1
       end
@@ -1626,6 +1644,7 @@ local function atlasBuild(sunX, sunY)
   cur.shader, cur.mode, cur.sunX, cur.sunY = nil, nil, nil, nil
   cur.rimKey, cur.deathKey, cur.backKey, cur.airKey = nil, nil, nil, nil
   atlas.ready = true
+  atlas.sunX, atlas.sunY = sunX or 0, sunY or -1
   atlas.rebuilds = atlas.rebuilds + 1
   atlas.buildMs = ((love.timer and love.timer.getTime() or 0) - t0) * 1000
   return true
@@ -1645,6 +1664,20 @@ local function atlasReady(sunX, sunY)
   return atlas.ready
 end
 Tree.atlasReady = atlasReady
+
+--- The shadow pass's version. The shadow page holds an unprojected silhouette
+--- and does not care where the sun is - the projection is per sprite - so this
+--- must NOT re-key on the shadow direction. `demo_tree` hands the shadow pass
+--- `sunAngle` and the canopy pass `sunDir`, which point OPPOSITE ways, and the
+--- first version of this re-baked both pages twice a frame because of it.
+local function atlasReadyShadow()
+  if not atlasEnabled() then return false end
+  if atlas.key == nil then
+    if not atlasBuild(atlas.sunX, atlas.sunY) then return false end
+    atlas.key = atlasSkyKey(atlas.sunX, atlas.sunY)
+  end
+  return atlas.ready
+end
 
 --- Which depth band a tree at world y falls in. `visTrees` arrives in depth
 --- order, so this only ever increases inside a pass and one comparison catches
@@ -1738,7 +1771,9 @@ end
 --- Page geometry and the run's re-bake count, for the report.
 function Tree.atlasStats()
   return { on = atlasEnabled(), ready = atlas.ready, failed = atlas.failed,
-           format = atlas.format, page = atlas.page, cell = atlas.cell,
+           format = atlas.format, page = atlas.page, pageH = atlas.pageH,
+           spage = atlas.spage, spageH = atlas.spageH, cell = atlas.cell,
+           cellH = atlas.cellH,
            cells = CELLS, rebuilds = atlas.rebuilds, buildMs = atlas.buildMs,
            pixels = atlasPx or TUNE.atlasPixels }
 end
@@ -2314,10 +2349,15 @@ function Tree:drawShadow(sunAngle, sunLength, ambient)
   -- Sprite-atlas path (item F6, off by default). The shadow silhouette is the
   -- canopy cell projected by a shear and a y-scale; see `atlasAddShadow`.
   if TUNE.atlasShadow and px <= (atlasPx or TUNE.atlasPixels) and self.alive
-     and self.death < 0.02 and atlasReady(cos(sunAngle), sin(sunAngle)) then
+     and self.death < 0.02 and atlasReadyShadow() then
     if fillOn then
+      -- A sprite rasterises its whole cell, transparent corners included, not
+      -- just the triangles the mesh had. That is the fill side of this trade
+      -- and it goes the wrong way, so the profiler is told the truth about it.
       local k = self.size * (Tree.zoom or 1)
-      Tree.fill.shadow = Tree.fill.shadow + (self.meta.areaShadow or 0) * k * k
+      local sc = atlas.sscale[self.key] or 1
+      Tree.fill.shadow = Tree.fill.shadow
+        + (atlas.scell / sc) * (atlas.scellH / sc) * k * k
     end
     if cur.shadKey ~= (ambient or 0.3) then
       cur.shadKey = ambient or 0.3
@@ -2420,7 +2460,9 @@ function Tree:draw(sunDirX, sunDirY)
     if atlasAdd(self) then
       if fillOn then
         local k = self.size * zoom
-        Tree.fill.canopy = Tree.fill.canopy + (self.meta.areaFull or 0) * k * k
+        local sc = atlas.scale[self.key] or 1
+        Tree.fill.canopy = Tree.fill.canopy
+          + (atlas.cell / sc) * (atlas.cellH / sc) * k * k
       end
       if self.lpn > 0 then self:drawLeaves() end
       return
