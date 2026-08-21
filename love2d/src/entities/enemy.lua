@@ -61,7 +61,7 @@ local PENDING = {
   -- growing, and at dusk it is where the night starts. `from` is absent on
   -- purpose: a type with no entry in `T.cycle.mix` can never be drafted as a
   -- wave card, and a Scar is never bought -- it is left behind.
-  scar    = { cost = 0, hp = 14, speed = 0, radius = 20, damage = 0,
+  scar    = { cost = 0, hp = 20, speed = 0, radius = 20, damage = 0,
               armoured = true, armour = 0.45, shovesToClose = 5,
               creepStart = 110, creepMax = 300, creepGrow = 2.2,
               rotEvery = 9, rotRamp = 0.55, spreadEvery = 26, maxAlive = 6,
@@ -672,6 +672,18 @@ end
 function Enemy:damage(n, sx, sy, opts)
   n = n or 1
   if self.feeding and self.def.feedVuln then n = n * self.def.feedVuln end
+  -- Armour was only ever applied inside `Enemy:shove`; a seed-dart calls
+  -- `World:hitEnemyAt` which calls `damage` directly, so the whole armour system
+  -- was invisible to the one thing that fires all night. It stayed invisible for
+  -- the Bulwark, whose numbers are somebody else's balance point, but the two
+  -- behaviours that are *dug in* have to resist it or a Sentry sited nearby
+  -- deletes them in three seconds and the decision they exist to pose -- go and
+  -- deal with this, or leave it and pay at dusk -- never gets asked. The floor
+  -- of one point mirrors the shove path: a Sentry is always a legitimate answer
+  -- to a Maw or a Scar, just a slow one, and walking over is always the fast one.
+  if self.def.shovesToClose and self.def.armour then
+    n = math.max(1, n * (1 - self.def.armour))
+  end
   local ward = self.wardedT > 0 and self.warden or nil
   if ward and ward.alive and self.type ~= "warden" then
     n = n * (1 - ward.def.wardCut)

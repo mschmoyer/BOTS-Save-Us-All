@@ -352,7 +352,7 @@ local function drawSlot(i, x, y, w, h, world, a)
   local bw2 = (cost > def.cost)
               and (Text.measure(itos(def.cost), UI.ts.small * 0.78, nil) + 7) or 0
   local cxx = x + w * 0.5 - (cw + 13 + bw2) * 0.5
-  drawPrice(cxx, costTop, id, def, world, afford and deny <= 0.02, a, UI.ts.small)
+  drawPrice(cxx, costTop, id, def, world, afford, a, UI.ts.small)
 
   -- the bottom edge: an accent underline when you can build it, a cobalt
   -- progress sliver when you cannot

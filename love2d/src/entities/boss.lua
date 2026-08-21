@@ -1057,7 +1057,7 @@ function Boss:drawDeck(lift)
   end
 
   Draw.additive(function()
-    Draw.glow(0, deckY, r * (0.16 + 0.30 * open) * pulse, C.molten, 0.20 + 0.35 * open)
+    Draw.glow(0, deckY, r * (0.14 + 0.24 * open) * pulse, C.molten, 0.16 + 0.22 * open)
   end)
 
   -- the machined ring the leaves run in, and its bolts: without it a closed

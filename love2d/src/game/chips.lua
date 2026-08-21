@@ -391,11 +391,12 @@ local C = {
 
   { id = "bramble", f = F.COMBAT, r = 3, name = "BRAMBLE",
     desc = "The wood fights back. Anything chewing a tree bleeds for it.",
-    -- A Chomper needs six seconds on a mature tree and dies at about five, so
-    -- a defended forest stops needing to be defended and the night becomes
-    -- about your bots and your saplings instead. That is a different game, and
-    -- it is what a rare is for.
-    every = 1.8,
+    -- A Chomper has three hit points and needs six seconds on a mature tree, so
+    -- at this rate it pays two of them for the tree and dies partway into the
+    -- next one. Traced at one damage every 1.8s it was paying three, no tree
+    -- ever fell again, and the night stopped happening. It costs the Blight a
+    -- body per tree now, which is a different night rather than no night.
+    every = 2.6,
     tick = function(chips, w, dt)
       local list = w.enemies
       for i = 1, #list do

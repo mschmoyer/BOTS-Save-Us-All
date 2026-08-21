@@ -168,6 +168,25 @@ float rdg3(vec2 p) {
   return s / n;
 }
 
+// Hashes with no sine and no large intermediates. `hsh` above feeds its input
+// through sin() and multiplies by 43758, which is fine for the value noise --
+// whose inputs are always small -- and is not fine for cell indices, where the
+// argument runs into the tens of thousands. Desktop GL and the browser do not
+// agree about sin() out there, and under a mediump fragment stage the multiply
+// can overflow to inf and the fract() to NaN, which then propagates into the
+// colour channel by channel. Native never showed it; WebGL rendered the scar
+// in flat patches of red and olive. These stay bounded and agree everywhere.
+vec2 hash22(vec2 p) {
+  vec3 q = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.xx + q.yz) * q.zy);
+}
+float hash21(vec2 p) {
+  vec3 q = fract(vec3(p.xyx) * 0.1031);
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
+}
+
 // Jittered-grid cells, with the distance to the nearest cell border. Bedded
 // stone seen from above is *slabs*: flat shapes of one tone, tessellating,
 // with a hard edge between them. No amount of quantised fbm gives you that --
@@ -183,7 +202,7 @@ vec3 cells(vec2 p) {
   for (int j = -1; j <= 1; j++) {
     for (int i = -1; i <= 1; i++) {
       vec2 g = vec2(float(i), float(j));
-      vec2 o = g + vec2(hsh(ip + g), hsh(ip + g + 37.0)) - fp;
+      vec2 o = g + hash22(ip + g) - fp;
       float d = dot(o, o);
       if (d < bd) { bd = d; bpt = o; bid = ip + g; }
     }
@@ -192,7 +211,7 @@ vec3 cells(vec2 p) {
   for (int j = -1; j <= 1; j++) {
     for (int i = -1; i <= 1; i++) {
       vec2 g = vec2(float(i), float(j));
-      vec2 o = g + vec2(hsh(ip + g), hsh(ip + g + 37.0)) - fp;
+      vec2 o = g + hash22(ip + g) - fp;
       vec2 dv = o - bpt;
       float l = length(dv);
       if (l > 0.0001) { be = min(be, dot(0.5 * (o + bpt), dv / l)); }
@@ -350,9 +369,9 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // A slab's tone is mostly the region it is in and only partly its own. Purely
   // random slab tones tessellate into crazy paving: every edge shouts equally
   // and there are no larger masses for the eye to hold on to.
-  float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 0.86), hsh(ca.xy + 11.3), 0.54);
-  float ha   = hsh(ca.xy * 1.7 + 3.0);            // ...and how high it stands
-  float hb   = hsh(cb.xy * 1.7 + 3.0);
+  float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 0.86), hash21(ca.xy + 11.3), 0.54);
+  float ha   = hash21(ca.xy + 61.0);              // ...and how high it stands
+  float hb   = hash21(cb.xy + 61.0);
   vec3 rockC = ramp(cStone[0], cStone[1], cStone[2], cStone[3],
                     0.26 + tone * 1.34 + broad * 0.40 + elev * 0.18) * 0.92;
   // shadowed stone runs cool and lit stone runs warm: without the temperature
@@ -435,8 +454,8 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     vec3 pa  = cells(cwp * 0.0165);                 // ~61 px plates
     vec3 pas = cells((cwp + uSun * 5.0) * 0.0165);
     vec3 pb  = cells(cwp * 0.0470);                 // ~21 px crazing
-    float tA = hsh(pa.xy + 5.7);
-    float tB = hsh(pb.xy + 19.3);
+    float tA = hash21(pa.xy + 5.7);
+    float tB = hash21(pb.xy + 19.3);
     // The fissures open and close along their length instead of running as a
     // ruled net of equal width, and whole regions of the scar craze tightly
     // while others barely open -- without that second, slower term a large scar
@@ -460,7 +479,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     dead *= 0.52 + 0.56 * (1.0 - deep) + 0.52 * form;
     // a plate standing proud of its neighbour catches the light on its up-sun
     // lip and throws a shadow off the other side
-    float lift = clamp((hsh(pa.xy * 1.7 + 3.0) - hsh(pas.xy * 1.7 + 3.0)) * 2.6, -1.0, 1.0);
+    float lift = clamp((hash21(pa.xy + 61.0) - hash21(pas.xy + 61.0)) * 2.6, -1.0, 1.0);
     float pEdge = step(0.001, length(pas.xy - pa.xy));
     dead *= 1.0 + pEdge * max(lift, 0.0) * 0.26 - pEdge * max(-lift, 0.0) * 0.30;
     dead *= 1.0 - crack * 0.72;
@@ -470,8 +489,9 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     // The one hairline allowed to be hot, and it is rationed twice over: only
     // the floor of a fissure, only at the heart of a scar, and only in the one
     // fissure in four that the plate hash lets glow at all.
-    float live = smoothstep(0.68, 0.86, hsh(pa.xy * 2.3 + 7.1));
-    dead += cBlight[3] * smoothstep(0.010, 0.0, pa.z * cvz) * deep * deep * live * 0.17;
+    float live = smoothstep(0.80, 0.94, hash21(pa.xy + 7.1))
+               * smoothstep(0.54, 0.78, fbm3(w * 0.0062 + 41.0));
+    dead += cBlight[3] * smoothstep(0.009, 0.0, pa.z * cvz) * deep * deep * live * 0.20;
     col = mix(col, dead, scarT);
     // The rot rim: living ground going grey a few metres before it dies. Value
     // and saturation, not hue -- a violet halo round every scar was the tell.

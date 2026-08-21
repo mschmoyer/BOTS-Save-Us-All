@@ -75,6 +75,7 @@ Touch.active      = false   -- true once touch is the player's device
 Touch.opacity     = 0       -- current drawn opacity (damped)
 Touch.enabled     = true
 Touch.autoAimId   = nil     -- the entity auto-aim last locked (debug/HUD)
+Touch.gate        = 1       -- 0 while the layer is hidden; presses are refused
 
 local manualOpacity = 1
 local visFade       = 0
@@ -512,6 +513,7 @@ end
 function Touch.onPressed(id, x, y)
   Touch.activate()
   if not Touch.enabled then return end
+  if (Touch.gate or 1) < CFG.gateMin then return end
   layout()
   local sl = freeSlot()
   if not sl then return end
@@ -749,6 +751,10 @@ function Touch.update(dt)
     if ok and type(v) == "number" then chrome = v end
   end
   Touch.opacity = visFade * manualOpacity * Settings.get("touchOpacity") * chrome
+  -- ...and a layer that has stepped out of the way does not take presses. A
+  -- shove fired through a pause menu, or through the dawn draft, is the exact
+  -- bug a screen full of invisible buttons is for.
+  Touch.gate = manualOpacity * chrome
 
   for i = 1, CFG.maxTouches do
     local sl = slots[i]

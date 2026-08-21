@@ -359,7 +359,7 @@ T.boss = {
     keyRadius     = 380, keyGain    = 0.30,
     strobeRadius  = 300, strobeGain = 0.40,
     throatRadius  = 150, throatGain = 0.30,
-    moltenRadius  = 330, moltenGain = 0.42,
+    moltenRadius  = 330, moltenGain = 0.28,
   },
 }
 
@@ -563,6 +563,7 @@ T.touch = {
   fade         = 7.0,     -- opacity damp rate
   press        = 26.0,    -- press-scale damp rate
   latch        = 0.085,   -- min time a tapped action reports down
+  gateMin      = 0.30,    -- below this drawn strength the layer refuses presses
   ripple       = 0.36,
   hapticTap    = 0.011,
   hapticSlide  = 0.006,

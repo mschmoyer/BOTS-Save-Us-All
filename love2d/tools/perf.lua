@@ -28,6 +28,10 @@ local ORDER = {
   "frame",
 }
 
+local Tree = nil
+do local ok, m = pcall(require, "src.entities.tree") if ok then Tree = m end end
+local fillS, fillC, fillB = 0, 0, 0
+
 local acc, calls, dcalls = {}, {}, {}
 local sum, sumCalls, sumDc = {}, {}, {}
 local frames = 0
@@ -189,10 +193,6 @@ end
 local frameT0 = 0
 local warm = 0
 Perf.warmup = 60
-
-local Tree = nil
-do local ok, m = pcall(require, "src.entities.tree") if ok then Tree = m end end
-local fillS, fillC, fillB = 0, 0, 0
 
 function Perf.beginFrame()
   if Tree and Tree.resetFill then Tree.resetFill() end
