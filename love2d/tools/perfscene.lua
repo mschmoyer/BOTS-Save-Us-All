@@ -35,6 +35,16 @@ function S:draw()
   if not self.reported and Perf.frames() >= self.stopAt then
     self.reported = true
     local w = self.world
+    -- item F6: how often the sprite-atlas page had to be re-baked over the run,
+    -- and what the driver actually gave us for it. Both are zero/absent when
+    -- the atlas is off, which is the default.
+    local Tree = require("src.entities.tree")
+    if Tree.atlasStats then
+      local a = Tree.atlasStats()
+      print(string.format("PERFATLAS,%s,on=%s,ready=%s,fmt=%s,page=%d,cell=%d,px=%g,rebuilds=%d,lastbuild_ms=%.1f",
+        self.tag, tostring(a.on), tostring(a.ready), tostring(a.format),
+        a.page or 0, a.cell or 0, a.pixels or 0, a.rebuilds or 0, a.buildMs or 0))
+    end
     Perf.report(self.tag, string.format("trees=%d,bots=%d,blight=%d,parts=%d,phase=%s,cs=%d,ss=%d,batched=%d",
       w.treeCount, #w.bots, #w.enemies,
       (require("src.engine.vfx").count and require("src.engine.vfx").count()) or 0,

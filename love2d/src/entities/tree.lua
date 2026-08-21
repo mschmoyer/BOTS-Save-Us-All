@@ -161,6 +161,35 @@ local TUNE = {
   shadowFade    = 1.25,   -- shadow reaches full strength at shadowPixels * this
   cullPad       = 90,
   sleepFrames   = 4,      -- an off-screen tree runs its slow block 1 frame in N
+
+  -- ---------------------------------------------------------- sprite atlas
+  -- Item F6. OFF by default and it must stay that way until a human has looked
+  -- at the pictures: it trades the vertex-shader sway for a per-sprite
+  -- rotation, and the sway is what the forest is for. The long argument for
+  -- and against lives above `atlasBuild` further down this file.
+  --   atlas        master switch. BOTS_TREE_ATLAS=0|1 overrides it.
+  --   atlasPixels  on-screen tree height AT OR BELOW which a tree is drawn from
+  --                the atlas. 1e9 = the whole forest; set it to a few hundred
+  --                for the hybrid (near trees keep the mesh and the real sway).
+  --                BOTS_TREE_ATLAS_PX overrides it.
+  --   atlasCell    atlas cell edge in pixels: the resolution a tree is baked
+  --                at, and therefore the size above which it goes soft.
+  --                BOTS_TREE_ATLAS_CELL overrides it.
+  --   atlasBands   depth slices the batch is flushed in. This is the whole
+  --                draw-call budget of the batched forest, and it is also how
+  --                far out of depth order a batched tree can land, so it trades
+  --                draw calls against sorting error.
+  --   atlasSwayLag how much of the crown's lagged sway the single per-sprite
+  --                rotation uses. 1 = the crown's sway, 0 = the trunk's.
+  atlas         = false,
+  atlasPixels   = 1e9,
+  atlasCell     = 128,
+  atlasPad      = 3,      -- transparent gutter per cell, against linear bleed
+  atlasBands    = 8,
+  atlasSwayLag  = 0.75,
+  atlasSwayGain = 1.00,
+  atlasSunStep  = 0.10,   -- sun/rim movement that forces a re-bake of the page
+  atlasShadow   = true,   -- project the same sprite for the shadow pass
 }
 
 ---------------------------------------------------------------- the species
@@ -362,6 +391,51 @@ vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
 #endif
 ]]
 
+-- The two shaders the sprite-atlas path (item F6) draws its batches with. They
+-- are the tail of TREE_SHADER and SHADOW_SHADER respectively: everything those
+-- two do per *vertex* has already been baked into the atlas page, so all that
+-- is left to do per *pixel* is the part that cannot be baked because it is not
+-- a property of the tree's shape.
+--
+-- For the canopy that is the aerial perspective, which depends on how far up
+-- the screen the tree stands and so cannot live in a shared cell. The batch is
+-- flushed in depth bands and each band sends its own `uDepthA`, which is the
+-- same number `sendTreeUniform` puts in `uT.w` for a single tree, sampled at
+-- the middle of the band instead of at the tree.
+--
+-- Both read a PREMULTIPLIED page: a canvas drawn onto transparent black holds
+-- colour already multiplied by coverage, which is the only form that survives
+-- linear filtering without a dark halo round every leaf. So both return
+-- premultiplied too, and both batches are drawn in ("alpha", "premultiplied").
+-- Uniforms are qualified `mediump` in both stages for the reason SHARED_VS
+-- gives: an unqualified shared uniform links on desktop GL and fails under
+-- GLSL ES, which is a browser-only, silent, whole-forest failure.
+local ATLAS_SHADER = [[
+uniform mediump vec4 uAirA;     // rgb: atmosphere colour  a: how much depth buys
+uniform mediump float uDepthA;  // this band's depth up the screen: 0 near, 1 far
+#ifdef PIXEL
+vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+  vec4 c = Texel(tex, tc) * color;
+  float a = max(c.a, 0.0001);
+  vec3 u = c.rgb / a;                       // straighten, so the mix is a mix
+  float air = uDepthA * uAirA.a;
+  float gl = dot(u, vec3(0.2126, 0.7152, 0.0722));
+  u = mix(u, uAirA.rgb * (0.45 + 1.10 * gl), air);
+  return vec4(u * c.a, c.a);
+}
+#endif
+]]
+
+local ATLAS_SHADOW_SHADER = [[
+uniform mediump vec4 uShadowA;  // shadow colour, a = strength
+#ifdef PIXEL
+vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+  float a = Texel(tex, tc).a * color.a * uShadowA.a;
+  return vec4(uShadowA.rgb * a, a);
+}
+#endif
+]]
+
 local FORMAT = {
   { "VertexPosition", "float", 2 },
   { "VertexColor",    "float", 4 },
@@ -370,6 +444,7 @@ local FORMAT = {
 }
 
 local shTree, shShadow
+local shAtlas, shAtlasShadow
 local shadersOK = false
 
 local function initShaders()
@@ -379,6 +454,16 @@ local function initShaders()
   if ok1 and ok2 then
     shTree, shShadow = a, b
     shadersOK = true
+    -- The sprite-atlas pair is optional: if either fails to compile the atlas
+    -- switch simply never turns on and the mesh path is what draws.
+    local ok3, c = pcall(love.graphics.newShader, ATLAS_SHADER)
+    local ok4, d = pcall(love.graphics.newShader, ATLAS_SHADOW_SHADER)
+    if ok3 and ok4 then
+      shAtlas, shAtlasShadow = c, d
+    else
+      print("tree.lua: atlas shader compile failed, sprite atlas unavailable\n" ..
+            tostring(c) .. "\n" .. tostring(d))
+    end
   else
     shTree, shShadow = false, false
     shadersOK = false
@@ -1118,6 +1203,7 @@ local cur = {
 }
 local uT   = { 0, 0, 0, 0 }
 local uAir = { 1, 1, 1, 0 }
+local uAirB = { 1, 1, 1, 0 }   -- scratch: the neutral air the atlas page bakes with
 local uSun = { 0, 0, 0, 0 }
 local uPrj = { 0, 0, 0, 0 }
 local uRimC = { 0, 0, 0, 0 }
@@ -1215,8 +1301,15 @@ function Tree.resetFill()
   Tree.fill.shadow, Tree.fill.canopy, Tree.fill.backlight = 0, 0, 0
 end
 
+-- Forward slot for the sprite-atlas batch flush, which is defined further down
+-- (it needs the palette constants) but has to be reachable from `endPass`,
+-- which every pass already calls. When the atlas is off this stays nil and
+-- costs one comparison a pass.
+local atlasFlush = nil
+
 --- Call after a batch of tree draws to restore the default pipeline.
 function Tree.endPass()
+  if atlasFlush then atlasFlush() end
   if cur.shader ~= nil then
     love.graphics.setShader()
     cur.shader = nil
@@ -1244,6 +1337,411 @@ local DEAD_TINT = P.mix(P.ramp.soil[3], P.ramp.sand[2], 0.4)
 local SHADOW_COL = P.ramp.rock[1]
 local STUMP_COL = P.ramp.bark[2]
 local STUMP_TOP = P.ramp.bark[3]
+
+-------------------------------------------------------------- sprite atlas
+-- ITEM F6, AND THE ONE THING IN THIS FILE THAT CHANGES HOW THE GAME LOOKS.
+--
+-- WHY. A tree is a `Mesh`, and a `Mesh` is never batched: it is its own GL
+-- draw call and it flushes whatever was accumulating. On top of that every
+-- tree sends its own `uT`, so even if meshes did batch, the uniform would
+-- break the run. Visible tree count IS the draw-call count, twice over -
+-- canopy and shadow - and on the shipping target (interpreted Lua over
+-- emscripten's WebGL) a draw call costs about 26 us. Four hundred trees is
+-- most of a 60 fps frame before a pixel is rasterised.
+--
+-- WHAT THIS DOES. Every cell of the mesh library - 5 species x 5 variants x 10
+-- growth buckets = 250 of them - is rendered ONCE, through the real tree
+-- shader, into one cell of one canvas. A tree then becomes a quad in a
+-- `SpriteBatch`, and the whole batched forest is one draw call per depth band.
+--
+-- WHAT IT COSTS, HONESTLY, BECAUSE THIS IS THE PART SOMEBODY HAS TO JUDGE:
+--
+--   * Sway stops being a bend and becomes a lean. The mesh shader displaces
+--     each vertex by `sway * h * h`: the trunk stays put, the crown swings,
+--     and the canopy trails the trunk by `canopyLag` seconds because each
+--     vertex mixes two different samples of the wind field. A sprite has one
+--     rotation, applied about the base, and a rotation is linear in height -
+--     so the whole tree tilts like a mast instead of bending like a tree, and
+--     the crown and the trunk are locked to the same phase. `atlasSwayLag`
+--     picks which of the two wind samples that single rotation follows.
+--   * Leaf loss goes. A chewed tree folds its foliage along the per-vertex
+--     blob offsets, which a sprite has no way to express, so any tree with
+--     `death` on it is sent back to the mesh path (there are never many).
+--   * Sun shading, rim and backlight are baked, so they are shared by every
+--     tree in a cell rather than being per-vertex - which they already were,
+--     the sun term is a function of the blob normal alone. What is lost is
+--     that they now go stale as the sun turns: the page is re-baked when the
+--     sun or the rim colour moves past `atlasSunStep`, which on a full day
+--     cycle is a few hundred re-bakes, each 250 mesh draws in one frame.
+--   * Elders lose their gold rim: it is a per-tree uniform in the mesh path
+--     and there is one page here, baked with the common cool rim.
+--   * Resolution. A cell is `atlasCell` pixels; a tree drawn bigger than that
+--     is a magnified bitmap. At the game's zoom a grown tree is 250-300 px, so
+--     a 128 px page is a 2x blow-up of the canopy detail.
+--   * Depth. A batch draws all at once, so a batched tree can sort up to one
+--     band out of order against a mesh tree or a bot in the same band.
+--
+-- What it does NOT lose: per-tree tint, fade, x-ray, squash-and-stretch, lean,
+-- chew sag, topple and the impact recoil, all of which are per-sprite colour
+-- and per-sprite transform; and the aerial perspective, which is banded in the
+-- batch shader rather than dropped.
+local atlas = {
+  canvas = nil, scanvas = nil, batch = nil, sbatch = nil,
+  quad = {}, scale = {}, baseY = {},
+  squad = {}, sscale = {}, sbaseY = {},
+  cell = 0, cols = 0, pad = 0, ox = 0, page = 0,
+  scell = 0, sox = 0, spage = 0,
+  format = nil, ready = false, failed = false,
+  key = nil, rebuilds = 0, n = 0, sn = 0, band = -1,
+  buildMs = 0,
+}
+Tree.atlas = atlas
+
+--- The switch. `TUNE.atlas` is the default and `BOTS_TREE_ATLAS=0|1` overrides
+--- it, so an A/B is an environment variable rather than an edit.
+local atlasWant = nil
+local atlasPx, atlasCellPx = nil, nil
+local function atlasEnabled()
+  if atlasWant == nil then
+    local v = bakeCfg("BOTS_TREE_ATLAS")
+    if v ~= nil then
+      atlasWant = (v ~= "0" and v ~= "false" and v ~= "off")
+    else
+      atlasWant = TUNE.atlas and true or false
+    end
+    atlasPx = tonumber(bakeCfg("BOTS_TREE_ATLAS_PX") or "") or TUNE.atlasPixels
+    atlasCellPx = floor(tonumber(bakeCfg("BOTS_TREE_ATLAS_CELL") or "") or TUNE.atlasCell)
+  end
+  return atlasWant and not atlas.failed
+end
+Tree.atlasEnabled = atlasEnabled
+
+--- Same shape as postfx's `pickFormat`, and for the same reason: under love.js
+--- there is NO `rgba8`. `getCanvasFormats()` there offers rgba16f, srgba8,
+--- rgb565, rgba4 and friends, and `normal` resolves to `rgba4` - four bits a
+--- channel, which would band a canopy visibly. `rgba16f` is asked for first so
+--- that the browser and the desktop get the same page: it is also the only one
+--- of them that holds the >1 values a sunlit crown reaches before the shader's
+--- soft shoulder brings them back. Requesting a format the driver does not have
+--- does not fail softly inside love.js - the error escapes `pcall` - so the
+--- list is filtered against `getCanvasFormats` first and only then tried.
+local function atlasFormats()
+  local out = {}
+  local fmts = love.graphics.getCanvasFormats and love.graphics.getCanvasFormats()
+  local want = { "rgba16f", "rgba8", "normal" }
+  for i = 1, #want do
+    local f = want[i]
+    if f == "normal" or (fmts and fmts[f]) then out[#out + 1] = f end
+  end
+  if #out == 0 then out[1] = "normal" end
+  return out
+end
+
+--- Everything baked into a page that is NOT a property of the tree's shape:
+--- the sun direction the shading was lit by and the rim colour it was rimmed
+--- with. Quantised, so the page is re-baked when the sky has actually moved
+--- rather than every frame. `rimEpoch` is useless for this - `setKeyRim` bumps
+--- it once a frame whether or not the colour changed - so the colour itself is
+--- what gets quantised.
+local function atlasSkyKey(sunX, sunY)
+  local q = 1 / max(TUNE.atlasSunStep, 0.001)
+  local function s(v) return floor((U.clamp(v, -2, 2) + 2) * q) % 67 end
+  local k = s(sunX)
+  k = k * 67 + s(sunY)
+  k = k * 67 + floor(U.saturate(RIM_KEY[1]) * 32)
+  k = k * 67 + floor(U.saturate(RIM_KEY[2]) * 32)
+  k = k * 67 + floor(U.saturate(RIM_KEY[3]) * 32)
+  k = k * 67 + floor(U.clamp(rimGain, 0, 2) * 32)
+  return k
+end
+
+--- Render (or re-render) every library cell into the page. One `setCanvas`, one
+--- shader bind, 250 mesh draws; the trees are drawn with no sway, no leaf loss,
+--- no death tint and no aerial perspective, because all four of those are still
+--- applied per tree at draw time.
+local function atlasBuild(sunX, sunY)
+  local lg = love.graphics
+  if not (lg.newCanvas and lg.newSpriteBatch and lg.setCanvas) then
+    atlas.failed = true; return false
+  end
+  initShaders()
+  if not shadersOK or not shAtlas then atlas.failed = true; return false end
+  local t0 = love.timer and love.timer.getTime() or 0
+
+  if not atlas.canvas then
+    local cell = max(16, atlasCellPx or TUNE.atlasCell)
+    local cols = 1
+    while cols * cols < CELLS do cols = cols + 1 end
+    -- One square page keeps the whole forest on one texture, which is the whole
+    -- point: two pages would be two batches and two draw calls a band.
+    while cols * cell > 4096 do cell = floor(cell / 2) end
+    local side = cols * cell
+    local cands = atlasFormats()
+    for i = 1, #cands do
+      local ok, c = pcall(lg.newCanvas, side, side, { format = cands[i] })
+      if ok and c then atlas.canvas, atlas.format = c, cands[i] break end
+    end
+    if not atlas.canvas then atlas.failed = true; return false end
+    atlas.canvas:setFilter("linear", "linear")
+    atlas.canvas:setWrap("clamp", "clamp")
+    atlas.cell, atlas.cols, atlas.pad = cell, cols, TUNE.atlasPad
+    atlas.ox, atlas.page = cell * 0.5, side
+    atlas.batch  = lg.newSpriteBatch(atlas.canvas, 1024, "stream")
+    -- The shadow silhouette is its own page, at half the canopy's resolution.
+    -- It has to be its own page because it is its own geometry: the shadow mesh
+    -- is a coarser, part-transparent tree PLUS the soft ground-contact ellipse
+    -- that the canopy mesh does not have, and reusing the canopy's alpha for it
+    -- - which the first version of this did - paints a hard, opaque, full-detail
+    -- crown on the ground where a soft blur belongs. Half resolution because it
+    -- is a blurred dark shape and nothing in it is legible.
+    local scell = max(16, floor(cell / 2))
+    local sside = cols * scell
+    for i = 1, #cands do
+      local ok, c = pcall(lg.newCanvas, sside, sside, { format = cands[i] })
+      if ok and c then atlas.scanvas = c break end
+    end
+    if not atlas.scanvas then atlas.failed = true; return false end
+    atlas.scanvas:setFilter("linear", "linear")
+    atlas.scanvas:setWrap("clamp", "clamp")
+    atlas.scell, atlas.sox, atlas.spage = scell, scell * 0.5, sside
+    atlas.sbatch = lg.newSpriteBatch(atlas.scanvas, 1024, "stream")
+  end
+
+  local cell, cols, pad = atlas.cell, atlas.cols, atlas.pad
+  local prevCanvas = lg.getCanvas()
+  local prevBlend, prevAlpha = lg.getBlendMode()
+  local sx, sy, sw, sh = lg.getScissor()
+  -- This runs from inside `Tree:draw`, which is inside the camera's push/scale
+  -- and inside whatever canvas the post chain has bound. Both have to go: a
+  -- page baked through the camera transform is a page of shredded offcuts,
+  -- which is exactly what the first run of this produced.
+  lg.push("all")
+  lg.origin()
+  lg.setScissor()
+  lg.setCanvas(atlas.canvas)
+  lg.clear(0, 0, 0, 0)
+  -- Onto transparent black with the ordinary alpha mode: what lands in the
+  -- canvas is colour times coverage, i.e. premultiplied, which is exactly what
+  -- the batch shaders above expect to sample.
+  lg.setBlendMode("alpha", "alphamultiply")
+  lg.setShader(shTree)
+  uSun[1], uSun[2] = sunX or 0, sunY or -1
+  uSun[3], uSun[4] = TUNE.sunContrast, TUNE.rimPower
+  shTree:send("uSun", uSun)
+  uAirB[1], uAirB[2], uAirB[3], uAirB[4] = 1, 1, 1, 0
+  shTree:send("uAir", uAirB)                 -- air is per tree; applied at draw
+  uRimC[1], uRimC[2], uRimC[3] = RIM_KEY[1], RIM_KEY[2], RIM_KEY[3]
+  uRimC[4] = TUNE.rimAlpha * rimGain
+  shTree:send("uRim", uRimC)
+  uBack[1], uBack[2], uBack[3] = RIM_WARM[1], RIM_WARM[2], RIM_WARM[3]
+  uBack[4] = TUNE.backAlpha
+  shTree:send("uBack", uBack)
+  uDth[1], uDth[2], uDth[3], uDth[4] = DEAD_TINT[1], DEAD_TINT[2], DEAD_TINT[3], 0
+  shTree:send("uDeath", uDth)
+  uT[1], uT[2], uT[3], uT[4] = 0, 0, 0, 0    -- no sway, no leaf loss, no depth
+  shTree:send("uT", uT)
+  lg.setColor(1, 1, 1, 1)
+
+  local i = 0
+  for spi = 1, #SPECIES do
+    for v = 0, TUNE.variants - 1 do
+      for b = 0, TUNE.buckets - 1 do
+        local key = libKey(spi, v, b)
+        if not LIB.meta[key] then ensure(spi, v, b) end
+        local m, meta = LIB.full[key], LIB.meta[key]
+        if m and meta then
+          local ey = max(meta.extentY or 1, 0.001)
+          local er = max(meta.extentR or 0.4, 0.001)
+          -- A cell holds the tree plus a tenth of its height below the root,
+          -- because a drooping conifer skirt hangs below y = 0 and `extentY`
+          -- only ever measured upwards.
+          local usable = cell - pad * 2
+          local s = min(usable / (er * 2), usable / (ey * 1.10))
+          local col, row = i % cols, floor(i / cols)
+          local cx = col * cell + cell * 0.5
+          local by = row * cell + pad + ey * s
+          atlas.quad[key]  = lg.newQuad(col * cell, row * cell, cell, cell,
+                                        atlas.page, atlas.page)
+          atlas.scale[key] = s
+          atlas.baseY[key] = by - row * cell
+          -- Scissored per cell: a crown that overruns its cell would otherwise
+          -- smear into its neighbour and every tree of that variant would wear
+          -- a piece of another species.
+          lg.setScissor(col * cell + 1, row * cell + 1, cell - 2, cell - 2)
+          lg.draw(m, cx, by, 0, s, s)
+        end
+        i = i + 1
+      end
+    end
+  end
+
+  -- ... and the shadow page, from the shadow meshes, with the projection left
+  -- at identity: the projection is a shear and a y-scale, and both are applied
+  -- per sprite at draw time so the sun can move without a re-bake.
+  local scell = atlas.scell
+  lg.setCanvas(atlas.scanvas)
+  lg.clear(0, 0, 0, 0)
+  lg.setShader(shShadow)
+  uPrj[1], uPrj[2], uPrj[3], uPrj[4] = 0, 0, 0, 1
+  shShadow:send("uProj", uPrj)
+  uShd[1], uShd[2], uShd[3], uShd[4] = 1, 1, 1, 1   -- a white silhouette; the
+  shShadow:send("uShadow", uShd)                    -- colour is sent at draw
+  shShadow:send("uT", uT)
+  i = 0
+  for spi = 1, #SPECIES do
+    for v = 0, TUNE.variants - 1 do
+      for b = 0, TUNE.buckets - 1 do
+        local key = libKey(spi, v, b)
+        local m, meta = LIB.shadow[key], LIB.meta[key]
+        if m and meta then
+          local ey = max(meta.extentY or 1, 0.001)
+          local er = max(meta.extentR or 0.4, 0.001)
+          local usable = scell - pad * 2
+          -- the contact ellipse is wider at the root than the crown is, and
+          -- `extentR` was measured off the canopy mesh, so leave it room
+          local sc = min(usable / (er * 2.30), usable / (ey * 1.15))
+          local col, row = i % cols, floor(i / cols)
+          atlas.squad[key]  = lg.newQuad(col * scell, row * scell, scell, scell,
+                                         atlas.spage, atlas.spage)
+          atlas.sscale[key] = sc
+          atlas.sbaseY[key] = pad + ey * sc
+          lg.setScissor(col * scell + 1, row * scell + 1, scell - 2, scell - 2)
+          lg.draw(m, col * scell + scell * 0.5, row * scell + pad + ey * sc, 0, sc, sc)
+        end
+        i = i + 1
+      end
+    end
+  end
+  cur.sunAngle, cur.sunLen, cur.ambient = nil, nil, nil
+  cur.shadKey = nil
+
+  lg.setScissor()
+  lg.setCanvas(prevCanvas)
+  lg.pop()
+  lg.setBlendMode(prevBlend, prevAlpha)
+  if sw then lg.setScissor(sx, sy, sw, sh) else lg.setScissor() end
+  lg.setShader()
+  -- Every uniform the pass-state cache thought it knew about shTree has just
+  -- been overwritten behind its back.
+  cur.shader, cur.mode, cur.sunX, cur.sunY = nil, nil, nil, nil
+  cur.rimKey, cur.deathKey, cur.backKey, cur.airKey = nil, nil, nil, nil
+  atlas.ready = true
+  atlas.rebuilds = atlas.rebuilds + 1
+  atlas.buildMs = ((love.timer and love.timer.getTime() or 0) - t0) * 1000
+  return true
+end
+
+--- Called once at the top of each tree pass. Builds the page on first use and
+--- re-bakes it when the sky has moved far enough to make the baked shading a
+--- lie. Returns false if the atlas is off or unavailable, which is the mesh
+--- path's cue to do what it always did.
+local function atlasReady(sunX, sunY)
+  if not atlasEnabled() then return false end
+  local k = atlasSkyKey(sunX or 0, sunY or -1)
+  if atlas.key ~= k then
+    if not atlasBuild(sunX, sunY) then return false end
+    atlas.key = k
+  end
+  return atlas.ready
+end
+Tree.atlasReady = atlasReady
+
+--- Which depth band a tree at world y falls in. `visTrees` arrives in depth
+--- order, so this only ever increases inside a pass and one comparison catches
+--- the boundary.
+local function atlasBandOf(y)
+  local n = TUNE.atlasBands
+  local i = floor(U.saturate((y - view.y) / max(view.h, 1)) * n)
+  if i >= n then i = n - 1 end
+  return i
+end
+
+--- Draw everything queued for the current band, in one call per non-empty
+--- batch, and reset. This is the only place the batched forest reaches the GPU.
+atlasFlush = function()
+  if atlas.n == 0 and atlas.sn == 0 then return end
+  local lg = love.graphics
+  local band = atlas.band
+  if band < 0 then band = 0 end
+  lg.setColor(1, 1, 1, 1)
+  lg.setBlendMode("alpha", "premultiplied")
+  if atlas.n > 0 then
+    -- the same number `sendTreeUniform` puts in uT.w, taken at the band centre
+    local yc = view.y + view.h * ((band + 0.5) / TUNE.atlasBands)
+    shAtlas:send("uAirA", uAir)
+    shAtlas:send("uDepthA", U.saturate((view.y + view.h - yc) / view.h) ^ 1.6)
+    lg.setShader(shAtlas)
+    lg.draw(atlas.batch)
+    atlas.batch:clear()
+    atlas.n = 0
+  end
+  if atlas.sn > 0 then
+    lg.setShader(shAtlasShadow)
+    lg.draw(atlas.sbatch)
+    atlas.sbatch:clear()
+    atlas.sn = 0
+  end
+  lg.setBlendMode("alpha")
+  lg.setShader()
+  cur.shader = nil
+end
+
+--- Queue one tree's canopy. Returns false if there is no cell for it, in which
+--- case the caller falls back to the mesh.
+local function atlasAdd(tr)
+  local q = atlas.quad[tr.key]
+  if not q then return false end
+  local band = atlasBandOf(tr.y)
+  if band ~= atlas.band then atlasFlush() atlas.band = band end
+  local s = atlas.scale[tr.key]
+  local a = tr.fade * (1 - (tr.xray or 0) * TUNE.xrayAlpha)
+  local w = TUNE.atlasSwayLag
+  local rot = tr.drot + (tr.swayNow * (1 - w) + tr.swayLag * w) * TUNE.atlasSwayGain
+  local b = atlas.batch
+  -- premultiplied: the tint and the fade go into the colour together
+  b:setColor(tr.tintR * a, tr.tintG * a, tr.tintB * a, a)
+  b:add(q, tr.x, tr.y, rot, tr.dsx / s, tr.dsy / s, atlas.ox, atlas.baseY[tr.key])
+  atlas.n = atlas.n + 1
+  return true
+end
+
+--- Queue one tree's shadow, off the shadow page.
+---
+--- SHADOW_SHADER's projection is linear in the vertex position - x picks up
+--- `h * dir.x * len` and y is scaled by `squash - dir.y * len`, with h = -y -
+--- so the same projection is exactly a shear and a y-scale on the sprite, and
+--- the sun can move without a re-bake. What it is not is a *bend*: the mesh
+--- projects the swayed tree, this projects the tree and then leans it, so a
+--- shadow's sway is a lean here for the same reason the canopy's is.
+---
+--- One real difference. In the mesh the contact ellipse is pinned at h = 0 and
+--- so keeps the full `shadowSquash` while everything above it is thrown away
+--- from the sun; here it takes the same y-scale as the crown, which flattens it
+--- and slants it. It is a soft disc either way, but it is not the same disc.
+local function atlasAddShadow(tr, dirX, dirY, len, fade)
+  local q = atlas.squad[tr.key]
+  if not q then return false end
+  local band = atlasBandOf(tr.y)
+  if band ~= atlas.band then atlasFlush() atlas.band = band end
+  local s = atlas.sscale[tr.key]
+  local w = TUNE.atlasSwayLag
+  local rot = tr.drot + (tr.swayNow * (1 - w) + tr.swayLag * w) * TUNE.atlasSwayGain
+  local b = atlas.sbatch
+  b:setColor(1, 1, 1, fade)
+  b:add(q, tr.x, tr.y, rot,
+        tr.dsx / s, (tr.dsy / s) * (TUNE.shadowSquash - dirY * len),
+        atlas.sox, atlas.sbaseY[tr.key], -dirX * len, 0)
+  atlas.sn = atlas.sn + 1
+  return true
+end
+
+--- Page geometry and the run's re-bake count, for the report.
+function Tree.atlasStats()
+  return { on = atlasEnabled(), ready = atlas.ready, failed = atlas.failed,
+           format = atlas.format, page = atlas.page, cell = atlas.cell,
+           cells = CELLS, rebuilds = atlas.rebuilds, buildMs = atlas.buildMs,
+           pixels = atlasPx or TUNE.atlasPixels }
+end
 
 --------------------------------------------------------------------- Tree
 -- The off-screen rota's slot, dealt round-robin rather than drawn from the
@@ -1813,6 +2311,25 @@ function Tree:drawShadow(sunAngle, sunLength, ambient)
   if band > 0 and px < TUNE.shadowPixels + band then
     fade = fade * (px - TUNE.shadowPixels) / band
   end
+  -- Sprite-atlas path (item F6, off by default). The shadow silhouette is the
+  -- canopy cell projected by a shear and a y-scale; see `atlasAddShadow`.
+  if TUNE.atlasShadow and px <= (atlasPx or TUNE.atlasPixels) and self.alive
+     and self.death < 0.02 and atlasReady(cos(sunAngle), sin(sunAngle)) then
+    if fillOn then
+      local k = self.size * (Tree.zoom or 1)
+      Tree.fill.shadow = Tree.fill.shadow + (self.meta.areaShadow or 0) * k * k
+    end
+    if cur.shadKey ~= (ambient or 0.3) then
+      cur.shadKey = ambient or 0.3
+      uShd[1], uShd[2], uShd[3] = SHADOW_COL[1], SHADOW_COL[2], SHADOW_COL[3]
+      uShd[4] = TUNE.shadowAlpha * (1 - (ambient or 0.3) * 0.55)
+      shAtlasShadow:send("uShadowA", uShd)
+    end
+    if atlasAddShadow(self, cos(sunAngle), sin(sunAngle), sunLength or 1.0, fade) then
+      return
+    end
+  end
+
   local mesh = LIB.shadow[self.key]
   if not mesh then return end
 
@@ -1893,6 +2410,23 @@ function Tree:draw(sunDirX, sunDirY)
   local zoom = Tree.zoom or 1
   local px = self.height * zoom
   local big = px >= TUNE.rimPixels
+
+  -- Sprite-atlas path (item F6, off by default). A tree that is small enough on
+  -- screen, alive, and not part-way through being eaten - leaf loss is the one
+  -- per-vertex effect a sprite cannot carry - becomes a quad in the batch and
+  -- issues no draw call of its own.
+  if px <= (atlasPx or TUNE.atlasPixels) and self.death < 0.02 and self.alive
+     and atlasReady(sunDirX, sunDirY) then
+    if atlasAdd(self) then
+      if fillOn then
+        local k = self.size * zoom
+        Tree.fill.canopy = Tree.fill.canopy + (self.meta.areaFull or 0) * k * k
+      end
+      if self.lpn > 0 then self:drawLeaves() end
+      return
+    end
+  end
+
   local mesh = (px < TUNE.lodPixels) and LIB.lod[self.key] or LIB.full[self.key]
   if not mesh then mesh = LIB.full[self.key] end
   if not mesh then return end
