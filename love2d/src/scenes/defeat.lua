@@ -24,9 +24,108 @@ local floor, min, max = math.floor, math.min, math.max
 local S = {}
 
 local SEQ = { head = 0.40, sub = 1.30, stats = 2.20, names = 2.90, nameStep = 0.34,
-              foot = 4.20 }
+              foot = 4.20, world = 0.10 }
 local NAME_MAX = 5
 local PROMPTS = { { "confirm", "BEGIN AGAIN" } }
+
+-- The island, from a long way off, and the column of air still going up out of
+-- it. The screen used to be pure black under the type -- correct as a mood and
+-- wrong as a picture: at 16:9 the bottom four hundred pixels read as a page
+-- that had not finished loading. Everything here is near-black on purpose. It
+-- is a floor for the type to stand on, not a scene.
+local SIL = { built = false, ridge = {}, trees = {} }
+
+local function buildSil(w, h)
+  if SIL.built and SIL.w == w and SIL.h == h then return end
+  SIL.built, SIL.w, SIL.h = true, w, h
+  local rng = U.rng(90210)
+  local base = h * 0.86
+  for i = 0, 48 do
+    local u = i / 48
+    -- one long swell with a smaller one riding on it: an island, not a hill
+    local y = base - math.sin(u * 3.1 + 0.6) * h * 0.055
+                   - math.sin(u * 7.7 + 2.2) * h * 0.016
+    SIL.ridge[i + 1] = { x = u * w, y = y }
+  end
+  for i = 1, 26 do
+    local u = rng:next()
+    local x = u * w
+    local seg = math.min(48, math.floor(u * 48) + 1)
+    local y = SIL.ridge[seg].y
+    SIL.trees[i] = { x = x, y = y, h = rng:range(h * 0.018, h * 0.052),
+                     lean = rng:range(-0.16, 0.16), n = rng:int(3, 5),
+                     seed = rng:int(1, 9999) }
+  end
+end
+
+--- Bare trees. Nothing on this island has leaves any more.
+local function drawSil(w, h, a)
+  if a <= 0.01 then return end
+  buildSil(w, h)
+  local r = SIL.ridge
+  -- A silhouette needs something to be a silhouette *against*: black land on a
+  -- black sky is nothing at all. The horizon carries a dim wash of the colour
+  -- the rig took, and the island and its dead trees are cut out of it.
+  local hy = h * 0.86
+  UI.vgrad(0, hy - h * 0.30, w, h * 0.30, P.black, P.o2, 0, 0.085 * a)
+  UI.vgrad(0, hy - h * 0.30, w, h * 0.30, P.black, P.ramp.rift[3], 0, 0.05 * a)
+
+  Draw.setColor(P.black, a)
+  -- a strip of quads, because a 50-point concave polygon is not triangulable
+  for i = 1, #r - 1 do
+    lg.polygon("fill", r[i].x, r[i].y, r[i + 1].x, r[i + 1].y,
+                       r[i + 1].x, h, r[i].x, h)
+  end
+  -- the rim of the ridge, catching what light is left
+  Draw.setColor(UI.mix(P.black, P.o2, 0.42), 0.55 * a)
+  lg.setLineWidth(1.5)
+  for i = 1, #r - 1 do lg.line(r[i].x, r[i].y, r[i + 1].x, r[i + 1].y) end
+
+  Draw.setColor(P.black, a)
+  for i = 1, #SIL.trees do
+    local t = SIL.trees[i]
+    local tx = t.x + t.lean * t.h
+    lg.setLineWidth(2)
+    lg.line(t.x, t.y, tx, t.y - t.h)
+    for j = 1, t.n do
+      local k = j / (t.n + 1)
+      local bx, by = U.lerp(t.x, tx, k), U.lerp(t.y, t.y - t.h, k)
+      local side = (j % 2 == 0) and 1 or -1
+      lg.setLineWidth(1.4)
+      lg.line(bx, by, bx + side * t.h * 0.30, by - t.h * 0.22)
+    end
+  end
+end
+
+--- The column, still going. It did not stop when the run did.
+---
+--- Soft across its width, not three stacked trapezoids: a hard-sided shaft
+--- with banding steps in it reads as a UI element rather than as light. The
+--- seam between the two halves falls on the bright centre line, where it
+--- cannot be seen.
+local function drawColumn(w, h, a)
+  if a <= 0.01 then return end
+  -- between the two type columns, not behind the names: the last thing this
+  -- screen should do is put a light source under a list of the dead
+  local x = w * 0.60
+  local base = h * 0.855
+  local top = -h * 0.05
+  local c = P.ramp.rift[3]
+  local bm, am = lg.getBlendMode()
+  lg.setBlendMode("add", "alphamultiply")
+  for side = -1, 1, 2 do
+    Draw.quad(x, base, x + 26 * side, base, x + 92 * side, top, x, top,
+              c, c, c, c, 0)
+    Draw.quad(x, base, x + 26 * side, base, x + 92 * side, top, x, top,
+              UI.c(c, 0.10 * a), UI.c(c, 0), UI.c(c, 0), UI.c(c, 0.05 * a))
+  end
+  -- the hot line up the middle
+  Draw.setColor(UI.mix(c, P.white, 0.5), 0.07 * a)
+  lg.setLineWidth(3)
+  lg.line(x, base, x, top)
+  lg.setLineWidth(1)
+  lg.setBlendMode(bm, am)
+end
 
 function S:enter(world)
   self.world = world
@@ -80,6 +179,9 @@ function S:draw()
   -- quite empty, and what is left of it is the colour of the thing they stole
   local bk = U.saturate(t * 0.5)
   UI.vgrad(0, 0, w, h * 0.6, P.o2, P.black, 0.035 * bk, 0)
+  local wk = UI.stagger(t, 1, SEQ.world, 0, 2.6)
+  drawColumn(w, h, wk)
+  drawSil(w, h, wk)
   UI.vignette(0.6 * bk)
 
   local x0 = floor(max(UI.pad * 3, w * 0.08) / UI.u) * UI.u
@@ -87,7 +189,7 @@ function S:draw()
   -- The whole composition is one block, centred vertically: at 0.22h it sat in
   -- the top third with four hundred pixels of nothing under it, which reads as
   -- unfinished rather than as quiet.
-  local y = floor(max(UI.pad * 3, (h - 330) * 0.42) / UI.u) * UI.u
+  local y = floor(max(UI.pad * 3, (h * 0.82 - 340) * 0.5) / UI.u) * UI.u
 
   -- headline
   local hk = UI.stagger(t, 1, SEQ.head, 0, 0.9, U.ease.outExpo)
