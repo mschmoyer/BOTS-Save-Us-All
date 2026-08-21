@@ -1236,7 +1236,13 @@ def("o2_milestone", {
 
 --------------------------------------------------------------- music one-shots
 -- The score is a sequencer, not a stem: engine/music.lua schedules these.
--- One chromatic octave per instrument; octaves come free from source pitch.
+--
+-- Each instrument renders a chromatic run from C3; `octaves` says how many.
+-- Anything outside the rendered run is reached by resampling the source, which
+-- also rescales it in *time* -- so an instrument whose written range runs past
+-- its bank changes timbre and decay length halfway through a phrase. The melody
+-- bell and the arpeggio both sit an octave above the bed, so both render three
+-- octaves and the tune keeps one voice from its lowest note to its highest.
 local MUSIC_BASE = 48   -- C3
 
 local MUSIC = {}
@@ -1292,7 +1298,7 @@ end })
 -- BELL -- the melody instrument. It carries the theme in every state and it is
 -- the only thing left at the ending, so it gets a mineral partial structure and
 -- real air rather than an FM sine with reverb on it.
-mdef("bell", { gain = 0.5, dur = 1.8, sparse = 3, build = function(hz)
+mdef("bell", { gain = 0.5, dur = 1.8, sparse = 3, octaves = 3, build = function(hz)
   return { dur = 1.8, layers = {
     { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.0018, curve = 3 }, amp = 0.22 },
     { osc = "fm", freq = hz, ratio = 3.01, index = { type = "exp", tau = 0.09, peak = 2.3 },
@@ -1310,7 +1316,7 @@ mdef("bell", { gain = 0.5, dur = 1.8, sparse = 3, build = function(hz)
   }, normalize = 0.8, trim = false }
 end })
 
-mdef("pluck", { gain = 0.4, dur = 0.9, sparse = 2, build = function(hz)
+mdef("pluck", { gain = 0.4, dur = 0.9, sparse = 3, octaves = 3, build = function(hz)
   return { dur = 0.9, layers = { { osc = "pluck", freq = hz, damp = 0.42, decay = 0.9955,
                                    soft = 0.4, amp = 0.7 } },
     fx = { { "svf", type = "lp", cutoff = 5200, q = 0.9 },
@@ -1430,7 +1436,9 @@ function Audio.load()
     -- from one synthesised there, and it is three times cheaper to build.
     local step = m.sparse or 1
     local anchors = {}
-    for st = 0, 11 do
+    local span = 12 * (m.octaves or 1)
+    entry.span = span
+    for st = 0, span - 1 do
       local a = floor(st / step) * step
       local buf
       if st == a then
@@ -1809,14 +1817,20 @@ function Audio.playMusic(inst, semitoneFromC3, opts)
   if not entry then return nil end
   opts = opts or {}
   local st = semitoneFromC3 or 0
-  local nv = #entry.data
+  local span = entry.span
   local vi, ratio
-  if nv == 12 then
-    local oct = floor(st / 12)
-    vi = st - oct * 12 + 1
+  if span then
+    -- Fold the written pitch into the rendered range by whole octaves, taking
+    -- the *fewest* octaves possible, so a note only ever resamples as far as it
+    -- has to. Resampling is also a time-stretch: two octaves of it turns a bell
+    -- into a blip, and the melody must not change instrument mid-phrase.
+    local k, oct = st, 0
+    while k < 0 do k = k + 12 oct = oct - 1 end
+    while k > span - 1 do k = k - 12 oct = oct + 1 end
+    vi = k + 1
     ratio = 2 ^ oct
   else
-    vi = rng:int(1, nv)
+    vi = rng:int(1, #entry.data)
     ratio = 2 ^ (st / 12)
   end
   opts.variation = vi

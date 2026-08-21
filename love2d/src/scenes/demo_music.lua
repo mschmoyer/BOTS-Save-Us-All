@@ -148,7 +148,7 @@ function S:draw()
   g.rectangle("fill", 32, 72, W - 64, 1)
 
   ------------------------------------------------------------------ the roll
-  local rx, ry, rw, rh = 32, 96, W - 64, floor(H * 0.42)
+  local rx, ry, rw, rh = 32, 96, W - 64, floor(H * 0.38)
   panel(rx, ry, rw, rh, "the theme  ·  four bars  ·  call | answer")
   drawRoll(rx + 20, ry + 40, rw - 40, rh - 70, d)
   g.setFont(FONT_S) g.setColor(P.inkFaint)

@@ -460,9 +460,21 @@ function S:layout(interactive)
   UI.o.tracking = nil
   local colW = max(logoW, 336)
 
-  local menuY = logoY + logoSize + 160
   local rowH = 64
   local gap = UI.u
+  -- The browser build runs at whatever aspect the window is, and a phone in
+  -- landscape is nearly 2.2:1. Anchor the column to the bottom of the screen so
+  -- it can never grow down through the prompt row, and let it ride up under the
+  -- logo when there is room.
+  local menuH = #MENU * (rowH + gap) - gap
+  local bottomLimit = h - UI.pad * 2 - 46 - menuH
+  local menuY = min(logoY + logoSize + 160, bottomLimit)
+  menuY = max(menuY, logoY + logoSize + 40)
+  -- if it still does not fit, tighten the rows rather than overlap
+  if menuY + menuH > h - UI.pad * 2 - 40 then
+    rowH = max(40, floor((h - UI.pad * 2 - 40 - menuY - (#MENU - 1) * gap) / #MENU))
+    menuH = #MENU * (rowH + gap) - gap
+  end
 
   if interactive then
     local ctx = self.ctx

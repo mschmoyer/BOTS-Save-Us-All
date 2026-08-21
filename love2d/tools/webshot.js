@@ -9,7 +9,17 @@ const path = require('path');
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
            '--ignore-gpu-blocklist', '--enable-webgl', '--no-sandbox']
   });
-  const page = await browser.newPage({ viewport: { width: +W, height: +H }, deviceScaleFactor: 1 });
+  const mobile = !!process.env.MOBILE;
+  const page = await browser.newPage({
+    viewport: { width: +W, height: +H },
+    deviceScaleFactor: mobile ? 3 : 1,
+    hasTouch: mobile,
+    isMobile: mobile,
+    userAgent: mobile
+      ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 '
+        + '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+      : undefined,
+  });
   const logs = [];
   page.on('console', m => logs.push(`[${m.type()}] ${m.text()}`));
   page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
@@ -32,6 +42,12 @@ const path = require('path');
       await page.waitForTimeout(+(ms || 300));
       await page.keyboard.up(k);
     }
+  }
+  // drag a virtual thumb so the touch layer has something to show
+  if (process.env.TOUCH) {
+    const [x1, y1, x2, y2] = process.env.TOUCH.split(',').map(Number);
+    await page.touchscreen.tap(x1, y1);
+    await page.waitForTimeout(200);
   }
   if (process.env.POSTWAIT) await page.waitForTimeout(+process.env.POSTWAIT);
   await page.screenshot({ path: out });

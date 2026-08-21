@@ -169,14 +169,16 @@ local function renderMusic(state, secs, opts)
     local semis = st
     local entry = Audio.music[inst]
     if not entry then return nil end
-    local nv = #entry.data
+    local span = entry.span
     local vi, ratio
-    if nv == 12 then
-      local oct = floor(st / 12)
-      vi = st - oct * 12 + 1
+    if span then
+      local k, oct = st, 0
+      while k < 0 do k = k + 12 oct = oct - 1 end
+      while k > span - 1 do k = k - 12 oct = oct + 1 end
+      vi = k + 1
       ratio = 2 ^ oct
     else
-      vi = 1 + (#events % nv)
+      vi = 1 + (#events % #entry.data)
       ratio = 2 ^ (st / 12)
     end
     events[#events + 1] = { inst = inst, vi = vi, ratio = ratio * ((o and o.pitch) or 1),
