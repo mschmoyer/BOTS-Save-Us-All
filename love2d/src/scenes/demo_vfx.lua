@@ -406,17 +406,13 @@ function S:drawDecals()
            0, h - 46, w, "center")
 end
 
-local SHAPE_ORDER = { "dot", "disc", "streak", "spark", "shard", "leaf",
-                      "smoke", "heart", "annulus", "mote", "bubble", "drop",
-                      "flare", "plus", "blob", "halo" }
-
 function S:drawShapes()
   local w, h = self.w, self.h
   local g = love.graphics
   local cols, cw = 8, w / 8
   local chh = (h - 90) / 4
   g.setFont(self.fontM)
-  for i, name in ipairs(SHAPE_ORDER) do
+  for i, name in ipairs(VFX.SHAPES) do
     local col = (i - 1) % cols
     local row = floor((i - 1) / cols)
     local x = col * cw + cw * 0.5

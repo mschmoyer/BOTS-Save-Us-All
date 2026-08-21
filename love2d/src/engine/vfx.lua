@@ -38,11 +38,12 @@ VFX.LAYERS = LAYERS
 local SHAPES = {
   "dot", "disc", "streak", "spark",
   "shard", "leaf", "smoke", "heart",
-  "annulus", "mote", "bubble", "drop",
-  "flare", "plus", "blob", "halo",
+  "glow", "mote", "bubble", "drop",
+  "flare", "spore", "blob", "halo",
 }
 local QUAD_IX = {}
 for i, n in ipairs(SHAPES) do QUAD_IX[n] = i end
+VFX.SHAPES = SHAPES
 
 local function sdSeg(px, py, ax, ay, bx, by)
   local dx, dy = bx - ax, by - ay
@@ -121,32 +122,49 @@ SHAPE_FN.leaf = function(u, v, r)
   return a, U.clamp(0.98 - rib - edge - abs(vv) * 0.55, 0.3, 1)
 end
 
+-- Six lobes summed and then *clipped* to 1 gave a flat-topped plateau with a
+-- short rolloff: at 40px that is a puff, at 300px it is a hexagon with an edge,
+-- which is exactly what a pale shape floating over a canopy must never have.
+-- Soft-compress the sum instead of clamping it, and take the falloff all the
+-- way out to the cell, so the silhouette never resolves into a polygon.
+local SMOKE_X = { 0.00, 0.34, -0.32, 0.10, -0.22, 0.24 }
+local SMOKE_Y = { 0.00, -0.24, -0.12, 0.34, 0.28, 0.18 }
+local SMOKE_S = { 1.7, 2.3, 2.4, 2.4, 2.6, 2.8 }
 SHAPE_FN.smoke = function(u, v, r)
   local a = 0
-  local ox = { 0.00, 0.34, -0.32, 0.10, -0.22, 0.24 }
-  local oy = { 0.00, -0.24, -0.12, 0.34, 0.28, 0.18 }
-  local sc = { 1.7, 2.3, 2.4, 2.4, 2.6, 2.8 }
   for i = 1, 6 do
-    local dx, dy = u - ox[i], v - oy[i]
-    a = a + g2(sqrt(dx * dx + dy * dy), sc[i]) * 0.5
+    local dx, dy = u - SMOKE_X[i], v - SMOKE_Y[i]
+    a = a + g2(sqrt(dx * dx + dy * dy), SMOKE_S[i]) * 0.5
   end
-  a = U.saturate(a) * U.smoothstep(1.08, 0.62, r)
+  a = (1 - exp(-a * 1.6)) * U.smoothstep(1.12, 0.55, r)
   local lr = sqrt((u + 0.26) * (u + 0.26) + (v + 0.26) * (v + 0.26))
   return a, U.clamp(1.0 - lr * 0.48, 0.4, 1)
 end
 
+-- A heart drawn as a decal has an edge, and twenty of them over a sunlit canopy
+-- read as stickers. Two bands: a wide soft bloom in the shape of the heart, and
+-- a denser body inside it. The silhouette survives; the cut-out does not.
 SHAPE_FN.heart = function(u, v, r)
   local x, y = u * 1.42, -v * 1.42 + 0.10
   local q = x * x + y * y - 1
   local f = q * q * q - x * x * y * y * y
-  local a = U.smoothstep(0.14, -0.04, f)
+  -- Dilating the implicit surface to soften it just fills the cleft in, and a
+  -- heart without its cleft is a blob. Keep the silhouette and hang a radial
+  -- bloom off it instead, so the shape survives and the cut-out edge does not.
+  local body = U.smoothstep(0.24, -0.05, f)
+  local a = U.saturate(body * 0.80 + g2(r, 1.45) * 0.34) * U.smoothstep(1.12, 0.84, r)
   local lr = sqrt((u + 0.24) * (u + 0.24) + (v + 0.30) * (v + 0.30))
   return a, U.clamp(1.05 - lr * 0.55, 0.42, 1)
 end
 
-SHAPE_FN.annulus = function(u, v, r)
-  local a = g2(r - 0.62, 6.2)
-  return a, 0.6 + 0.4 * a
+-- The one shape allowed to be large and pale, because it has no silhouette to
+-- give away: a small hot core sitting in a long gaussian tail that reaches the
+-- edge of the cell at zero. Everything ambient in the air is made of this.
+SHAPE_FN.glow = function(u, v, r)
+  local core = g2(r, 5.0)
+  local body = g2(r, 1.45)
+  local a = U.saturate(core * 0.85 + body * 0.42) * U.smoothstep(1.10, 0.60, r)
+  return a, 0.5 + 0.5 * core
 end
 
 SHAPE_FN.mote = function(u, v, r)
@@ -180,11 +198,21 @@ SHAPE_FN.flare = function(u, v, r)
   return U.saturate(core + h + w), 0.7 + 0.3 * g2(r, 3.4)
 end
 
-SHAPE_FN.plus = function(u, v, r)
-  local h = g2(v, 24) * g2(u, 1.32)
-  local w = g2(u, 24) * g2(v, 1.32)
-  local core = g2(r, 7)
-  return U.saturate(h + w + core * 0.8), 0.72 + 0.28 * core
+-- Fungal, not magical. An off-centre body with three filaments feathering out
+-- of one side: the Blight got its ambient drift from the same four-point
+-- sparkle as pollen, cobalt and the player's own pulse, which is why its air
+-- read as enchantment instead of infection.
+local SPORE_A = { 0.62, 2.35, 4.35 }
+local SPORE_L = { 0.66, 0.84, 0.54 }
+SHAPE_FN.spore = function(u, v, r)
+  local bx, by = u - 0.10, v + 0.08
+  local a = g2(sqrt(bx * bx + by * by), 2.35)
+  for i = 1, 3 do
+    local an = SPORE_A[i]
+    a = a + g2(sdSeg(u, v, 0, 0, cos(an) * SPORE_L[i], sin(an) * SPORE_L[i]), 9.5) * 0.40
+  end
+  a = U.saturate(a) * U.smoothstep(1.08, 0.78, r)
+  return a, U.clamp(0.94 - by * 0.45, 0.34, 1)
 end
 
 SHAPE_FN.blob = function(u, v, r)

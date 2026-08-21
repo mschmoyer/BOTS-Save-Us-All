@@ -323,15 +323,28 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float macroV = fbm3(w * 0.00058 + 311.0);
   col *= 0.78 + 0.46 * smoothstep(0.24, 0.80, macroV);
   col *= 0.93 + 0.16 * fbm3(w * 0.00072 + 47.0);
-  // sun-bleached dry grass, in broad regions where the moisture runs out
-  float dry = smoothstep(0.60, 0.26, moist)
-            * smoothstep(0.34, 0.66, fbm3(w * 0.00095 + 123.0)) * (1.0 - marshHint);
-  // Straw, not sand. At 0.62 of the way to the sand ramp this put a pale sandy
-  // halo round every rock spine and every scar -- exactly where the moisture
-  // runs out -- and the halo read as a footpath.
-  vec3 dryC = mix(ramp(cGrass[0], cGrass[1], cGrass[2], cGrass[3], 1.9 + (d2 - 0.5) * 0.6),
-                  ramp(cSand[0], cSand[1], cSand[2], cSand[3], 1.7 + (d1 - 0.5) * 0.7), 0.44);
-  col = mix(col, dryC * 0.86, dry * 0.72);
+  // Sun-bleached dry sward. Driven mostly by its own broad fields and only
+  // nudged by the moisture: moisture is smooth and falls away monotonically
+  // from wet ground, so a threshold on it alone lands on an isoline and paints
+  // a contour band round every spine and every scar -- which is exactly what
+  // reads as a mown verge. Two scales of field, bitten at the pixel by the same
+  // detail octaves the coastline uses, so its edge is grass and not a curve.
+  float dryX = (fbm3(w * 0.00105 + 123.0) * 0.62 + fbm3(w * 0.0034 + 57.0) * 0.38) * 0.76
+             + (1.0 - moist) * 0.44
+             + (d1 - 0.5) * 0.22 + (d2 - 0.5) * 0.14 + (d3 - 0.5) * 0.07;
+  float dry = smoothstep(0.50, 0.85, dryX) * (1.0 - marshHint);
+  // ...and it is not equally dry where it is dry. Riding the macro value keeps
+  // the parched ground on the sunlit rises, where it belongs, and lets the band
+  // fade out entirely in stretches so it never closes into a ring.
+  dry *= 0.34 + 0.86 * macroV;
+  // Straw, not sand, and mixed out of the ground it is replacing rather than
+  // fetched from another ramp: at 0.62 of the way to the sand ramp this put a
+  // pale sandy halo round every rock spine, and the halo read as a footpath.
+  vec3 dryC = mix(col, ramp(cGrass[0], cGrass[1], cGrass[2], cGrass[3],
+                            2.00 + (d2 - 0.5) * 0.75), 0.52);
+  dryC = mix(dryC, vec3(dot(dryC, vec3(0.299, 0.587, 0.114))), 0.38);
+  dryC = mix(dryC, cWither, 0.20 + 0.14 * d1);
+  col = mix(col, dryC * 0.96, clamp(dry, 0.0, 1.0) * 0.82);
 
   // dry dirt patches gnawing into the grass
   float dirt = smoothstep(0.575, 0.760, fbm3(w * 0.0068 + 61.0) + (d2 - 0.5) * 0.20);
@@ -1534,6 +1547,39 @@ local function stoneChip(x, y, r, rng, cShade, cBody)
   love.graphics.polygon("fill", unpack(pts))
 end
 
+--- A curled flake of lifted crust: a pale chip standing off the ground with its
+--- own shadow under the down-sun side. Half a dozen of these per scar say
+--- "the surface here has come away" in a way no amount of speckle does.
+local function crustFlake(x, y, r, rng, cShade, cFace, cLip)
+  local pts = shardPts(x, y, r, rng:angle(), 5, 0.66, 0.62, rng)
+  local sh = {}
+  for k = 1, #pts, 2 do
+    sh[k]     = pts[k]     - SUN[1] * r * 0.55
+    sh[k + 1] = pts[k + 1] - SUN[2] * r * 0.55
+  end
+  love.graphics.setColor(cShade)
+  love.graphics.polygon("fill", unpack(sh))
+  love.graphics.setColor(cFace)
+  love.graphics.polygon("fill", unpack(pts))
+  love.graphics.setColor(cLip)
+  love.graphics.setLineWidth(1)
+  love.graphics.line(pts[1] + SUN[1], pts[2] + SUN[2],
+                     pts[3] + SUN[1], pts[4] + SUN[2],
+                     pts[5] + SUN[1], pts[6] + SUN[2])
+end
+
+--- The bake shader's macro value composition, evaluated in Lua. Marks are
+--- stamped on top of the shaded canvas at their own brightness, so without this
+--- a tuft in a damp hollow comes out exactly as bright as one on a sunlit rise:
+--- the whole ground cover then reads as a layer of confetti lying *above* the
+--- terrain rather than as things growing in it, which is most of why a meadow
+--- full of specks looks like a meadow full of specks.
+local function markShade(wx, wy, elev)
+  local macroV = N.fbm(wx * 0.00058 + 311.0, wy * 0.00058 + 311.0, 3, 0)
+  local k = (0.78 + 0.46 * U.smoothstep(0.24, 0.80, macroV)) * (0.82 + 0.42 * elev)
+  return U.clamp(k * 1.02, 0.58, 1.26)
+end
+
 --- The bake's own rock mask, in Lua, so the marks land where the stone is
 --- rather than merely where the classifier said "rock".
 local function rockMaskAt(slope, elev)
@@ -1580,6 +1626,8 @@ function Terrain:_scatterMarks(tile, part, parts)
       local fert = self.fert[i]
       local sc = U.saturate(self.scar[i] - self.heal[i])
       local shade = 0.75 + 0.5 * rng:next()
+      -- how bright the baked ground under this mark is
+      local lt = markShade(wx, wy, self.elev[i] or 0)
 
       if b == B_MEADOW or (b == B_MARSH and rng:chance(0.35)) then
         -- Uniform scatter reads as television static. Gate the density on a
@@ -1587,57 +1635,86 @@ function Terrain:_scatterMarks(tile, part, parts)
         local clump = N.fbm(wx * 0.0038 + 811.0, wy * 0.0038 - 411.0, 3, sClump)
         clump = U.saturate((clump - 0.34) * 2.6)
         local roll = rng:next()
-        if roll < 0.62 and rng:next() > 0.22 + clump * 0.92 then roll = 0.995 end
-        -- flowers grow in drifts, not evenly sprinkled
+        if roll < 0.66 and rng:next() > 0.22 + clump * 0.92 then roll = 0.995 end
+        -- Flowers grow in drifts, not evenly sprinkled -- and the drift has to
+        -- be a real one, or every third mark in the meadow is a bloom.
         local bloom = N.fbm(wx * 0.0055 + 301.0, wy * 0.0055 - 77.0, 3, sBloom)
-        if roll >= 0.62 and roll < 0.80 and bloom < 0.56 then roll = 0.30 end
-        if roll < 0.62 then
+        if roll >= 0.66 and roll < 0.78 and bloom < 0.615 then roll = 0.30 end
+        if roll < 0.66 then
           local hgt = (5 + rng:next() * 8) * (0.55 + fert * 0.75)
-          local base = P.shade(R.grass, 1.0 + rng:next() * 0.7, 0.85)
-          local tip  = P.shade(R.grass, 2.6 + rng:next() * 1.2 + fert, 0.9)
+          local base = P.scale(P.shade(R.grass, 1.0 + rng:next() * 0.7, 0.85), lt)
+          local tip  = P.scale(P.shade(R.grass, 2.6 + rng:next() * 1.2 + fert, 0.9), lt)
           love.graphics.setColor(P.alpha(grassShadow, 0.30))
           love.graphics.ellipse("fill", lx + 1.2, ly + 1.0, 2.4, 1.1, 6)
           tuft(lx, ly, hgt, (rng:next() - 0.5) * 5, 1.1 + rng:next() * 0.9, base, tip)
-        elseif roll < 0.80 then
-          -- flower speck
-          local pick = rng:next()
-          local fc = (pick < 0.40 and P.love) or (pick < 0.80 and P.warn) or P.accent
-          love.graphics.setColor(P.alpha(P.darken(fc, 0.45), 0.40))
-          love.graphics.circle("fill", lx + 0.7, ly + 0.7, 1.1 + rng:next() * 0.7, 5)
-          love.graphics.setColor(P.alpha(fc, 0.52 + rng:next() * 0.20))
-          love.graphics.circle("fill", lx, ly, 0.9 + rng:next() * 0.9, 5)
-        elseif roll < 0.93 then
-          -- A field stone. Warm, half-buried: cut from `stone` and pushed
-          -- toward soil, because the cold blue of `rock` on green grass read
-          -- as a scattering of blueberries.
-          local r = 1.8 + rng:next() * 3.4
-          local body = P.mix(P.shade(R.stone, 2.6 + rng:next() * 0.8), R.moss[1], 0.18)
-          love.graphics.setColor(P.alpha(P.darken(R.soil[1], 0.15), 0.24))
-          love.graphics.ellipse("fill", lx + 1.3, ly + 1.1, r, r * 0.7, 6)
+        elseif roll < 0.78 then
+          -- Flowers, in drifts of one species and in little heads rather than
+          -- one dot each. Picking a colour per speck put three different hot
+          -- hues inside any ten pixels, and three UI-strength hues at two
+          -- pixels across is confetti however carefully it is scattered. A
+          -- drift of one pale colour reads as a plant that seeds itself.
+          local sp = N.fbm(wx * 0.0017 + 707.0, wy * 0.0017 - 233.0, 2, sBloom + 3)
+          local fc = (sp < 0.44 and P.love) or (sp < 0.72 and P.warn) or P.accent
+          -- Pale. A flower head this far away is a highlight on a green field,
+          -- not a saturated dot: take it two thirds of the way to the light and
+          -- let a little of the grass under it come back through.
+          fc = P.mix(P.mix(fc, P.ink, 0.46), R.grass[3], 0.20)
+          fc = P.scale(fc, lt)
+          local heads = 2 + floor(rng:next() * 4)
+          local hr = 0.65 + rng:next() * 0.45
+          for f = 1, heads do
+            local a = rng:angle()
+            local d = rng:next() * (1.6 + rng:next() * 2.6)
+            local px, py = lx + cos(a) * d, ly + sin(a) * d * 0.8
+            love.graphics.setColor(P.alpha(P.darken(fc, 0.55), 0.26))
+            love.graphics.circle("fill", px + 0.6, py + 0.6, hr + 0.35, 5)
+            love.graphics.setColor(P.alpha(fc, 0.34 + rng:next() * 0.16))
+            love.graphics.circle("fill", px, py, hr, 5)
+          end
+        elseif roll < 0.90 then
+          -- A field stone. Warm, half-buried, and *light*: cut from `stone` and
+          -- pushed toward soil, because the cold blue of `rock` on green grass
+          -- read as a scattering of blueberries -- and taken from the bottom of
+          -- the ramp it read as one anyway, a dark bean lying on a bright field
+          -- with the sun apparently missing it.
+          local r = 1.8 + rng:next() * 3.2
+          local body = P.scale(P.mix(P.shade(R.stone, 3.0 + rng:next() * 0.85),
+                                     R.soil[3], 0.24), lt)
+          love.graphics.setColor(P.alpha(P.darken(R.soil[1], 0.15), 0.26))
+          love.graphics.ellipse("fill", lx + 1.2, ly + 1.0, r, r * 0.7, 6)
           love.graphics.setColor(body)
           love.graphics.ellipse("fill", lx, ly, r, r * 0.76, 6)
-          love.graphics.setColor(P.alpha(R.stone[3], 0.32))
+          love.graphics.setColor(P.alpha(P.scale(R.stone[4], lt), 0.26))
           love.graphics.ellipse("fill", lx - r * 0.28, ly - r * 0.30, r * 0.38, r * 0.26, 5)
         else
-          -- bare earth showing through, low and wide
-          love.graphics.setColor(P.alpha(P.shade(R.soil, 1.4 + rng:next() * 0.8), 0.07 + rng:next() * 0.09))
-          love.graphics.ellipse("fill", lx, ly, 9 + rng:next() * 22, 4 + rng:next() * 9, 10)
+          -- Bare earth showing through. An ellipse at ten segments is a disc,
+          -- and a scattering of overlapping discs at eight per cent is still a
+          -- scattering of discs; this is an irregular patch with a soft second
+          -- pass inside it.
+          local r = 8 + rng:next() * 20
+          local c = P.scale(P.shade(R.soil, 1.4 + rng:next() * 0.8), lt)
+          love.graphics.setColor(P.alpha(c, 0.05 + rng:next() * 0.06))
+          love.graphics.polygon("fill",
+            unpack(shardPts(lx, ly, r, rng:angle(), 9, 0.85, 0.52, rng)))
+          love.graphics.setColor(P.alpha(c, 0.05 + rng:next() * 0.05))
+          love.graphics.polygon("fill",
+            unpack(shardPts(lx, ly, r * 0.55, rng:angle(), 7, 0.9, 0.55, rng)))
         end
 
       elseif b == B_MARSH then
         if rng:chance(0.55) then
           local hgt = 9 + rng:next() * 16
           local lean = (rng:next() - 0.5) * 7
-          love.graphics.setColor(P.shade(R.moss, 1.0 + rng:next() * 0.8, 0.8))
+          love.graphics.setColor(P.scale(P.shade(R.moss, 1.0 + rng:next() * 0.8, 0.8), lt))
           love.graphics.polygon("fill", lx - 1, ly, lx + 1, ly, lx + lean, ly - hgt)
-          love.graphics.setColor(P.shade(R.moss, 2.7 + rng:next(), 0.75))
+          love.graphics.setColor(P.scale(P.shade(R.moss, 2.7 + rng:next(), 0.75), lt))
           love.graphics.polygon("fill", lx + lean, ly - hgt, lx + lean * 0.6, ly - hgt * 0.55,
                                 lx + lean + 0.9, ly - hgt + 1.6)
         else
           local r = 3 + rng:next() * 6
-          love.graphics.setColor(P.alpha(P.shade(R.moss, 2.2 + rng:next()), 0.55))
+          love.graphics.setColor(P.alpha(P.scale(P.shade(R.moss, 2.2 + rng:next()), lt), 0.55))
           love.graphics.ellipse("fill", lx, ly, r, r * 0.7, 8)
-          love.graphics.setColor(P.alpha(R.moss[4], 0.3))
+          love.graphics.setColor(P.alpha(P.scale(R.moss[4], lt), 0.3))
           love.graphics.ellipse("fill", lx - r * 0.2, ly - r * 0.25, r * 0.45, r * 0.3, 6)
         end
 
@@ -1647,7 +1724,11 @@ function Terrain:_scatterMarks(tile, part, parts)
           local r = 1.2 + rng:next() * 2.6
           love.graphics.setColor(P.alpha(sandShadow, 0.32))
           love.graphics.ellipse("fill", lx + 1.0, ly + 0.9, r, r * 0.7, 6)
-          love.graphics.setColor(P.shade(R.sand, 1.2 + rng:next() * 1.6, 0.9))
+          -- A shell or a pebble on wet sand is a *dark* thing; taken from the
+          -- top of the sand ramp regardless of what it is lying on, a beach
+          -- came out flecked with orange sequins along the whole tideline.
+          love.graphics.setColor(P.scale(P.shade(R.sand, 1.2 + rng:next() * 1.5, 0.9),
+                                         lt * (0.62 + 0.38 * U.smoothstep(0, 46, d))))
           love.graphics.ellipse("fill", lx, ly, r, r * 0.75, 6)
         elseif roll < 0.62 then
           -- driftwood / shell fleck
@@ -1732,25 +1813,46 @@ function Terrain:_scatterMarks(tile, part, parts)
         -- not as debris. One stroke, combed by a slow flow field so the litter
         -- lies the way the wind left it, reads as a dead place instead.
         local roll = rng:next()
-        if roll < 0.24 then
+        if roll < 0.11 then
+          -- A curled flake of lifted crust. The one mark here that has a
+          -- silhouette and a shadow, and the one that says the surface has
+          -- come away rather than merely gone a different colour.
+          local r = 2.6 + rng:next() * 4.4
+          crustFlake(lx, ly, r, rng,
+                     P.alpha(P.darken(R.ash[1], 0.35), 0.40 * sc),
+                     P.alpha(P.scale(P.shade(R.ash, 2.0 + rng:next() * 0.9), lt), 0.34 * sc),
+                     P.alpha(P.scale(R.ash[4], lt), 0.20 * sc))
+        elseif roll < 0.28 then
+          -- Dead fibre, combed by a slow flow field so the litter lies the way
+          -- it fell. Dark: pale strokes at this length on a dark scar read as
+          -- scratches on the lens.
           local flow = N.fbm(wx * 0.0021 + 17.0, wy * 0.0021 - 9.0, 2, 71) * U.TAU
           local a = flow + rng:gauss() * 0.34
-          local l = 4 + rng:next() * 9
+          local l = 3 + rng:next() * 7
           local dx, dy = cos(a) * l, sin(a) * l * 0.7
           love.graphics.setLineWidth(1)
-          love.graphics.setColor(P.alpha(P.darken(R.ash[1], 0.25), 0.30 * sc))
-          love.graphics.line(lx - dx * 0.5 + 1, ly - dy * 0.5 + 1,
-                             lx + dx * 0.5 + 1, ly + dy * 0.5 + 1)
-          love.graphics.setColor(P.alpha(P.shade(R.ash, 2.1 + rng:next() * 0.9), 0.26 * sc))
+          love.graphics.setColor(P.alpha(P.darken(R.ash[1], 0.30), 0.34 * sc))
           love.graphics.line(lx - dx * 0.5, ly - dy * 0.5, lx + dx * 0.5, ly + dy * 0.5)
-        elseif roll < 0.72 then
+          love.graphics.setColor(P.alpha(P.scale(P.shade(R.ash, 1.7 + rng:next() * 0.7), lt),
+                                         0.16 * sc))
+          love.graphics.line(lx - dx * 0.5 - SUN[1], ly - dy * 0.5 - SUN[2],
+                             lx + dx * 0.5 - SUN[1], ly + dy * 0.5 - SUN[2])
+        elseif roll < 0.76 then
           -- soot: a soft dark fleck that breaks up the ash without adding hue
           love.graphics.setColor(P.alpha(R.ash[1], 0.15 * sc * shade))
           love.graphics.ellipse("fill", lx, ly, 2 + rng:next() * 7, 1.4 + rng:next() * 4, 8)
-        else
+        elseif roll < 0.95 then
           -- pale grit catching the light on the raised lips of the crazing
-          love.graphics.setColor(P.alpha(R.ash[3], 0.16 * sc * shade))
+          love.graphics.setColor(P.alpha(P.scale(R.ash[3], lt), 0.14 * sc * shade))
           love.graphics.circle("fill", lx, ly, 0.8 + rng:next() * 1.7, 5)
+        else
+          -- A bead of the stain itself, where something has come up through a
+          -- fissure. Small, rare, and the only hue on the whole surface.
+          local r = 0.7 + rng:next() * 1.1
+          love.graphics.setColor(P.alpha(R.blight[2], 0.20 * sc))
+          love.graphics.circle("fill", lx, ly, r * 2.2, 6)
+          love.graphics.setColor(P.alpha(R.blight[3], 0.26 * sc))
+          love.graphics.circle("fill", lx, ly, r, 5)
         end
       end
     end

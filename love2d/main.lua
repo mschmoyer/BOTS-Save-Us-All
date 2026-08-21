@@ -75,6 +75,11 @@ local BURN = tonumber(cfg("BOTS_AUDIO_BURN") or "") or 0.25
 -- gets a trickle and an idle title screen gets most of the frame.
 local STREAM_TARGET = 1 / 20
 local STREAM_MIN, STREAM_MAX = 0.002, 0.060
+-- The headless harness builds the whole bank up front, so captures and balance
+-- traces are reproducible and no cue can be missing from one. BOTS_AUDIO_STREAM
+-- puts it on the streaming path anyway, which is how the streaming path itself
+-- is tested without a human at a keyboard.
+local STREAM = (cfg("BOTS_AUDIO_STREAM") ~= nil) or not H.on
 
 -------------------------------------------------------------- boot reporting
 -- The single-file web build spends thirteen seconds decoding a base64 wasm blob
@@ -181,7 +186,7 @@ function love.load()
   -- reproducible and every cue is guaranteed present.
   local t0 = love.timer.getTime()
   local okAudio, audioErr = xpcall(function()
-    if H.on then Audio.load() else Audio.prepare() end
+    if STREAM then Audio.prepare() else Audio.load() end
     Music.load()
     Audio.setBusVolume("master", Settings.get("volMaster", 0.9))
     Audio.setBusVolume("sfx",    Settings.get("volSfx", 1.0))
@@ -195,7 +200,7 @@ function love.load()
   -- A short, bounded head start so the menu cues and the title bed are usually
   -- there before anything can ask for them. Bounded is the point: this is the
   -- only synthesis left on the critical path, and it can never grow.
-  if not H.on then
+  if STREAM then
     Audio.stream(BURN)
     Boot.stage(0.34, "voices warming")
   end
@@ -216,7 +221,7 @@ end
 --- Spend what is left of a 20 fps frame on the sound bank. Called from love.run
 --- after the frame has been presented, so the picture never waits on it.
 function Boot.streamAudio(frameCost)
-  if H.on or Boot.fatal or Audio.complete then return end
+  if not STREAM or Boot.fatal or Audio.complete then return end
   local b = STREAM_TARGET - (frameCost or 0)
   if b < STREAM_MIN then b = STREAM_MIN elseif b > STREAM_MAX then b = STREAM_MAX end
   Audio.stream(b)
@@ -256,7 +261,7 @@ function love.draw()
   -- bottom edge, in the boot panel's own accent, so a player who started before
   -- it finished can see that the machine is still warming up rather than
   -- wonder why something was quiet. It leaves the moment the queue drains.
-  if not H.on and Audio.prepared and not Audio.complete then
+  if not H.on and Audio.prepared and not Audio.complete then  -- boot hairline
     local w, h = love.graphics.getDimensions()
     local a, f = P.accent, P.inkFaint
     love.graphics.setColor(f[1], f[2], f[3], 0.16)
