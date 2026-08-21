@@ -939,6 +939,9 @@ function Touch.load()
   Touch.install()
   local osn = love.system and love.system.getOS() or ""
   if osn == "iOS" or osn == "Android" then Touch.activate() end
+  -- BOTS_INPUT=touch brings the layer up without a finger, so the phone layout
+  -- can be captured and looked at on a desktop or in the headless harness.
+  if _G.BOTS_CFG and _G.BOTS_CFG("BOTS_INPUT") == "touch" then Touch.activate() end
   L.dirty = true
 end
 
