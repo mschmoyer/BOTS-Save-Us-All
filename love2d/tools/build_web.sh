@@ -28,6 +28,15 @@ trap 'rm -rf "$WORK"' EXIT
 #    has. See the note above BAKE_DIR in src/engine/audio.lua.
 [ -n "${BOTS_SKIP_BAKE:-}" ] || tools/bake_audio.sh
 
+# 0b. bake the tree mesh library into src/bake/trees, same deal: 250 cells of
+#     geometry that depend on nothing but the species, the variant and the
+#     growth bucket, tessellated by every tab today. Baked, load is a memcpy per
+#     vertex buffer. It costs 12.5 MB on disk (4.7 MB gzipped, cached immutable
+#     after the first visit) -- BOTS_SKIP_TREE_BAKE=1 ships without it and the
+#     game tessellates as it always has. See the note above BAKE_DIR in
+#     src/entities/tree.lua.
+[ -n "${BOTS_SKIP_TREE_BAKE:-}" ] || tools/bake_trees.sh
+
 # 1. zip the project into a .love (source only)
 zip -qr "$WORK/game.love" main.lua conf.lua src \
   -x 'src/scenes/demo_*' -x '*.md'

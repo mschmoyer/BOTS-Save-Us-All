@@ -91,6 +91,9 @@ See [`../docs/PERFORMANCE_SPEC.md`](../docs/PERFORMANCE_SPEC.md) for the measure
 | `tools/bake_audio.sh` | Renders the sound bank offline into `src/bake/audio` as Ogg Vorbis. `tools/build_web.sh` runs it; the game loads it if it is there and synthesizes if it is not. |
 | `BOTS_AUDIO_BAKE=0\|1` | Force synthesis, or make a missing or stale bake an error instead of a fallback. |
 | `BOTS_SCENE=tools.abaudio tools/shot.sh 1 1 …` | A/Bs the baked bank against the synthesized one and prints the coding error per cue. |
+| `tools/bake_trees.sh` | Tessellates the 250-cell tree mesh library offline into `src/bake/trees` as one blob of vertex buffers plus a manifest. `tools/build_web.sh` runs it; the game loads it if it is there and tessellates if it is not. |
+| `BOTS_TREE_BAKE=0\|1` | Force tessellation, or make a missing or stale bake an error instead of a fallback. |
+| `BOTS_SKIP_TREE_BAKE=1 tools/build_web.sh …` | Ships a web build without the tree bake — it is 4.7 MB gzipped of first-visit payload for ~1.6 s of browser load. |
 
 ## Layout
 

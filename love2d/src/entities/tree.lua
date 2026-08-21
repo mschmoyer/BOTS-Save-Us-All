@@ -818,7 +818,7 @@ end
 
 local function bucketGrowth(b) return b / (TUNE.buckets - 1) end
 
-local CELLS = nil        -- filled on first use: #SPECIES * variants * buckets
+local CELLS = #SPECIES * TUNE.variants * TUNE.buckets
 
 ------------------------------------------------------------- baked library
 -- WHY THERE IS A CACHE IN FRONT OF THE TESSELLATOR
@@ -845,6 +845,26 @@ local CELLS = nil        -- filled on first use: #SPECIES * variants * buckets
 -- BOTS_TREE_BAKE=0 forces the tessellator, which is how the two are compared;
 -- BOTS_TREE_BAKE=1 makes a missing or stale bake an error instead of a
 -- fallback, which is what a build script wants.
+--
+-- WHAT IT COSTS AND WHAT IT DOES NOT BUY
+--
+-- Measured. Natively `Tree.prewarm()` goes 325 ms -> 53 ms, min of five. In the
+-- hosted browser build (Chromium under SwiftShader, 1280x720, over HTTP) the
+-- same call goes 2,872 ms -> 1,274 ms, min of three, on a machine whose spread
+-- run to run is wider than the win -- so quote the minimum and say so.
+--
+-- The half that is left is not Lua. Timed inside the browser, a baked load of
+-- 3,399 ms is 1,723 ms in `newMesh` and 1,493 ms in `setVertexMap`: 750 GL
+-- buffer objects, created one at a time through emscripten. Reading the 12.5 MB
+-- blob out of the .love is 70 ms, slicing 1,500 ByteDatas out of it is 15 ms and
+-- `setVertices` is 7 ms -- the data was never the problem. Baking removes the
+-- tessellation and nothing else, and what remains is the same per-mesh GL cost
+-- that makes a visible tree a draw call. That is item F6's prize, not this one's.
+--
+-- It is not free either: the blob is 12.5 MB on disk, 4.7 MB gzipped, and the
+-- browser build's first visit goes from 4.17 MB to 8.71 MB compressed. It is
+-- content-hashed and served immutable, so it is a first-visit cost only, and
+-- BOTS_SKIP_TREE_BAKE=1 in tools/build_web.sh ships without it.
 local BAKE_DIR     = "src/bake/trees"
 local BAKE_VERSION = 1
 local bakeState    = nil    -- nil = not opened yet, false = unusable, table = open
@@ -923,7 +943,7 @@ local function bakeOpen()
   if not blob then return reject("its data file is missing") end
   if blob:getSize() ~= m.bytes then return reject("its data file is the wrong length") end
   bakeState = { cells = m.cells, blob = blob, itype = m.itype,
-                isize = (m.itype == "uint32") and 4 or 2, left = m.count or 0 }
+                isize = (m.itype == "uint32") and 4 or 2 }
 end
 
 --- The blob is 12 MB and every cell has been copied into a vertex buffer by the
@@ -994,13 +1014,13 @@ local function ensure(spi, variant, bucket)
   end
   LIB.meta[key] = meta
   libCount = libCount + 1
-  CELLS = CELLS or (#SPECIES * TUNE.variants * TUNE.buckets)
   if libCount >= CELLS then bakeRelease() end
   return key, meta
 end
 
---- Where the library came from, for the load-time report: "baked" or "built",
---- and how many of the cells came out of the file.
+--- Where the library came from, for the load-time report: how many cells were
+--- read out of the bake, and how many exist at all. A browser that quietly fell
+--- back to the tessellator reads 0 here and nowhere else.
 function Tree.libraryOrigin()
   return bakeCount, libCount
 end
@@ -1027,7 +1047,9 @@ end
 --- build each frame boundary crossed between two newMesh calls costs a
 --- pipeline stall: the same 1.5 s of work measured 26 s when it was sliced at
 --- 3 ms. Slice it at 80-120 ms and the stalls are amortised away while the
---- progress bar still moves.
+--- progress bar still moves. The baked library does not change this advice --
+--- what it removes is the tessellation, and the newMesh calls that the stalls
+--- attach to are still all 750 of them.
 --- Returns progress 0..1; call until it returns 1.
 local warmI, warmN = 0, nil
 function Tree.prewarmStep(budget)

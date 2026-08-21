@@ -24,6 +24,14 @@
 --   * everything that touches the GPU -- the ground canvases, the mesh
 --     library -- waits for the loading screen and runs in coarse slices, big
 --     enough to amortise the stalls, small enough that the bar still moves.
+--
+-- The mesh library is baked at build time now (see the note above BAKE_DIR in
+-- entities/tree). That takes the tessellation out of `trees` but not the 750
+-- newMesh calls the stalls attach to: measured in the browser, one
+-- uninterrupted burst goes 2,872 ms to 1,274 ms, so the slicing advice above
+-- still holds. `Warmup.report` says how many cells came out of the file, so a
+-- bake that was quietly rejected cannot be mistaken for a bake that did not
+-- help.
 local Terrain = require("src.world.terrain")
 local Tree    = require("src.entities.tree")
 
@@ -133,11 +141,18 @@ function Warmup.marksReport()
 end
 
 --- Where the wait actually went, in milliseconds.
+--- The tree figure carries how many of the 250 library cells came out of the
+--- baked file rather than the tessellator, because "trees=90" means two
+--- completely different things depending on the answer -- and a bake that was
+--- quietly rejected in the browser looks exactly like a bake that was never
+--- built until this line says 0/250.
 function Warmup.report()
   local sp = Warmup.spent or {}
-  return string.format("fields=%.0f canvas=%.0f trees=%.0f",
+  local baked, cells = 0, 0
+  if Tree.libraryOrigin then baked, cells = Tree.libraryOrigin() end
+  return string.format("fields=%.0f canvas=%.0f trees=%.0f[%d/%d baked]",
                        (sp.fields or 0) * 1000, (sp.canvas or 0) * 1000,
-                       (sp.trees or 0) * 1000)
+                       (sp.trees or 0) * 1000, baked, cells)
 end
 
 return Warmup

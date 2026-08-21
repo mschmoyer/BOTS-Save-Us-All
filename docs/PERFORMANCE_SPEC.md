@@ -214,20 +214,62 @@ and close the item. Do not ship a runtime swap on hope.
 The rule that decides these: **bake what does not depend on the run seed; move
 what does to the GPU.**
 
-**L1. Bake the tree mesh library.**
+**L1. Bake the tree mesh library.** — **DONE, and it is half the win the item
+assumed.** The tessellation goes away; the 750 GL buffer creations do not.
 
 `Tree.ensure(spi, variant, bucket)` keys on species, variant and growth bucket
-only — no run seed anywhere (`tree.lua:779`). 5 species x 5 variants x 10 buckets
-x 3 meshes = **750 meshes**, byte-identical on every machine and every run. The
-warmup header measures this at 1.5 s in one burst and 26.4 s when sliced badly.
+only — no run seed anywhere. 5 species x 5 variants x 10 buckets = 250 cells and
+**750 meshes / 247,897 vertices**, byte-identical on every machine and every run.
+`tools/bake_trees.sh` runs the tessellator once at build time through
+`tools/treebakescene.lua` and writes one blob of the exact bytes the vertex
+buffers want, plus a manifest carrying `extentY`, `extentR` and the three
+triangle areas — the metadata `ensure` returns that no vertex buffer holds.
+`build_web.sh` bakes it alongside the sound bank; the loader is in `tree.lua`
+beside the tessellator, which stays as the reference implementation and the
+fallback.
 
-Serialise the vertex buffers at build time; load them instead of tessellating.
+*Measured. Native `Tree.prewarm()` **325 → 53 ms** (min of five). Native
+`Warmup.report()` `trees=` **402 → 42 ms** (min of three; medians 767 → 110, the
+spread is the machine). In the hosted browser build, Chromium 1194 under
+SwiftShader at 1280x720 over HTTP, one uninterrupted `Tree.prewarm()`:
+**2,872 → 1,274 ms** (min of three; medians 4,849 → 1,725).*
 
-- **Accept:** `Warmup.report()` shows `trees=` near zero. Tree rendering is
-  pixel-identical — compare `demo_tree` captures before and after.
-- **Risk:** medium. The format must carry `extentY`/`extentR`/area metadata that
-  `ensure` returns alongside the meshes, and it must version-check so a stale
-  bake fails loudly rather than rendering wrong trees.
+**The half that remains is not Lua, and no bake can remove it.** Timed inside
+the browser, a 3,399 ms baked load is **1,723 ms in `newMesh` and 1,493 ms in
+`setVertexMap`** — 750 GL buffer objects created one at a time through
+emscripten. Reading the 12.5 MB blob out of the `.love` is 70 ms, slicing 1,500
+`ByteData`s out of it is 15 ms, and `setVertices` is 7 ms. The data was never
+the cost. What is left is the same per-mesh GL price that makes a visible tree a
+draw call, which is **F6's prize, not this one's** — and it is a third piece of
+independent evidence for F6.
+
+*Payload: the blob is 12.54 MB (4.70 MB gzipped) plus a 51 KB manifest, and the
+hosted build's first visit goes **7.43 MB → 12.14 MB on disk, 4.17 → 8.71 MB
+gzipped**. It is inside content-hashed `game.data`, so it is a first-visit cost
+only. Whether that trade is worth ~1.6 s of browser load is a judgement someone
+should make deliberately: `BOTS_SKIP_TREE_BAKE=1 tools/build_web.sh` ships
+without it and the game tessellates as it always has.*
+
+*Pixel-identical: `demo_tree` frames 100 and 300, baked against tessellated,
+**0 of 1,329,600 pixels differ** outside the two HUD bands that print wall-clock
+timings — and a control run of the tessellator against itself differs on 62
+pixels inside those same bands, so the bake is closer to the reference than the
+reference is to itself. Reproducible: two bakes of the same tree are
+byte-identical in both files (`md5 1e3fdb27…` / `2c2b63be…`).*
+
+All four fallbacks were exercised, not assumed: no manifest → tessellates
+silently; `version` mismatch, `md5(tree.lua .. palette.lua .. util.lua)`
+mismatch, and a truncated blob → each prints why and tessellates;
+`BOTS_TREE_BAKE=1` turns all of them into an error for a build script.
+`BOTS_TREE_BAKE=0` forces the tessellator, which is how the A/B above was taken.
+
+- **Risk, discharged:** the format carries the metadata and version-checks three
+  ways. Two things worth knowing for anyone touching it: raw index data handed
+  to `Mesh:setVertexMap(Data, type)` is **0-based**, where the table form is
+  1-based; and adding a field to a demo scene's HUD string moves ~20 antialias
+  pixels elsewhere on the frame, because a new glyph repacks LÖVE's font atlas.
+  That cost an hour of chasing a phantom regression — leave `demo_tree`'s HUD
+  alone, it is a reference probe.
 
 **L2. Generate the terrain fields on the GPU.**
 
