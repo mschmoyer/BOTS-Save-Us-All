@@ -31,16 +31,36 @@ local PROMPTS = { { "confirm", "BEGIN AGAIN" } }
 function S:enter(world)
   self.world = world
   self.t = 0
-  -- one flat list of names, built once: the draw pass must not walk the run
-  self.names = {}
+  -- One flat list of names and epitaphs, built once: the draw pass must not
+  -- walk the run. Bots that die charging the rig go through bot:sacrificed, not
+  -- bot:lost, so reading world.allLostNames alone leaves out exactly the ones
+  -- this screen is about - the rebellion happened, and it failed.
+  self.names, self.epitaphs = {}, {}
+  local function push(name, epi)
+    if not name then return end
+    self.names[#self.names + 1] = name
+    self.epitaphs[#self.names] = epi
+  end
+  local Story = package.loaded["src.game.story"]
   local all = world and world.allLostNames
   if all then
     for i = 1, #all do
       local rec = all[i]
-      self.names[i] = (type(rec) == "table" and rec.name) or tostring(rec)
+      if type(rec) == "table" then
+        push(rec.name, Story and Story.epitaphs and Story.epitaphs[rec.name])
+      else
+        push(tostring(rec))
+      end
     end
   end
-  if Music.setState then Music.setState("ending") end
+  if Story and Story.sacrificed then
+    for i = 1, #Story.sacrificed do
+      local rec = Story.sacrificed[i]
+      push(rec.name, Story.epitaphs and Story.epitaphs[rec.name])
+    end
+  end
+  -- the victory cue over THE AIR IS GONE is a category error
+  if Music.setState then Music.setState("night", { intensity = 0.15 }) end
 end
 
 function S:update(dt)
@@ -109,7 +129,7 @@ function S:draw()
     for i = 1, shown do
       local k = UI.stagger(t, i, SEQ.names, SEQ.nameStep, 0.6, U.ease.outExpo)
       if k > 0.002 then
-        local ny = y + 26 + (i - 1) * 46
+        local ny = y + 26 + (i - 1) * 56
         local nw = Text.measure(self.names[i], UI.ts.h3, nil)
         Draw.setColor(UI.c(P.danger, 0.45 * k))
         lg.setLineWidth(2)
@@ -117,11 +137,18 @@ function S:draw()
                 ny + UI.ts.h3 * 0.56)
         UI.text(self.names[i], nx, ny + (1 - k) * 8, UI.ts.h3,
                 UI.mix(P.ink, P.danger, 0.22), "right", k, 0.08)
+        -- what it did, under the name: on the screen where the run ended, the
+        -- count is not the point and a bare name is not either
+        local epi = self.epitaphs[i]
+        if epi then
+          UI.caption(epi, nx, ny + UI.ts.h3 * 0.96 + (1 - k) * 8, UI.ts.micro,
+                     UI.c(P.inkDim, 0.75 * k), "right", nil, 1)
+        end
       end
     end
     if n > shown then
       local k = UI.stagger(t, shown + 1, SEQ.names, SEQ.nameStep, 0.6)
-      UI.caption("AND " .. tostring(n - shown) .. " MORE", nx, y + 26 + shown * 46,
+      UI.caption("AND " .. tostring(n - shown) .. " MORE", nx, y + 26 + shown * 56,
                  UI.ts.micro, UI.c(P.danger, 0.65 * k), "right", nil, 1)
     end
   end
