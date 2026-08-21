@@ -1,5 +1,6 @@
 function love.conf(t)
-  t.identity           = "bots_reforest"
+  local id = os.getenv("BOTS_IDENTITY")
+  t.identity           = (id ~= nil and id ~= "") and id or "bots_reforest"
   t.version            = "11.4"          -- matches the love.js runtime used for the web build
   t.console            = false
   t.appendidentity     = false
