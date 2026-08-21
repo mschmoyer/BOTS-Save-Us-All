@@ -82,3 +82,51 @@ When changing this project:
   `RoomCreationCode.gml`) rather than introducing a new config layer.
 - Changes cannot be verified without GameMaker Studio 2, so keep edits small and reason
   carefully about GML semantics — there is nothing here to run in CI.
+
+---
+
+## The Love2D rebuild — `love2d/`
+
+The repository now contains a second, complete game: **BOTS: Save Us All — *Reforest***, a
+full rebuild in **LÖVE 11.4 (Lua)** with **no external assets** — the island, the trees, the
+robots, the display typeface and every sound are generated at runtime.
+
+- **Design spec:** [`docs/REFOREST_SPEC.md`](docs/REFOREST_SPEC.md) — the single source of truth.
+- **Project README:** [`love2d/README.md`](love2d/README.md) — controls, layout, tools.
+- The GameMaker project at the repository root is the 2019 original and is left untouched.
+
+### Working in `love2d/`
+
+Two rules keep it coherent, and both are load-bearing:
+
+1. **`src/game/tuning.lua` holds every gameplay constant.** Behaviour code has no magic numbers.
+2. **`src/engine/palette.lua` holds every colour.** Draw code has no colour literals.
+
+Everything is verifiable without a human at a keyboard, and you are expected to verify:
+
+```bash
+cd love2d
+tools/check.sh                                    # luajit syntax check, must pass
+BOTS_SCENE=src.scenes.demo_tree tools/shot.sh 300 100,300 /tmp/out   # any subsystem's demo
+BOTS_AUTOPLAY=1 BOTS_SPEED=8 BOTS_SCENE=src.scenes.game \
+  tools/shot.sh 24000 8000,16000,24000 /tmp/run   # a whole run + a CSV balance trace
+BOTS_JUMP=night BOTS_JUMP_TREES=600 ...           # start a session late
+BOTS_W=1280 BOTS_H=560 ...                        # a phone-landscape aspect
+tools/build_web.sh build/index.html               # the single-file WebAssembly build
+NODE_PATH=/home/user/.toolchain/node_modules node tools/webshot.js build/index.html out.png 14000
+```
+
+`tools/shot.sh` only renders the frames it photographs, so a full 20-minute session captures in
+seconds. **Read the PNGs.** Nothing about this game can be judged from the source alone.
+
+### Two things that have bitten repeatedly
+
+- **The browser is the ship target, and it is not the same renderer.** Three bugs reached the
+  build that native LÖVE never showed: a zero-length line segment that WebGL culls (every `U`
+  rendered as a `J`), `string.format("%F")` (rejected by the WebAssembly Lua), and unqualified
+  shader precision (`highp` in the vertex stage, `mediump` in the fragment stage links on
+  desktop GL and fails under GLSL ES). Verify visual and shader work in `tools/build_web.sh`
+  output, not only natively.
+- **Appending to a list while iterating it.** The entity sweep and the timer both compacted
+  their arrays and left a hole where callbacks had appended. Both now slide new entries down;
+  the same pattern will bite anywhere else it is repeated.
