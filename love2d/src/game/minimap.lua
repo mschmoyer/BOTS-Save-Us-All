@@ -127,6 +127,15 @@ function M.draw(world, cam)
     end
   end
 
+  -- the standing order
+  if world.rallyX then
+    local rx, ry = px(world.rallyX, world.rallyY)
+    g.setColor(P.accent[1], P.accent[2], P.accent[3], 0.22 * a)
+    g.circle("fill", rx, ry, 620 * s)
+    g.setColor(P.accent[1], P.accent[2], P.accent[3], 0.9 * a)
+    g.circle("fill", rx, ry, 2.4 * scale)
+  end
+
   -- home rig
   local hx, hy = px(world.homeX, world.homeY)
   g.setColor(P.accent[1], P.accent[2], P.accent[3], 0.9 * a)

@@ -28,6 +28,7 @@ local BIND = {
   cycleL  = { keys = { "," },            pad = { "dpleft" } },
   cycleR  = { keys = { "." },            pad = { "dpright" } },
   commit  = { keys = { "r" },            pad = { "dpup" } },
+  rally   = { keys = { "g" }, mouse = { 3 }, pad = { "dpdown" } },
   photo   = { keys = { "f2" } },
 }
 for i = 1, 6 do BIND["build" .. i] = { keys = { tostring(i) } } end

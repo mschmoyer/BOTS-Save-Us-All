@@ -78,6 +78,9 @@ end
 
 function Bot:workRate()
   local m = 1
+  if self.world and self.world.rallyX then
+    m = m * (1 + TU.rally.workBonus * self.world:rallyPull(self.x, self.y))
+  end
   if self.world and self.world.chips then m = self.world.chips:get("botWork", 1) end
   if self.chorus then m = m * 1.2 end
   if self.world and self.world.beaconBoostAt then
@@ -176,6 +179,21 @@ end
 
 function Bot:pickWander(minSoil)
   local w = self.world
+  -- The standing order: when the player has planted a flag, look for ground
+  -- near it instead of near yourself. This is how the wood gets a direction.
+  if w and w.rallyX then
+    local pull = w:rallyPull(self.x, self.y)
+    if pull > 0 and self.rng:chance(TU.rally.pull) then
+      local a, d = self.rng:angle(), self.rng:range(0, TU.rally.radius)
+      local rx, ry = w.rallyX + math.cos(a) * d, w.rallyY + math.sin(a) * d
+      if w.terrain and w.terrain.nearestLand then
+        local lx, ly = w.terrain:nearestLand(rx, ry)
+        if lx then rx, ry = lx, ly end
+      end
+      self.wx, self.wy = rx, ry
+      return
+    end
+  end
   if w and w.terrain and w.terrain.randomLandPoint then
     local x, y = w.terrain:randomLandPoint(self.rng, {
       minSoil = minSoil, near = { x = self.x, y = self.y, r = 420 },

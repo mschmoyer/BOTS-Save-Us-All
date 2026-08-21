@@ -40,6 +40,17 @@ T.player = {
   lamp   = { radius = 310, warm = 1.0 },   -- the pool you actually work inside at night
 }
 
+------------------------------------------------------------------------- rally
+-- The one standing order the player can give. Without it a run is "walk to
+-- cobalt, press 1" and the forest grows wherever it likes; with it, deciding
+-- which way the wood advances is a decision you revisit every minute, and it
+-- has a real cost: everything you point at is somewhere you are not defending.
+T.rally = {
+  radius     = 620,            -- how far from the flag bots will take an order
+  pull       = 0.82,           -- how strongly wander targets are biased toward it
+  workBonus  = 0.18,           -- they work faster when they know where they are going
+}
+
 ------------------------------------------------------------------------ economy
 T.cobalt = {
   nodeYield      = 7,          -- chunks per deposit

@@ -85,6 +85,7 @@ function World:init(seed, opts)
                               TU.o2.forestMin, TU.o2.forestMax)
   end
 
+  self.rallyX, self.rallyY = nil, nil
   self.centerX, self.centerY = TU.world.w / 2, TU.world.h / 2
   self:placeHome()
   self:seedCobalt()
@@ -619,6 +620,34 @@ function World:setPhase(phase)
   end
 end
 
+--- Plant the standing order. One flag; moving it is free and instant.
+function World:setRally(x, y)
+  if self.terrain and self.terrain.isLand and not self.terrain:isLand(x, y) then
+    if not self.terrain.nearestLand then return false end
+    local lx, ly = self.terrain:nearestLand(x, y)
+    if not lx then return false end
+    x, y = lx, ly
+  end
+  local moved = self.rallyX ~= nil
+  self.rallyX, self.rallyY, self.rallyT = x, y, 0
+  Audio.play(moved and "ui_move" or "build_done", { x = x, y = y })
+  VFX.emit("plant_burst", x, y, { power = 0.6 })
+  Signal.emit("world:rally", x, y, moved)
+  return true
+end
+
+function World:clearRally()
+  self.rallyX, self.rallyY = nil, nil
+  Signal.emit("world:rally", nil, nil, false)
+end
+
+--- Is this point inside the standing order, and how strongly?
+function World:rallyPull(x, y)
+  if not self.rallyX then return 0 end
+  local d = U.dist(x, y, self.rallyX, self.rallyY)
+  return U.saturate(1 - d / (TU.rally.radius * 2.2))
+end
+
 --- Trade a harder night for half a minute more daylight. Offered once a cycle,
 --- only while dusk is running.
 function World:holdDawn()
@@ -759,6 +788,7 @@ function World:update(dt)
 
   self:updateOxygen(dt)
 
+  if self.rallyX then self.rallyT = (self.rallyT or 0) + dt end
   if self.rig then self.rig:update(dt) end
   if self.player then self.player:update(dt, self.camera) end
   sweep(self.trees, self.hTree, dt)
@@ -1068,7 +1098,46 @@ function World:draw(camera)
   if VFX.draw then VFX.draw("world") end
   if VFX.draw then VFX.draw("additive") end
 
+  self:drawRally()
   self:drawSpeech()
+end
+
+--- The standing order, drawn where the player put it.
+function World:drawRally()
+  if not self.rallyX then return end
+  local x, y = self.rallyX, self.rallyY
+  if not self.camera:visible(x, y, TU.rally.radius + 80) then return end
+  local g = love.graphics
+  local t = self.rallyT or 0
+  local r = TU.rally.radius
+
+  -- the field, as a slow breathing ring rather than a hard boundary
+  local pulse = 0.5 + math.sin(t * 1.1) * 0.5
+  Draw.setColor(P.accent, 0.055 + pulse * 0.03)
+  g.circle("fill", x, y, r)
+  Draw.setColor(P.accent, 0.18 + pulse * 0.1)
+  Draw.dashedCircle(x, y, r, 26, 22, t * 7, 2)
+
+  -- an expanding pulse each time it is newly planted
+  if t < 1.2 then
+    local k = t / 1.2
+    Draw.setColor(P.accent, (1 - k) * 0.5)
+    g.setLineWidth(3)
+    g.circle("line", x, y, r * U.ease.outCubic(k))
+    g.setLineWidth(1)
+  end
+
+  -- the flag
+  local sway = math.sin(t * 2.2) * 0.09
+  Draw.softShadow(x, y + 3, 13, 5, 0.34)
+  Draw.setColor(P.shade(P.ramp.metal, 2.6))
+  Draw.capsule("fill", x, y, x + sway * 8, y - 46, 2.4)
+  Draw.setColor(P.accent, 0.92)
+  g.polygon("fill", x + sway * 8, y - 46, x + sway * 8 + 22, y - 39,
+                    x + sway * 8, y - 32)
+  Draw.glow(x + sway * 8, y - 40, 34, P.accent, 0.35)
+  Draw.setColor(P.accent, 0.5)
+  g.circle("line", x, y, 9 + pulse * 2)
 end
 
 --- A small speech bubble above a bot. Self-contained so the world never depends

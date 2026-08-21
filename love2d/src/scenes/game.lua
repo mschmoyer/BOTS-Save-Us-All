@@ -176,6 +176,13 @@ function Game:update(dt, realDt)
     if Input.pressed("build" .. i) then self:build(TU.bots.order[i]) end
   end
   if Input.pressed("commit") then world:holdDawn() end
+  local agent = world.player and world.player.agent
+  if agent and world.player.autoAct and world.player.autoAct.rally then
+    world.player.autoAct.rally = false
+    world:setRally(agent.rallyX or world.player.x, agent.rallyY or world.player.y)
+  elseif Input.pressed("rally") then
+    self:placeRally()
+  end
   if BuildMenu.update then BuildMenu.update(dt, self.camera) end
   Minimap.update(realDt)
 
@@ -246,6 +253,26 @@ function Game:syncDayNight()
     DayNight.set(w.phase, p)
   end
   DayNight.o2Influence(w.o2 / TU.o2.target)
+end
+
+--- Plant the standing order. Mouse players place it where they are pointing;
+--- everyone else plants it where they stand, which is also where they had to
+--- walk to - the flag is a decision about where you are willing to be.
+function Game:placeRally()
+  local w = self.world
+  local p = w.player
+  if not p or w.cutscene then return end
+  local x, y = p.x, p.y
+  if Input.scheme == "kb" then
+    local mx, my = love.mouse.getPosition()
+    local wx, wy = self.camera:toWorld(mx, my)
+    if U.dist(wx, wy, p.x, p.y) < 1400 then x, y = wx, wy end
+  end
+  if w.rallyX and U.dist(x, y, w.rallyX, w.rallyY) < 60 then
+    w:clearRally()
+  else
+    w:setRally(x, y)
+  end
 end
 
 function Game:build(botType)

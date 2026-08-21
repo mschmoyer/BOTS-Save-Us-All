@@ -60,6 +60,15 @@ function A:decide(p, dt)
     end
   end
 
+  -- move the standing order onto whatever ground is being worked next, the way
+  -- a player pushing a frontier would
+  self.rallyT = (self.rallyT or 0) - dt
+  if self.rallyT <= 0 and self.gx then
+    self.rallyT = 22
+    act.rally = true
+    self.rallyX, self.rallyY = self.gx, self.gy
+  end
+
   local mx, my = 0, 0
   if self.gx then
     local dx, dy, d = U.norm(self.gx - p.x, self.gy - p.y)
