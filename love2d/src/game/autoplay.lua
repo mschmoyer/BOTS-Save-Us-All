@@ -25,6 +25,34 @@ function A:decide(p, dt)
   local act = self.act or {}
   self.act = act
   act.dash, act.shove, act.plant, act.build = false, false, false, nil
+  act.carry = false
+
+  -- Somebody is on the ground. Carrying them home outranks everything except
+  -- the rig -- it is the one thing in the game that undoes a loss, and a
+  -- stand-in that never does it makes a bad night look permanent.
+  if p.carrying then
+    local b = p.carrying
+    local home = U.dist(p.x, p.y, w.homeX, w.homeY)
+    self.gx, self.gy = w.homeX, w.homeY
+    -- inside the rig's revive radius, not merely near it
+    if home < TU.world.homeRadius * 0.7 then act.carry = true end
+    local dx, dy = U.norm(self.gx - p.x, self.gy - p.y)
+    self.aimX, self.aimY = dx, dy
+    return dx, dy, act
+  end
+  local down = w:nearestDownedBot(p.x, p.y, 900)
+  if down and not (w.boss and w.boss.alive) then
+    local d = U.dist(p.x, p.y, down.x, down.y)
+    self.gx, self.gy = down.x, down.y
+    self.aimX, self.aimY = U.norm(down.x - p.x, down.y - p.y)
+    if d < TU.player.carry.pickupRange * 0.8 then
+      act.carry = true
+      return 0, 0, act
+    end
+    local dx, dy = U.norm(down.x - p.x, down.y - p.y)
+    if d > 300 and self.rng:chance(dt * 1.5) then act.dash = true end
+    return dx, dy, act
+  end
 
   -- the rig outranks everything: it is draining the sky while we stand here
   local threat = (w.boss and w.boss.alive) and w.boss or w:nearestEnemy(p.x, p.y, 420)
@@ -47,7 +75,12 @@ function A:decide(p, dt)
     local g = self.goal
     if g and g.alive then
       self.gx, self.gy = g.x, g.y
-      if U.dist(p.x, p.y, g.x, g.y) < 60 then act.shove = true end
+      -- mining is standing on it, not hitting it: walking circles around a
+      -- deposit is how the stand-in used to earn nothing all day
+      if U.dist(p.x, p.y, g.x, g.y) < 34 then
+        self.aimX, self.aimY = U.norm(g.x - p.x, g.y - p.y)
+        return 0, 0, act
+      end
     else
       self.gx, self.gy = w.homeX, w.homeY
     end

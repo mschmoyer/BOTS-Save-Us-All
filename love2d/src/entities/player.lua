@@ -192,7 +192,7 @@ function Player:update(dt, camera)
   end
 
   ------------------------------------------------------------------ carry
-  if canAct and self.world and not self.agent then self:updateCarry(dt) end
+  if canAct and self.world then self:updateCarry(dt) end
   if auto and auto.build and self.world then
     self.world:spawnBot(self.x + self.faceX * 30, self.y + self.faceY * 30, auto.build)
   end
@@ -321,15 +321,21 @@ function Player:handPlant()
 end
 
 function Player:updateCarry(dt)
+  -- The autoplay agent asks for pick-up and put-down through the same one
+  -- action a player presses; it cannot press a key. Rescuing is a third of what
+  -- a good player does at night, and a stand-in that never does it makes every
+  -- headless balance trace read as a much worse run than the game deserves.
+  local press = self.agent and (self.autoAct and self.autoAct.carry == true)
+                or (not self.agent and Input.pressed("plant"))
   if self.carrying then
     local b = self.carrying
     b.x, b.y = self.x - self.faceX * 4, self.y - 26
     -- carrying is ended deliberately, on its own key, so a shove never fumbles
-    if Input.pressed("plant") then self.world:dropCarried(self) end
+    if press then self.world:dropCarried(self) end
     return
   end
   local bot = self.world:nearestDownedBot(self.x, self.y, T.carry.pickupRange)
-  if bot and Input.pressed("plant") then
+  if bot and press then
     self.carrying = bot
     bot.carried = true
     Audio.play("bot_revive", { pitch = 0.85 })
