@@ -147,16 +147,16 @@ local CYCLE_MODES = { "lydian", "lydian", "ionian", "ionian", "mixolydian", "dor
 --
 --   arrival -2.0 dB   procession +1.7   plates +3.3   core +5.5   fall +1.4
 --
--- Night is +2.9, so the arrival sits five dB below the night the
--- player has just survived -- that drop is what makes the rest of the cue an
--- arrival rather than a volume knob -- and the core, the loudest sustained thing
--- in the game, is two and a half dB above the night. The fall is quieter than
--- either and has the highest *peak* of any state in the game, because it is one
--- chord and nothing else.
+-- Night is +2.9, so the arrival sits five dB below the night the player has just
+-- survived -- that drop is what makes the rest of the cue an arrival rather than
+-- a volume knob -- and the core, the loudest sustained thing in the game, is two
+-- and a half dB above the night. The fall is quieter than either and has the
+-- highest *peak* of any state in the game, because it is one chord and nothing
+-- else.
 --
 -- The first pass of these numbers measured +8.2 dB at the core, which is the
 -- same mistake the TRIM table below was written to fix. Every state in the game
--- now lives inside a 9 dB window that one music-bus fader can serve.
+-- now lives inside a seven and a half dB window that one fader can serve.
 local BOSS_PARTS = {
   { name = "arrival",    bpm = 84,  barsPerChord = 2, prog = { 1, 1, 7, 1 },
     layers = { pad = 0.52, bass = 0.6, arp = 0, bell = 0, perc = 0.22, choir = 0 },

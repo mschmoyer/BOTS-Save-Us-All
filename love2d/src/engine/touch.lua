@@ -125,10 +125,12 @@ local CONTEXT = {
   drop  = { label = "DROP",  color = P.accent },
 }
 local context = "plant"
+local contextPin = nil          -- set only by the capture harness, see BOTS_TOUCH
 
 --- Called by the HUD each frame (it is the module that already holds the world).
 --- "plant" | "carry" | "drop".
 function Touch.setContext(kind)
+  if contextPin then return end
   if CONTEXT[kind] then context = kind end
 end
 function Touch.getContext() return context end
@@ -200,7 +202,7 @@ local function layout()
   local w, h = lg.getDimensions()
   local scale = Settings.get("touchScale")
   local side  = Settings.get("touchSide")
-  local s = min(w, h)
+  local s = min(min(w, h), max(w, h) * CFG.aspectRef)
   if not L.dirty and w == L.w and h == L.h and scale == L.scale and side == L.side then return end
   L.w, L.h, L.s, L.scale, L.side, L.dirty = w, h, s, scale, side, false
 
@@ -458,7 +460,14 @@ end
 local function openRadial(b)
   if radial.open then return end
   radial.open = true
-  radial.cx, radial.cy = b.x, b.y
+  -- The wheel grows out of the button, but the button lives in the grip corner
+  -- and the wheel is 270 px across: opened where it was pressed, a third of it
+  -- was off the bottom of the phone. So it is pulled back inside the safe box
+  -- and the tether -- already drawn -- explains the offset.
+  local r1 = L.s * CFG.radialOuter * L.scale * CFG.radialMargin
+  local sl, st, sr, sb = Touch.safeInsets()
+  radial.cx = U.clamp(b.x, min(sl + r1, L.w * 0.5), max(L.w - sr - r1, L.w * 0.5))
+  radial.cy = U.clamp(b.y, min(st + r1, L.h * 0.5), max(L.h - sb - r1, L.h * 0.5))
   radial.sel = 0
   buzz(CFG.hapticFire)
 end
@@ -678,6 +687,43 @@ end
 
 local osChecked = false
 
+-- Capture harness only. Nothing in this game's touch layer can be judged from
+-- source, and the headless runner has no finger: BOTS_TOUCH=radial holds the
+-- build wheel open, BOTS_TOUCH=carry|drop pins the contextual button so the
+-- three faces it wears can be photographed. Read once, never in a shipped run.
+local demo = nil
+local demoRead = false
+local function demoMode()
+  if not demoRead then
+    demoRead = true
+    demo = _G.BOTS_CFG and _G.BOTS_CFG("BOTS_TOUCH") or nil
+    if demo == "" then demo = nil end
+  end
+  return demo
+end
+
+local function applyDemo()
+  local d = demoMode()
+  if not d then return end
+  if d == "carry" or d == "drop" or d == "plant" then
+    contextPin, context = d, d
+  elseif d == "radial" then
+    local b = BY_ID.build
+    if not radial.open then
+      local sl = slots[1]
+      sl.id, sl.role, sl.btn = "demo", "btn", b
+      b.slot, b.holdT = sl, 1
+      openRadial(b)
+    end
+    local sl = radial.btn and radial.btn.slot
+    if sl then
+      sl.x = radial.cx - L.s * CFG.radialOuter * 0.62
+      sl.y = radial.cy - L.s * CFG.radialOuter * 0.62
+      radial.sel = radialPick(sl.x, sl.y)
+    end
+  end
+end
+
 function Touch.update(dt)
   if not osChecked then
     osChecked = true
@@ -694,7 +740,15 @@ function Touch.update(dt)
 
   local visible = Touch.active and Touch.enabled and Input.scheme == "touch"
   visFade = U.damp(visFade, visible and 1 or 0, CFG.fade, dt)
-  Touch.opacity = visFade * manualOpacity * Settings.get("touchOpacity")
+  -- The controls belong to the same layer as the readouts and leave with them:
+  -- five lit buttons standing over a cutscene's letterbox, or over the dawn
+  -- draft, is the phone version of the bug where the HUD drew under the bars.
+  local chrome = 1
+  if HUD.chromeAlpha then
+    local ok, v = pcall(HUD.chromeAlpha)
+    if ok and type(v) == "number" then chrome = v end
+  end
+  Touch.opacity = visFade * manualOpacity * Settings.get("touchOpacity") * chrome
 
   for i = 1, CFG.maxTouches do
     local sl = slots[i]
@@ -718,6 +772,7 @@ function Touch.update(dt)
     end
   end
 
+  applyDemo()
   radial.fade = U.damp(radial.fade, radial.open and 1 or 0, 18, dt)
   if radial.open then
     radial.t = radial.t + dt
@@ -911,19 +966,26 @@ end
 local function drawStickGhost(alpha, time)
   local k = (1 - taught) * (1 - stick.fade)
   if k < 0.02 then return end
-  local a = alpha * CFG.ghostA * k * (0.72 + 0.28 * sin(time * CFG.ghostPulse * TAU))
+  local breath = 0.72 + 0.28 * sin(time * CFG.ghostPulse * TAU)
+  local a = alpha * CFG.ghostA * k * breath
   if a < 0.01 then return end
   local x, y, r = L.homeX, L.homeY, L.ringR
 
+  -- The ghost has to carry over a sunlit canopy, which the live stick never
+  -- has to: the live stick has a thumb on it and the player already knows what
+  -- it is. So it gets its own ground and a live rim rather than the plate's
+  -- quiet grey, and it breathes.
+  disc(x, y, r * 1.34, P.black, 0.34 * a, "smooth")
   stickPlate(x, y, r, a, 0, 0, 0)
+  ringStroke(x, y, r, max(2, r * 0.038), P.accent, 0.55 * a, 56)
   stickNub(x, y, r, L.nubR, a, 0, 0, 0)
 
   -- four little chevrons around the well: it moves, and it moves any way
   for i = 0, 3 do
     local ang = i * pi * 0.5
-    Draw.setColor(P.accent, 0.6 * a)
-    Draw.chevron(x + cos(ang) * r * 1.30, y + sin(ang) * r * 1.30,
-                 r * 0.15, ang, max(2, r * 0.035), 0.8)
+    Draw.setColor(P.accent, 0.75 * a)
+    Draw.chevron(x + cos(ang) * r * 1.32, y + sin(ang) * r * 1.32,
+                 r * 0.17, ang, max(2, r * 0.042), 0.8)
   end
   Text.display("DRAG TO MOVE", x, y + r * 1.52, max(10, r * 0.22),
                { color = P.ink, alpha = min(1, 1.35 * a), align = "center",
@@ -1132,13 +1194,18 @@ function Touch.draw()
   drawStickGhost(a, time)
   drawStick(a)
   drawAim(a)
+  -- While the wheel is open it is the only thing on the glass that matters, and
+  -- five half-lit buttons showing through six semi-transparent wedges is not a
+  -- modal menu, it is a mess. They step out of the way and come back.
+  local rest = a * (1 - radial.fade * 0.88)
   for i = 1, ACT_N do
     local b = ACT[i]
-    if not b.modal then drawButton(b, a) end
+    if not b.modal then drawButton(b, rest) end
   end
   drawRadial(a)
-  -- the modal button draws last: it is the anchor the radial grew out of
-  drawButton(BY_ID.build, a * (1 - radial.fade * 0.55))
+  -- ...and the BUILD button goes entirely: the wheel's hub *is* the button now,
+  -- and it says CANCEL or PLACE, which the button's own caption cannot.
+  drawButton(BY_ID.build, a * (1 - radial.fade))
 
   lg.setLineWidth(lw)
   lg.setLineJoin(lj)

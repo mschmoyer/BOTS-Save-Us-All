@@ -623,7 +623,18 @@ function World:setPhase(phase)
 end
 
 --- Plant the standing order. One flag; moving it is free and instant.
+--- Can the standing order be moved right now? The HUD asks so it can grey the
+--- prompt out rather than letting the player press a key that does nothing.
+function World:rallyReady()
+  return (self.rallyCd or 0) <= 0
+end
+
 function World:setRally(x, y)
+  if (self.rallyCd or 0) > 0 then
+    Audio.play("ui_back")
+    Signal.emit("ui:denied", "rally")
+    return false
+  end
   if self.terrain and self.terrain.isLand and not self.terrain:isLand(x, y) then
     if not self.terrain.nearestLand then return false end
     local lx, ly = self.terrain:nearestLand(x, y)
@@ -632,6 +643,9 @@ function World:setRally(x, y)
   end
   local moved = self.rallyX ~= nil
   self.rallyX, self.rallyY, self.rallyT = x, y, 0
+  -- Moving it is a commitment: the ground you point at is ground you are not
+  -- defending, and that is only true if you cannot take it back immediately.
+  self.rallyCd = moved and TU.rally.cooldown or 0
   Audio.play(moved and "ui_move" or "build_done", { x = x, y = y })
   VFX.emit("plant_burst", x, y, { power = 0.6 })
   Signal.emit("world:rally", x, y, moved)
@@ -813,6 +827,7 @@ end
 ------------------------------------------------------------------------ update
 function World:update(dt)
   self.time = self.time + dt
+  if (self.rallyCd or 0) > 0 then self.rallyCd = self.rallyCd - dt end
   if Wind.update then Wind.update(dt) end
   Weather.update(dt, self)
   self.raining = Weather.isRaining()

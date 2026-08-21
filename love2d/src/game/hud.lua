@@ -1070,11 +1070,12 @@ local function drawHearts(w, a)
   end
   UI.caption("INTEGRITY", x, y + 20, UI.ts.micro, UI.c(P.ink, 0.7 * a), "left", nil, 1)
 
-  -- reboot timer, if the player is down
+  -- Reboot timer, if the player is down. It hangs above the hearts on a desktop
+  -- and below them on a phone, where above is the resources block.
   if p.state == "down" then
     local left = max(0, (p.downTimer or 0))
-    UI.text("REBOOT " .. itos(math.ceil(left)), x, y - 30, UI.ts.label,
-            UI.c(P.warn, a), "left", a, 0.12)
+    UI.text("REBOOT " .. itos(math.ceil(left)), x, L.tm and (y + 34) or (y - 30),
+            UI.ts.label, UI.c(P.warn, a), "left", a, 0.12)
   end
 end
 
@@ -1522,7 +1523,10 @@ local function drawBossBar(w, a)
   -- Nothing can be built once the rig arrives, so the build bar has faded out
   -- by the time this is at full strength; the bar drops into the space it left
   -- rather than floating above an empty band.
-  local bw = min(sw * 0.52, 760)
+  -- On a phone the bar is narrower: at 52% of the width its right end ran
+  -- under the thumb cluster's inboard button, and a health bar you cannot see
+  -- the end of is a health bar you cannot read.
+  local bw = L.tm and min(sw * TU.hud.touch.bossW, 620) or min(sw * 0.52, 760)
   local bh = 13
   local bx, by = (sw - bw) * 0.5, L.bossY
 

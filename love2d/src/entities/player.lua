@@ -30,6 +30,7 @@ function Player:init(x, y, world)
   self.dashTimer   = 0
   self.dashCd      = 0
   self.shoveCd     = 0
+  self.pulseCd     = 0
   self.shoveAnim   = 0
   self.plantCd     = 0
   self.charging    = false
@@ -163,9 +164,10 @@ function Player:update(dt, camera)
   end
 
   ------------------------------------------------------------------ pulse
+  self.pulseCd = math.max(0, self.pulseCd - dt)
   local wantPulse = self.agent and (auto and auto.pulse)
                     or ((not self.agent) and Input.down("pulse"))
-  if canAct and wantPulse and self:cobalt() >= self:pulseCost() then
+  if canAct and wantPulse and self.pulseCd <= 0 and self:cobalt() >= self:pulseCost() then
     if not self.charging then
       self.charging = true
       self.chargeT = 0
@@ -274,7 +276,7 @@ function Player:chips() return self.world and self.world.chips or nil end
 function Player:chip(k, d) local c = self:chips() return c and c:get(k, d) or d end
 
 function Player:pulseCost()
-  return math.max(2, T.pulse.cost + self:chip("pulseCost", 0))
+  return math.max(0, T.pulse.cost + self:chip("pulseCost", 0))
 end
 
 function Player:pulse()
@@ -282,6 +284,7 @@ function Player:pulse()
   self.chargeT = 0
   Audio.stop("pulse_charge")
   if not self:spend(self:pulseCost()) then return end
+  self.pulseCd = T.pulse.cooldown
   local radius = T.pulse.radius * self:chip("pulseRadius", 1)
   Audio.play("pulse_release")
   VFX.emit("pulse_ring", self.x, self.y, { scale = radius / 200 })

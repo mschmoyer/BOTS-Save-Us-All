@@ -309,6 +309,21 @@ S.tutorial = {
   { id = "shove",   label = "SHOVE IT OFF",    action = "shove" },
   { id = "dash",    label = "GET OUT OF THE WAY", action = "dash" },
   { id = "rescue",  label = "IT IS STILL LIT", action = nil, hint = "CARRY IT TO A BEACON" },
+  -- The back half of the tutorial. Six things the player had to work out from
+  -- an icon and a number, spread across the middle cycles so the run keeps
+  -- teaching after the first three minutes instead of going quiet for eight.
+  { id = "pulse",     label = "TOO MANY OF THEM",  action = "pulse",
+    hint = "HOLD IT, THEN LET GO" },
+  { id = "handplant", label = "PUT ONE HERE",      action = "plant",
+    hint = "FREE. THE FOREST GROWS FROM ITS EDGE." },
+  { id = "harvester", label = "SEND IT MINING",    action = "build5",
+    hint = "IT BRINGS COBALT HOME WHILE YOU FIGHT" },
+  { id = "builder",   label = "IT PLANTS PLANTERS", action = "build2",
+    hint = "OUT OF COBALT IT FINDS, NOT YOURS" },
+  { id = "beacon",    label = "SOMEWHERE TO CARRY THEM", action = "build6",
+    hint = "THE DOWNED WAKE UP INSIDE ITS LIGHT" },
+  { id = "sentry",    label = "IT WILL HOLD THIS ROW", action = "build4",
+    hint = "STATIC. IT SHOOTS WHAT COMES." },
 }
 
 ------------------------------------------------------------------ ending credits

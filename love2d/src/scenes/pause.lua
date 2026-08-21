@@ -50,11 +50,19 @@ function S:enter(game)
   self.ctx = UI.context({ accent = P.warn })
   self.ctx.focusId = "resume"
   if Audio.play then Audio.play("ui_back", { volume = 0.7 }) end
+  -- This scene does not set updateWhenCovered, so pausing stops Game:update and
+  -- with it Audio.update -- and the rig's intake drone and the Siphons' bed are
+  -- heartbeat-driven loops. Without this they would hang at whatever level they
+  -- were at, for as long as the menu is open, with no watchdog running to
+  -- notice. Suspending mutes them without releasing the voices, so resuming
+  -- puts them back exactly where they were.
+  if Audio.setSuspended then Audio.setSuspended(true) end
 end
 
 function S:leave()
   HUD.alpha = 1
   BuildMenu.barAlpha = 1
+  if Audio.setSuspended then Audio.setSuspended(false) end
 end
 
 local function act(self, id)

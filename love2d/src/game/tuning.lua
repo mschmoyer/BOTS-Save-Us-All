@@ -30,11 +30,18 @@ T.player = {
     arc = math.rad(100), range = 82, cooldown = 0.3, force = 520,
     stun = 0.55, hitstop = 0.055, trauma = 0.34, damage = 1,
   },
+  -- The Pulse used to cost eight cobalt. Traced across five runs the bank sits
+  -- at 0-13 from cycle 2 onward, so the panic button was unaffordable at
+  -- exactly the moments it exists for, and most players never pressed it once.
+  -- It is priced in seconds now: free, and you get one every ten.
   pulse = {
-    charge = 0.85, radius = 200, force = 900, cost = 8,
+    charge = 0.85, radius = 200, force = 900, cost = 0, cooldown = 10,
     stun = 1.2, hitstop = 0.11, trauma = 0.75, damage = 2,
   },
-  plant  = { cost = 3, cooldown = 2.4 },
+  -- Hand-planting cost three cobalt and was dominated by a Planter inside a
+  -- minute. Free, on a long cooldown, it is a *placement* decision instead:
+  -- the one tree you put exactly where you want it.
+  plant  = { cost = 0, cooldown = 4.5 },
   carry  = { speedMul = 0.66, pickupRange = 34 },
   mineEvery = 0.55,            -- seconds per chunk while standing on a deposit
   lamp   = { radius = 310, warm = 1.0 },   -- the pool you actually work inside at night
@@ -46,6 +53,11 @@ T.player = {
 -- which way the wood advances is a decision you revisit every minute, and it
 -- has a real cost: everything you point at is somewhere you are not defending.
 T.rally = {
+  -- Re-planting the flag was free, instant and unlimited, so the spec's claim
+  -- that "the ground you point at is ground you are not defending" was not
+  -- true of the code -- you simply moved it to whatever you were doing. A
+  -- cooldown makes pointing it a commitment for most of a phase.
+  cooldown = 42,
   radius     = 620,            -- how far from the flag bots will take an order
   pull       = 0.82,           -- how strongly wander targets are biased toward it
   workBonus  = 0.18,           -- they work faster when they know where they are going
@@ -166,11 +178,18 @@ T.o2 = {
   -- a half times what a small one did. A forest does not scale with an island
   -- that way -- the player's time does not -- so the large seeds could not be
   -- filled and the meter finished in the sixties whatever the player did.
-  -- Traced across three seeds, this lands a thoughtless autoplay run at 81-100%
-  -- rather than 65-96%, which leaves a real player somewhere they can finish.
-  fullForest    = 780,          -- fallback when there is no terrain
-  forestPerArea = 1 / 4900,     -- tree-points per square world unit of plantable land
-  forestMin     = 500,
+  -- Traced across three seeds, this lands a thoughtless autoplay run at 87-100%
+  -- rather than 65-96%, with the strong runs filling the sky around cycle six
+  -- and triggering the early extraction, which is what the win condition is for.
+  fullForest    = 810,          -- fallback when there is no terrain
+  forestPerArea = 1 / 4200,     -- tree-points per square world unit of plantable land
+  -- The clamp does most of the work on purpose. A linear-in-area target cannot
+  -- be right for both ends: set it so a small island is a real job and the big
+  -- ones become unfillable; set it so the big ones are fillable and the small
+  -- ones fill at cycle four and cut three cycles off the run. A full sky is
+  -- about eight hundred tree-points wherever you land, tilted a little by how
+  -- much ground there is.
+  forestMin     = 760,
   forestMax     = 920,          -- tree-points that read as a fully restored sky
   rise        = 0.42,           -- how fast the reading climbs toward the forest
   fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
@@ -377,6 +396,7 @@ T.hud = {
     holdH     = 74,    -- becomes a tap target rather than a key prompt
     holdUp    = 26,    -- above the bottom safe edge
     bossUp    = 118,   -- the boss bar's baseline above the bottom safe edge
+    bossW     = 0.42,  -- ...and its width, so its end clears the thumb cluster
     overlayFloor = 214,
     o2Max     = 400,   -- the oxygen arc never grows past this on a phone
   },
@@ -456,6 +476,13 @@ T.juice = {
 T.touch = {
   maxTouches   = 10,
 
+  -- The reference length everything below is a fraction of. It is the short
+  -- edge -- but never more than this much of the long one, because on a tablet
+  -- or anything near square the short edge is enormous and a thumb is not: at
+  -- 1366x1024 a plain min(w,h) gave 137 px buttons and a stick you could stand
+  -- in. A landscape phone is nowhere near this ratio, so it is unaffected.
+  aspectRef    = 0.60,
+
   ---------------------------------------------------------------- floating stick
   stickRing    = 0.112,   -- ring radius: full deflection
   stickNub     = 0.046,
@@ -466,7 +493,7 @@ T.touch = {
   stickZoneX   = 0.52,    -- fraction of screen width owned by the stick
   -- The stick may not spawn under the top band: a finger planted over the
   -- oxygen arc hides the one readout the whole campaign is measured in.
-  stickZoneTop = 0.30,    -- below the top safe inset, in S
+  stickZoneTop = 0.36,    -- below the top safe inset, in S
   -- Where the resting ghost sits when nobody is touching the glass. This is the
   -- only thing on a first touch screen that says "drag anywhere here to walk",
   -- so it is drawn at the thumb's actual rest position, not in a corner.
@@ -521,6 +548,7 @@ T.touch = {
   radialDrag   = 0.030,   -- ... or drag this far, whichever comes first
   radialDilate = 0.25,    -- the world runs this slow while the wheel is open
   radialGlyph  = 0.115,   -- bot silhouette size, in wheel outer radii
+  radialMargin = 1.10,    -- wheel radii of clearance kept inside the safe box
 
   --------------------------------------------------------------------------- aim
   aimDead      = 0.028,   -- drag before an aim touch commits

@@ -337,6 +337,83 @@ local TUT = {
     end,
     color = P.love,
   },
+
+  -- The back half. Each of these arms the first time the player is in the
+  -- situation the thing exists for -- not on a timer, and not all at once.
+  {
+    id = "pulse",
+    arm = function(w)
+      if Story.did.shove ~= true then return false end
+      local p = w.player
+      if not p or not w.hEnemy then return false end
+      local near = 0
+      w.hEnemy:each(p.x, p.y, 240, function(e) if e.alive and not e.fleeing then near = near + 1 end end)
+      return near >= 3
+    end,
+    done = function(w) return Story.did.pulse == true end,
+    anchor = playerOf,
+    color = P.accentCool,
+  },
+  {
+    id = "handplant",
+    arm = function(w)
+      -- once there is a wood to extend, and the player is standing away from it
+      return (w.cycle or 1) >= 2 and (w.treeCount or 0) >= 14
+             and Story.did.build == true
+    end,
+    done = function(w) return Story.did.handplant == true end,
+    anchor = playerOf,
+    color = P.ramp.leaf[4],
+  },
+  {
+    id = "harvester",
+    arm = function(w)
+      return (w.cycle or 1) >= 2 and w.botCost
+             and (w.cobalt or 0) >= w:botCost("harvester")
+             and w:countBots("harvester") == 0
+    end,
+    done = function(w) return w:countBots("harvester") > 0 end,
+    anchor = playerOf,
+    color = P.ramp.cobalt[3],
+  },
+  {
+    id = "builder",
+    arm = function(w)
+      return (w.cycle or 1) >= 2 and w.botCost
+             and (w.cobalt or 0) >= w:botCost("builder")
+             and w:countBots("builder") == 0
+    end,
+    done = function(w) return w:countBots("builder") > 0 end,
+    anchor = playerOf,
+    color = P.accent,
+  },
+  {
+    id = "beacon",
+    arm = function(w)
+      -- the first time somebody goes down a long way from the rig, which is
+      -- exactly the problem a Beacon solves
+      local p = w.player
+      if not p or w:countBots("beacon") > 0 then return false end
+      local b = w.nearestDownedBot and w:nearestDownedBot(p.x, p.y, 2400)
+      if not b then return false end
+      return U.dist(b.x, b.y, w.homeX, w.homeY) > 700
+             and w.botCost and (w.cobalt or 0) >= w:botCost("beacon")
+    end,
+    done = function(w) return w:countBots("beacon") > 0 end,
+    anchor = playerOf,
+    color = P.eye,
+  },
+  {
+    id = "sentry",
+    arm = function(w)
+      return (w.cycle or 1) >= 3 and w.botCost
+             and (w.cobalt or 0) >= w:botCost("sentry")
+             and w:countBots("sentry") == 0
+    end,
+    done = function(w) return w:countBots("sentry") > 0 end,
+    anchor = playerOf,
+    color = P.warn,
+  },
 }
 
 local TUT_BY_ID = {}
@@ -536,7 +613,8 @@ local function subscribe()
     local p = Story.world and Story.world.player
     react("night", p and p.x, p and p.y)
   end, Story)
-  Signal.on("tree:planted", function(t)
+  Signal.on("tree:planted", function(t, by)
+    if by == "player" then Story.did.handplant = true end
     local w = Story.world
     if w and (w.treeCount or 0) % 40 == 0 then react("day", t and t.x, t and t.y) end
   end, Story)
@@ -544,6 +622,7 @@ local function subscribe()
 
   -- tutorial acknowledgements
   Signal.on("player:shove", function() Story.did.shove = true end, Story)
+  Signal.on("player:pulse", function() Story.did.pulse = true end, Story)
   Signal.on("player:dash",  function() Story.did.dash = true end, Story)
   Signal.on("player:carry", function() Story.did.carry = true end, Story)
   Signal.on("cobalt:gained", function() Story.did.cobalt = true end, Story)

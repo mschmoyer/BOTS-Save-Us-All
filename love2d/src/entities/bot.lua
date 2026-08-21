@@ -254,6 +254,25 @@ function Bot:update_builder(dt)
 end
 
 function Bot:update_repulsor(dt)
+  -- It holds its charges until something is actually in range. pulseT started
+  -- at zero, so a Repulsor fired the instant it booted whether or not anything
+  -- was near it and was gone four and a half seconds later -- a twelve-cobalt
+  -- firework you could not learn anything from. Now it is a mine you place in
+  -- front of a wave, which is what its own card says it is.
+  local w = self.world
+  local armed = false
+  if w and w.hEnemy then
+    local r = self.def.radius_pulse
+    w.hEnemy:each(self.x, self.y, r, function(e)
+      if e.alive and not e.fleeing and U.dist2(e.x, e.y, self.x, self.y) <= r * r then
+        armed = true
+      end
+    end)
+  end
+  if not armed then
+    self.pulseT = math.min(self.pulseT, self.def.pulseEvery)
+    return
+  end
   self.pulseT = self.pulseT - dt
   if self.pulseT <= 0 then
     self.pulseT = self.def.pulseEvery

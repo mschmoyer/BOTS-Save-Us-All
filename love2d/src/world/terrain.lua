@@ -272,8 +272,11 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // sun-bleached dry grass, in broad regions where the moisture runs out
   float dry = smoothstep(0.60, 0.26, moist)
             * smoothstep(0.34, 0.66, fbm3(w * 0.00095 + 123.0)) * (1.0 - marshHint);
+  // Straw, not sand. At 0.62 of the way to the sand ramp this put a pale sandy
+  // halo round every rock spine and every scar -- exactly where the moisture
+  // runs out -- and the halo read as a footpath.
   vec3 dryC = mix(ramp(cGrass[0], cGrass[1], cGrass[2], cGrass[3], 1.9 + (d2 - 0.5) * 0.6),
-                  ramp(cSand[0], cSand[1], cSand[2], cSand[3], 2.1 + (d1 - 0.5) * 0.7), 0.62);
+                  ramp(cSand[0], cSand[1], cSand[2], cSand[3], 1.7 + (d1 - 0.5) * 0.7), 0.44);
   col = mix(col, dryC * 0.86, dry * 0.72);
 
   // dry dirt patches gnawing into the grass
@@ -347,7 +350,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // A slab's tone is mostly the region it is in and only partly its own. Purely
   // random slab tones tessellate into crazy paving: every edge shouts equally
   // and there are no larger masses for the eye to hold on to.
-  float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 0.86), hsh(ca.xy + 11.3), 0.44);
+  float tone = mix(clamp(broad * 1.45 - 0.20, 0.0, 0.86), hsh(ca.xy + 11.3), 0.54);
   float ha   = hsh(ca.xy * 1.7 + 3.0);            // ...and how high it stands
   float hb   = hsh(cb.xy * 1.7 + 3.0);
   vec3 rockC = ramp(cStone[0], cStone[1], cStone[2], cStone[3],
@@ -377,7 +380,10 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float rkNs = smoothstep(0.44, 0.66, rkN);
   float shadow = clamp(rkNs - rockT, 0.0, 1.0);
   float rim    = clamp(rockT - rkNs, 0.0, 1.0);
-  rockC = mix(rockC, cStone[3], smoothstep(0.30, 0.95, rim) * 0.45);
+  // The slab lighting already gives every edge in the mass a lit lip, so this
+  // only has to lift the very outside of the headland -- at 0.45 it painted a
+  // thirty-pixel pale outline round the whole spine.
+  rockC = mix(rockC, cStone[3], smoothstep(0.45, 0.98, rim) * 0.26);
 
   // Lichen: never a fringe on everything. It takes the damp, shaded, low ground
   // and it takes it in patches, so where it turns up it says something about
@@ -426,25 +432,32 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     // texture first -- veins painted on a brown field read as wallpaper.
     vec2 cwp = w + vec2((fbm3(w * 0.0105 +  5.0) - 0.5) * 26.0,
                         (fbm3(w * 0.0105 + 61.0) - 0.5) * 26.0);
-    vec3 pa  = cells(cwp * 0.0132);                 // ~76 px plates
-    vec3 pas = cells((cwp + uSun * 5.0) * 0.0132);
-    vec3 pb  = cells(cwp * 0.0395);                 // ~25 px crazing
+    vec3 pa  = cells(cwp * 0.0165);                 // ~61 px plates
+    vec3 pas = cells((cwp + uSun * 5.0) * 0.0165);
+    vec3 pb  = cells(cwp * 0.0470);                 // ~21 px crazing
     float tA = hsh(pa.xy + 5.7);
     float tB = hsh(pb.xy + 19.3);
-    // the fissures open and close along their length instead of running as a
-    // ruled net of equal width
-    float cvz = 0.55 + 1.05 * fbm3(w * 0.017 + 3.0);
+    // The fissures open and close along their length instead of running as a
+    // ruled net of equal width, and whole regions of the scar craze tightly
+    // while others barely open -- without that second, slower term a large scar
+    // is one repeating reptile-skin texture from edge to edge.
+    float cvz = (0.55 + 0.95 * fbm3(w * 0.0036 + 71.0))
+              * (0.70 + 0.65 * fbm3(w * 0.0170 +  3.0));
     float crackA = smoothstep(0.070, 0.006, pa.z * cvz);
     float crackB = smoothstep(0.085, 0.014, pb.z * cvz);
-    float crack  = clamp(crackA + crackB * 0.55, 0.0, 1.0);
+    float crack  = clamp(crackA + crackB * 0.72, 0.0, 1.0);
 
+    // Hold the top of the ramp back: cAsh's last stop is a warm tan, and plates
+    // reaching it turned the whole scar the colour of a leather sofa. Ash, then
+    // desaturated toward its own grey, so the scar reads dead rather than dirty.
     vec3 dead = ramp(cAsh[0], cAsh[1], cAsh[2], cAsh[3],
-                     0.70 + tA * 1.30 + tB * 0.60 + (d2 - 0.5) * 0.40);
+                     0.55 + tA * 1.00 + tB * 0.50 + (d2 - 0.5) * 0.40);
+    dead = mix(dead, vec3(dot(dead, vec3(0.299, 0.587, 0.114))), 0.20);
     // a little dead soil under the ash: warm, but never enough to make the
     // whole scar brown
-    dead = mix(dead, ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.45 + d2 * 0.90), 0.14);
+    dead = mix(dead, ramp(cSoil[0], cSoil[1], cSoil[2], cSoil[3], 0.45 + d2 * 0.90), 0.10);
     // the heart of a scar is burnt out; the rim is still dust
-    dead *= 0.58 + 0.56 * (1.0 - deep) + 0.30 * form;
+    dead *= 0.52 + 0.56 * (1.0 - deep) + 0.52 * form;
     // a plate standing proud of its neighbour catches the light on its up-sun
     // lip and throws a shadow off the other side
     float lift = clamp((hsh(pa.xy * 1.7 + 3.0) - hsh(pas.xy * 1.7 + 3.0)) * 2.6, -1.0, 1.0);
@@ -1321,6 +1334,9 @@ local function stoneBlock(x, y, r, rng, cShade, cBody, cTop)
   love.graphics.polygon("fill", unpack(sh))
   love.graphics.setColor(cBody)
   love.graphics.polygon("fill", unpack(pts))
+  -- The top facet is translucent so the slab it is lying on shows through it.
+  -- Opaque, these were the brightest thing on a dark bed and a field of them
+  -- read as confetti rather than as broken stone.
   local tp = {}
   for k = 1, #pts, 2 do
     tp[k]     = x + (pts[k]     - x) * 0.58 + SUN[1] * r * 0.30
@@ -1497,8 +1513,8 @@ function Terrain:_scatterMarks(tile, part, parts)
           -- broken bedrock, in fields rather than evenly over the whole spine
           local r = 6 + rng:next() * 11
           stoneBlock(lx, ly, r, rng, stoneShade,
-                     P.shade(R.stone, 1.7 + rng:next() * 0.7),
-                     P.shade(R.stone, 2.3 + rng:next() * 0.6))
+                     P.shade(R.stone, 1.7 + rng:next() * 0.7, 0.82),
+                     P.shade(R.stone, 2.5 + rng:next() * 0.6, 0.50))
         elseif roll < 0.050 + 0.30 * foot then
           -- scree, collecting where the face runs out into soil
           local r = 1.4 + rng:next() * 3.2
