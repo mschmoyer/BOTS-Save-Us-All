@@ -184,7 +184,7 @@ function Enemy:update_siphon(dt)
     self.feeding = false
   end
   if self.feeding and w then
-    w:drainO2(T.siphon.drain or 0.42, dt)
+    w:drainO2(TU.o2.siphonDrain, dt)
     if self.rng:chance(dt * 5) then VFX.emit("blight_spore", self.x, self.y + 10) end
   end
 end

@@ -37,10 +37,13 @@ local SATU   = { day = 1.00, dusk = 0.66, night = 0.58, dawn = 0.78 } -- grade s
 local GAIN   = { day = 0.04, dusk = 0.11, night = 0.17, dawn = 0.08 } -- additive light gain
 local BLOOM  = { day = 0.50, dusk = 0.80, night = 1.00, dawn = 0.70 } -- bloom response
 
--- The transition occupies the tail of each phase, so "day" reads as day for a
--- while and then turns. smootherstep keeps the first and second derivative calm
--- across the boundary.
-local TURN_AT = 0.45
+-- The transition occupies the tail of each phase, so a phase reads as itself for
+-- most of its length and then turns. smootherstep keeps the first and second
+-- derivative calm across the boundary.
+-- Day and night are the phases the player *lives* in, so they hold their look
+-- almost to the end; dusk and dawn exist to be transitions, so they start
+-- turning immediately.
+local TURN_AT = { day = 0.76, dusk = 0.10, night = 0.80, dawn = 0.15 }
 
 ------------------------------------------------------------------ public state
 DN.phase   = "day"
@@ -90,7 +93,7 @@ local function recompute()
   local p  = DN.phase
   local nx = NEXT[p]
   local a, b = P.tod[p], P.tod[nx]
-  local w = U.smootherstep(TURN_AT, 1.0, DN.t)
+  local w = U.smootherstep(TURN_AT[p] or 0.5, 1.0, DN.t)
 
   DN.clock = (START[p] + SPAN[p] * DN.t) % 1
 
@@ -125,9 +128,9 @@ local function recompute()
   -- oxygen: a dead sky is brown, hazy and flat; a healthy one is clean and blue
   local o2 = DN.o2
   mixInto(DN.fogColor, DN.fogColor, P.ramp.cobalt[3], 0.18 * o2)
-  DN.fogStrength = DN.fogStrength * lerp(1.28, 0.60, o2)
-  DN.saturation  = DN.saturation * lerp(0.78, 1.08, o2)
-  DN.exposure    = DN.exposure * lerp(0.94, 1.05, o2)
+  DN.fogStrength = DN.fogStrength * lerp(1.10, 0.62, o2)
+  DN.saturation  = DN.saturation * lerp(0.90, 1.08, o2)
+  DN.exposure    = DN.exposure * lerp(0.97, 1.05, o2)
 
   -- the grade tint: mostly the atmosphere, pulled toward the ambient so lit
   -- surfaces do not turn to fog.

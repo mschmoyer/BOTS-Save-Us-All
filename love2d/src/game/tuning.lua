@@ -169,8 +169,8 @@ T.camera = {
   lookahead   = 0.28,          -- fraction of velocity projected ahead
   lookaheadMax = 130,
   deadzone    = 12,
-  zoom        = 1.0,
-  zoomAim     = 0.94,
+  zoom        = 1.25,
+  zoomAim     = 1.16,
   edgePad     = 40,
 }
 

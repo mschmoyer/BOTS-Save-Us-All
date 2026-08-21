@@ -231,12 +231,12 @@ S.ending = {
 -- Diegetic, non-blocking, one at a time, and every one of them dismisses
 -- itself the moment the player does the thing.
 S.tutorial = {
-  { id = "move",    label = "WALK",              action = nil,      hint = "WASD" },
-  { id = "cobalt",  label = "COBALT",            action = nil,      hint = "WALK OVER IT" },
-  { id = "planter", label = "PLANTER",           action = nil,      hint = "1" },
-  { id = "shove",   label = "SHOVE IT OFF",      action = "shove" },
-  { id = "dash",    label = "DASH",              action = "dash" },
-  { id = "rescue",  label = "CARRY IT TO A BEACON", action = nil,   hint = "WALK INTO IT" },
+  { id = "move",    label = "WALK",           hint = "WASD", pad = "L-STICK", touch = "DRAG" },
+  { id = "cobalt",  label = "COBALT",         hint = "WALK OVER IT" },
+  { id = "planter", label = "BUILD A PLANTER", action = "build1" },
+  { id = "shove",   label = "SHOVE IT OFF",   action = "shove" },
+  { id = "dash",    label = "DASH",           action = "dash" },
+  { id = "rescue",  label = "CARRY IT TO A BEACON", hint = "WALK INTO IT" },
 }
 
 ------------------------------------------------------------------ ending credits
@@ -249,6 +249,15 @@ S.credits = {
   none    = "EVERY ONE OF THEM CAME HOME",
   quiet   = "we are still here",     -- said in the world, not in a box
   close   = "THE AIR IS YOURS",
+  -- Row labels for the tally. Nouns, not achievements: nothing here is scored.
+  rows = {
+    { key = "trees",   label = "TREES STANDING" },
+    { key = "planted", label = "TREES PLANTED" },
+    { key = "o2",      label = "OXYGEN RESTORED", suffix = "%" },
+    { key = "cycles",  label = "CYCLES SURVIVED" },
+    { key = "built",   label = "BOTS BUILT" },
+    { key = "rescued", label = "BOTS CARRIED HOME" },
+  },
 }
 
 --------------------------------------------------------------- beat registry

@@ -22,6 +22,9 @@ local Post     = Opt.require("src.engine.postfx")
 local HUD      = Opt.require("src.game.hud")
 local BuildMenu = Opt.require("src.game.buildmenu")
 local Story    = Opt.require("src.game.story")
+local Dialogue = Opt.require("src.game.dialogue")
+local Touch    = require("src.engine.touch")
+local Settings = require("src.game.settings")
 
 local Game = {}
 
@@ -49,6 +52,12 @@ function Game:enter(opts)
   end
   self.speed = tonumber(os.getenv("BOTS_SPEED") or "") or 1
 
+  Touch.setAimContext(function()
+    local p = self.world.player
+    return p.x, p.y
+  end, self.world.enemies)
+  Touch.setCobaltSource(function() return self.world.cobalt end)
+
   DayNight.set("day", 0)
   Music.setState("day")
   if Story.begin then Story.begin(self.world, "prologue") end
@@ -59,6 +68,15 @@ end
 function Game:bindSignals()
   Signal.clearOwner(self)
   Signal.on("phase:dawn", function(cycle, report)
+    if self.world.player.agent then
+      -- headless autoplay: take a chip and carry on, so captures reach cycle 5
+      Timer.global:after(0.6, function()
+        local offers = self.world.chips:draft(self.world.rng, 3, self.world.cycle)
+        if offers[1] then self.world.chips:add(offers[1]) end
+        self.world:setPhase("day")
+      end)
+      return
+    end
     -- the draft sits on top of the world, which keeps breathing behind it
     Timer.global:after(1.1, function()
       Screen.push(require("src.scenes.draft"), self.world, report)
@@ -104,6 +122,8 @@ function Game:update(dt, realDt)
 
   DayNight.update(realDt)
   self:syncDayNight()
+  if Story.update then Story.update(dt) end
+  if Dialogue.update then Dialogue.update(dt, realDt) end
   if HUD.update then HUD.update(dt, world) end
   if Audio.update then Audio.update(realDt, p.x, p.y) end
   if Music.update then Music.update(realDt) end
@@ -133,6 +153,13 @@ function Game:draw()
   local world = self.world
   local cam = self.camera
 
+  if Post.setGrade then
+    Post.setGrade(DayNight.skyTint, DayNight.exposure, DayNight.contrast,
+                  DayNight.saturation, DayNight.lift)
+    Post.setBloom(DayNight.bloom)
+    Post.setFog(DayNight.fogColor, DayNight.fogStrength)
+  end
+
   if Post.beginScene then Post.beginScene() end
 
   love.graphics.clear(P.ramp.water[1])
@@ -143,6 +170,8 @@ function Game:draw()
   if Lighting.beginFrame then
     Lighting.beginFrame(cam)
     Lighting.setAmbient(DayNight.ambient, DayNight.ambientStrength)
+    Lighting.addSunShadowParams(DayNight.sunAngle, DayNight.sunLength)
+    Lighting.setLightGain(DayNight.lightGain)
     world:emitLights(Lighting)
     Lighting.finish()
   end
@@ -152,6 +181,9 @@ function Game:draw()
 
   if HUD.draw then HUD.draw(world, cam) end
   if BuildMenu.draw then BuildMenu.draw(cam) end
+  if Story.draw then Story.draw() end
+  if Dialogue.draw then Dialogue.draw() end
+  if Touch.active then Touch.draw() end
 
   if self.showPerf then self:drawPerf() end
 end

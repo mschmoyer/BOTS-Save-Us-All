@@ -816,6 +816,120 @@ function UI.card(w, h, opts)
   end
 end
 
+
+------------------------------------------------------------------ scratch opts
+--- A display-text option table screens may fill in and hand to `UI.text` for
+--- the rarer effects (glow, shadow, maxWidth, weight). `UI.text` clears those
+--- fields again on the way out, so it is always safe to reuse.
+UI.o = { snap = true }
+
+------------------------------------------------------------------- full screen
+--- Flat wash over everything. The first move of every menu that sits on top of
+--- the world.
+function UI.scrim(alpha, color)
+  Draw.setColor(UI.c(color or P.black, alpha or 0.6))
+  lg.rectangle("fill", 0, 0, lg.getDimensions())
+end
+
+--- Four edge gradients that read as one soft vignette. Cheaper and calmer than
+--- a radial, and it never bands on a flat backdrop.
+function UI.vignette(strength, color, depth)
+  strength = strength or 0.5
+  if strength <= 0.002 then return end
+  local w, h = lg.getDimensions()
+  local c = color or P.black
+  local dv = depth or (h * 0.42)
+  local dh = depth or (w * 0.30)
+  UI.vgrad(0, 0, w, dv, c, c, strength * 0.62, 0)
+  UI.vgrad(0, h - dv, w, dv, c, c, 0, strength)
+  UI.hgrad(0, 0, dh, h, c, c, strength * 0.75, 0)
+  UI.hgrad(w - dh, 0, dh, h, c, c, 0, strength * 0.75)
+end
+
+--- The out-of-focus cue used behind the pause menu: soft dark bands plus a
+--- speckle, which reads as depth without needing a blur pass.
+function UI.defocus(k, time, color)
+  if k <= 0.002 then return end
+  local w, h = lg.getDimensions()
+  local c = color or P.ramp.rift[1]
+  UI.scrim(0.58 * k, P.black)
+  UI.vgrad(0, 0, w, h, c, P.black, 0.30 * k, 0.46 * k)
+  -- three slow bokeh discs: the only thing on screen still moving
+  for i = 1, 3 do
+    local t = (time or 0) * (0.05 + i * 0.017) + i * 2.1
+    local bx = w * (0.2 + 0.6 * (0.5 + 0.5 * cos(t)))
+    local by = h * (0.25 + 0.5 * (0.5 + 0.5 * sin(t * 0.83 + i)))
+    Draw.glow(bx, by, 120 + i * 46, P.ramp.rift[3], 0.05 * k, 3)
+  end
+  Draw.noiseSpeckle(0, 0, w, h, 11, 0.00016, P.ink, 0.05 * k, 1.4)
+  UI.vignette(0.55 * k)
+end
+
+--------------------------------------------------------------------- timing
+--- Entrance timing. Returns the eased 0..1 progress of element `i` (1-based) in
+--- a sequence that starts at `start`, steps by `step` and each runs for `dur`.
+function UI.stagger(time, i, start, step, dur, ease)
+  local t = U.saturate(((time or 0) - (start or 0) - (i - 1) * (step or 0.08))
+                       / (dur or 0.4))
+  return (ease or U.ease.outCubic)(t)
+end
+
+--------------------------------------------------------------------- readouts
+--- Caption over numeral: the game's one way of showing a number with a name.
+--- `align` positions both parts. Returns the numeral's rendered width.
+function UI.stat(x, y, label, value, size, color, align, alpha, sub, subColor)
+  size = size or UI.ts.h2
+  alpha = alpha or 1
+  UI.caption(label, x, y, UI.ts.micro, UI.c(P.inkFaint, 0.85 * alpha), align)
+  local vw = UI.text(value, x, y + 16, size, color or P.ink, align, alpha, 0.02)
+  if sub then
+    local sx = x
+    if align == "right" then sx = x - vw - 8
+    elseif align == "center" then sx = x + vw * 0.5 + 8
+    else sx = x + vw + 8 end
+    UI.caption(sub, sx, y + 16 + size - UI.ts.tiny - 1, UI.ts.tiny,
+               UI.c(subColor or P.inkDim, 0.9 * alpha),
+               align == "right" and "right" or "left")
+  end
+  return vw
+end
+
+--- A header: an accent tick, the word, and a rule running out to `w`.
+function UI.header(x, y, w, label, size, accent, alpha, ruleAlpha)
+  size = size or UI.ts.h4
+  alpha = alpha or 1
+  Draw.setColor(UI.c(accent or P.accent, 0.95 * alpha))
+  Draw.roundRect("fill", x, y + 1, 3, size - 2, 1.5)
+  local tw = UI.text(label, x + 12, y, size, UI.c(P.ink, alpha), "left", alpha, 0.16)
+  local rx = x + 12 + tw + 14
+  if w and x + w > rx then
+    UI.rule(rx, y + size * 0.5, x + w - rx, P.ink, (ruleAlpha or 0.12) * alpha)
+  end
+  return tw
+end
+
+--- A row of button prompts. `list` is an array the caller owns and reuses:
+--- { { action, label }, ... }. Returns the width consumed.
+function UI.promptRow(x, y, list, size, color, alpha, align, gap)
+  size = size or UI.ts.micro
+  gap = gap or 22
+  local total = 0
+  for i = 1, #list do
+    local it = list[i]
+    local g = Input.glyph(it[1])
+    local gw = max(Text.measure(g, size, nil) + 14, size + 14)
+    total = total + gw + (it[2] and (Text.measure(it[2], size, nil) + 10) or 0)
+    if i < #list then total = total + gap end
+  end
+  local px = x
+  if align == "right" then px = x - total elseif align == "center" then px = x - total * 0.5 end
+  for i = 1, #list do
+    local it = list[i]
+    px = px + UI.prompt(px, y, it[1], it[2], size, color, alpha) + gap
+  end
+  return total
+end
+
 UI.EMPTY = {}
 
 return UI

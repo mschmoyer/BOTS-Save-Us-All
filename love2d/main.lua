@@ -9,6 +9,11 @@ local P       = require("src.engine.palette")
 local Input   = require("src.engine.input")
 local J       = require("src.engine.juice")
 local Screen  = require("src.engine.screen")
+local Settings = require("src.game.settings")
+local Touch   = require("src.engine.touch")
+local Audio   = require("src.engine.audio")
+local Music   = require("src.engine.music")
+local Post    = require("src.engine.postfx")
 
 local Boot = {}
 
@@ -29,6 +34,25 @@ do
 end
 Boot.headless = H
 
+--- Push the saved options into the render modules. Called on boot and whenever
+--- the options screen changes something.
+function Boot.applyQuality()
+  local ps = Post.settings
+  if ps then
+    ps.bloom    = Settings.get("fxBloom", true)
+    ps.grain    = Settings.get("fxGrain", true)
+    ps.ca       = Settings.get("fxAberration", true)
+    ps.vignette = Settings.get("fxVignette", true)
+    ps.distort  = Settings.get("fxDistortion", true)
+  end
+  local q = Settings.get("quality", "high")
+  local level = (q == "low" and 0) or (q == "medium" and 1) or 2
+  local ok, Lighting = pcall(require, "src.engine.lighting")
+  if ok and Lighting.setQuality then Lighting.setQuality(level) end
+  local okv, VFX = pcall(require, "src.engine.vfx")
+  if okv and VFX.setQuality then VFX.setQuality(level) end
+end
+
 --------------------------------------------------------------------- love.load
 function love.load()
   love.graphics.setDefaultFilter("linear", "linear", 4)
@@ -36,7 +60,26 @@ function love.load()
   math.randomseed(H.on and 20190101 or os.time())
   math.random(); math.random()
 
+  Settings.load()
+  Settings.applyJuice(J)
+  Settings.applyInput(Input)
+  Boot.applyQuality()
+
   Input.load()
+  Touch.load()
+
+  -- every sound and every note in the game is synthesized here, once
+  local t0 = love.timer.getTime()
+  local okAudio, audioErr = xpcall(function()
+    Audio.load()
+    Music.load()
+    Audio.setBusVolume("master", Settings.get("volMaster", 0.9))
+    Audio.setBusVolume("sfx",    Settings.get("volSfx", 1.0))
+    Audio.setBusVolume("music",  Settings.get("volMusic", 0.75))
+    Audio.setBusVolume("ui",     Settings.get("volSfx", 1.0))
+  end, function(e) return tostring(e) .. "\n" .. debug.traceback("", 2) end)
+  Boot.audioTime = love.timer.getTime() - t0
+  if not okAudio then print("AUDIO FAILED: " .. tostring(audioErr)) end
 
   local ok, err = pcall(function()
     local sceneName = os.getenv("BOTS_SCENE")
@@ -54,6 +97,8 @@ function love.update(realDt)
   realDt = math.min(realDt, 1 / 30)
   local dt = J.update(realDt)
   Input.update(realDt)
+  Touch.update(realDt)
+  Post.update(realDt)
   Timer.global:update(realDt)
   Screen.update(dt, realDt)
 end

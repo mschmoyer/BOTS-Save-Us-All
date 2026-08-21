@@ -71,6 +71,8 @@ function World:init(seed, opts)
                        cobaltMined = 0, rescued = 0 }
   self.dawnReport  = nil
 
+  if Tree.prewarm then pcall(Tree.prewarm) end
+
   self.centerX, self.centerY = TU.world.w / 2, TU.world.h / 2
   self:placeHome()
   self:seedCobalt()
@@ -466,6 +468,16 @@ function World:phaseLength(phase, cycle)
 end
 
 function World:setPhase(phase)
+  local prev = self.phase
+  -- Dawn does not tick: it waits for the player to finish the draft, and the
+  -- draft returning to day is what actually advances the cycle.
+  if phase == "day" and prev == "dawn" then
+    self.cycle = self.cycle + 1
+    if self.cycle > TU.cycle.count or self.o2 >= TU.o2.target then
+      self:beginExtraction()
+      return
+    end
+  end
   self.phase = phase
   self.phaseT = 0
   self.phaseDur = self:phaseLength(phase, self.cycle)
@@ -491,15 +503,7 @@ function World:setPhase(phase)
 end
 
 function World:advancePhase()
-  local nextPhase = PHASE_ORDER[self.phase]
-  if self.phase == "dawn" then
-    self.cycle = self.cycle + 1
-    if self.cycle > TU.cycle.count or self.o2 >= TU.o2.target then
-      self:beginExtraction()
-      return
-    end
-  end
-  self:setPhase(nextPhase)
+  self:setPhase(PHASE_ORDER[self.phase])
 end
 
 function World:buildDawnReport()
@@ -590,6 +594,8 @@ function World:update(dt)
   for i = 1, #self.trees do if self.trees[i].alive then n = n + 1 end end
   self.treeCount = n
 
+  self:updateSpread(dt)
+
   -- chorus chip: bots near friends work faster
   if self.chips:has("chorus") then
     for i = 1, #self.bots do
@@ -618,6 +624,51 @@ function World:update(dt)
   if Music.setO2 then Music.setO2(self.o2 / TU.o2.target) end
 end
 
+--- Forests compound: mature trees drop seedlings nearby. Amortised over frames
+--- so a thousand trees cost nothing, and driven by absolute world time so the
+--- rate is identical however the slice lands.
+function World:updateSpread(dt)
+  local trees = self.trees
+  local n = #trees
+  if n == 0 then return end
+  local budget = math.min(n, 48)
+  local i = self.spreadCursor or 1
+  local rng = self.rng
+  local rainMul = self.raining and (self.chips:has("rainMemory") and 2 or 1.5) or 1
+  local chipMul = self.chips:get("spreadRate", 1)
+  local growMul = self.chips:get("growRate", 1)
+
+  for _ = 1, budget do
+    i = i + 1
+    if i > n then i = 1 end
+    local t = trees[i]
+    if t and t.alive then
+      -- growth speed: beacons, rain and chips all feed the same multiplier
+      local m = growMul * rainMul * (1 + self:beaconBoostAt(t.x, t.y))
+      if self.chips:has("canopy") then
+        local near = 0
+        self.hTree:each(t.x, t.y, 90, function(o) if o ~= t and o.alive then near = near + 1 end end)
+        if near >= 3 then m = m * 1.35 end
+      end
+      t.growthMul = m
+
+      if t.stage == "mature" or t.stage == "elder" then
+        if not t.nextSpread then
+          t.nextSpread = self.time + rng:range(TU.tree.spreadEvery[1], TU.tree.spreadEvery[2])
+        elseif self.time >= t.nextSpread then
+          local a = rng:angle()
+          local d = rng:range(TU.tree.spreadRange[1], TU.tree.spreadRange[2])
+          local ok = self:plantTree(t.x + math.cos(a) * d, t.y + math.sin(a) * d, t)
+          local period = rng:range(TU.tree.spreadEvery[1], TU.tree.spreadEvery[2])
+          if not ok then period = period * 0.35 end
+          t.nextSpread = self.time + period / (chipMul * rainMul)
+        end
+      end
+    end
+  end
+  self.spreadCursor = i
+end
+
 --- 0..1 sense of danger, used to drive the music and the grade.
 function World:threat()
   local n = #self.enemies
@@ -644,6 +695,7 @@ function World:draw(camera)
   self.camera = camera
   local g = love.graphics
 
+  if Tree.setViewFromCamera then Tree.setViewFromCamera(camera) end
   if self.terrain and self.terrain.draw then self.terrain:draw(camera) end
   if Decals.draw then Decals.draw(camera) end
 
@@ -654,6 +706,7 @@ function World:draw(camera)
     local t = self.trees[i]
     if t.alive and camera:visible(t.x, t.y, 220) and t.drawShadow then t:drawShadow(sunA, sunL) end
   end
+  if Tree.endPass then Tree.endPass() end
   local lists = { self.bots, self.enemies, self.cobalts, self.projectiles }
   for l = 1, #lists do
     local list = lists[l]
@@ -690,6 +743,7 @@ function World:draw(camera)
     local e = dl[i]
     if e.isTree then e:draw(sx, sy) else e:draw() end
   end
+  if Tree.endPass then Tree.endPass() end
 
   if VFX.draw then VFX.draw("world") end
   if VFX.draw then VFX.draw("additive") end
