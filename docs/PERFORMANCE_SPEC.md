@@ -163,7 +163,36 @@ content-hashed and served `immutable`.*
 
 - **Risk:** low.
 
-**C3. Evaluate the `release` (pthreads) runtime behind COOP/COEP.**
+**C3. Evaluate the `release` (pthreads) runtime behind COOP/COEP.** — **DONE:
+measured, and NOT adopted.**
+
+It works. Dropping `-c` and serving with `Cross-Origin-Opener-Policy:
+same-origin` + `Cross-Origin-Embedder-Policy: require-corp` gives a page where
+`crossOriginIsolated` and `SharedArrayBuffer` are both live, the runtime boots,
+and the title screen renders identically (410 draw calls against 414).
+
+It is not faster. Two runs of each, same source tree, same host, 1280x720:
+
+| | compat (`-c`) | release (pthreads) |
+| --- | --- | --- |
+| rAF callback, median | 18.6 / 24.8 ms | 25.1 / 36.9 ms |
+| frame gap, median | 204 / 208 ms | 206 / 225 ms |
+| first frame | 20.8 / 24.6 s | 24.1 / 28.0 s |
+
+The variance under SwiftShader is wide enough that "release is slower" overstates
+it; "no improvement, at a cost" does not. And the JS-heap drop it appears to show
+(415 MB → 31 MB) is an artefact: the wasm memory moves into a `SharedArrayBuffer`,
+which `usedJSHeapSize` does not count. Nothing was saved.
+
+That is the expected result once correction 2 is taken seriously. The runtimes
+differ by pthreads, and **the game does not call `love.thread` anywhere.** The
+prize was never the runtime, it was moving audio synthesis off the main thread —
+and L3 removes that work altogether rather than relocating it, which is strictly
+better than betting on LÖVE's thread support surviving emscripten.
+
+Not adopted. The cost is real and ongoing: COOP/COEP refuses any cross-origin
+subresource without CORP, starting with the webfonts. Revisit only if something
+genuinely needs a worker.
 
 Hosting means we can set `Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp`, which is what `SharedArrayBuffer`
