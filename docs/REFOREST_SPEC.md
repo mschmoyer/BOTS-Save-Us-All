@@ -206,3 +206,59 @@ Same spine as 2019, more room:
 7. **"You've taught us love. Save the human."** — the rebellion. Unchanged line. It is perfect.
 8. **Ending** — the suit comes off. The surviving bots form a circle around you. Nobody says anything
    for a long time. Then the credits grow over the world you made.
+
+---
+
+## 13. What the build actually does that this document did not plan
+
+Three critic passes — design, art direction, audio, UI, narrative — and a code review changed
+the game. Where the build and this document disagree, **the build is right**; these are the
+decisions worth writing down.
+
+**Oxygen reads the standing forest.** It is not an accumulator. `o2 = 100 · (forest / island
+capacity)^0.78`, eased toward, with siphons applying a recoverable debt capped relative to the
+reading. Plant a tree and the needle moves; lose a grove and it falls. The capacity is derived
+from the island's plantable area, so a small island is not an unwinnable one.
+
+**The forest is a frontier.** Only trees with fewer than four neighbours within 130 px put out
+seedlings, so the wood advances with an edge instead of filling in as a mat — which gives the
+Blight something to attack and the player something to hold.
+
+**The night scales with what there is to lose.** The Director's budget and its cap on living
+Blight both grow with the forest. A fixed budget against an exponential forest is a threat that
+shrinks while the numbers on screen go up.
+
+**Two decisions the original design did not have.**
+*HOLD THE DAWN* (`R` at dusk): thirty more seconds of daylight for a 45% worse night, once a
+cycle. *The standing order* (`G`): one flag; mobile bots look for ground near it and work 18%
+faster inside it. The ground you point at is ground you are not defending.
+
+**There is a way to lose.** While Harvester Prime lives it drains the sky, scaled so the fight
+is always the same length whatever the meter read when it arrived. Empty the sky and the run
+ends with a memorial instead of a victory.
+
+**The finale is a procession.** The workforce always pays exactly 70% of the rig however large
+it is; cohorts leave every 4.2 s so the health bar falls in visible steps; phases are time-gated
+so the beam sweep and ground slam get their moment; and the last stretch is the player's alone.
+
+**Every bot carries an epitaph.** `Bot:epitaph()` — "planted 41 trees", "held the line 4 times",
+"never got to fire". It is spoken once by a survivor and printed beside the name in the
+memorial, which lists the dead in the order they died rather than alphabetically.
+
+### Measured, not assumed
+
+| | |
+| --- | --- |
+| Simulation cost, 900 trees + 60 bots + particles | **~3.3 ms/frame** (one core, no rendering) |
+| Audio synthesis at boot | ~2.0 s, 10.7 MB, 302 variants |
+| Terrain generate + bake | ~0.9 s, ~35 MB of canvases |
+| Web build | one HTML file, ~7.1 MB, LÖVE 11.4 in WebGL |
+
+### Three bugs the browser had and the desktop never did
+
+The shipping target is WebAssembly in a browser, and it is not the same renderer or the same
+Lua. A zero-length line segment that desktop GL tolerates makes WebGL drop the segment before
+it (every `U` rendered as a `J`). `string.format("%F")` is rejected outright. And LÖVE injects
+`highp` into the vertex stage and `mediump` into the fragment stage, so an unqualified shared
+uniform links on desktop and fails to link under GLSL ES. **Verify rendering work in the web
+build, not only natively.**
