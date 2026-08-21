@@ -53,8 +53,21 @@ local function pre(c, a)
   love.graphics.setColor(c[1] * a, c[2] * a, c[3] * a, a)
 end
 
+--- A misspelt shape used to reach love.graphics.draw as a nil quad and throw,
+--- which is how "annulus" -- a ring the atlas has never had -- took the game
+--- down the first time a Spitter's acid landed, from cycle 3 on. Draw
+--- something and say so once instead: a decal is never worth the run.
+local warned = {}
 local function blob(shape, x, y, r, rot, sx)
   local q = VFX.quads[VFX.quadIndex[shape]]
+  if not q then
+    if not warned[shape] then
+      warned[shape] = true
+      print("decals: no atlas shape '" .. tostring(shape) .. "'")
+    end
+    q = VFX.quads[VFX.quadIndex.disc]
+    if not q then return end
+  end
   local s = r * 2 / 57         -- the atlas shape spans ~57 of its 64 px cell
   love.graphics.draw(VFX.tex, q, x, y, rot, s * (sx or 1), s, 32, 32)
 end
@@ -143,7 +156,7 @@ STAMP.crater = function(x, y, r, ang, a)
   pre(R.rock[1], a * 0.45)
   blob("blob", x, y, r, random() * TAU)
   pre(R.rock[4], a * 0.22)
-  blob("annulus", x, y, r * 1.2, random() * TAU)
+  blob("halo", x, y, r * 1.2, random() * TAU)
   pre(P.black, a * 0.3)
   blob("blob", x, y, r * 0.5, random() * TAU)
 end
@@ -346,7 +359,7 @@ function D.draw(cam)
     blob("blob", L.x, L.y, r * 0.82, L.seed * TAU + 1.4)
     g.setBlendMode("add", "alphamultiply")
     g.setColor(P.acid[1], P.acid[2], P.acid[3], a * 0.22)
-    blob("annulus", L.x, L.y, r * 1.02, L.seed * TAU)
+    blob("halo", L.x, L.y, r * 1.02, L.seed * TAU)
     -- a couple of slow bubbles so it looks alive
     for b = 1, 3 do
       local ph = t * 0.55 + L.seed * 7 + b * 2.1

@@ -543,10 +543,14 @@ DEFS.hit_spark = {
 ------------------------------------------------------------------- growth
 DEFS.plant_burst = {
   -- 1. the soft green pop
+  -- Green, not white. Every Planter fires this on every sapling; a white
+  -- 84 px bloom on top of the player is what the forest looked like from
+  -- inside. It is a leaf opening, so it is the colour of a leaf.
   { layer = "air", blend = "add", shape = "flare",
-    count = 1, life = 0.3, emit = "point",
-    size = { 84, 84 }, sizeCurve = "bloom", alphaCurve = "smoothOut", alpha = 0.85,
-    colors = { c(W, 0.95), lt(R.leafHi[4], 0.35, 0.8), c(R.leaf[3], 0) } },
+    count = 1, life = 0.28, emit = "point",
+    size = { 48, 48 }, sizeCurve = "bloom", alphaCurve = "smoothOut", alpha = 0.6,
+    colors = { lt(R.leafHi[4], 0.45, 0.9), lt(R.leafHi[4], 0.2, 0.7),
+               c(R.leaf[3], 0) } },
   -- 2. the ring
   { layer = "ground", blend = "add", shape = "ring",
     count = 1, life = 0.52, emit = "point",
@@ -609,25 +613,31 @@ DEFS.cobalt_shimmer = {
 DEFS.cobalt_pickup = {
   -- sparks fall inward from a spread of radii, so they arrive as a rush
   { layer = "air", blend = "add", shape = "streak",
-    count = { 20, 26 }, life = { 0.2, 0.46 }, emit = "ring", radius = { 26, 82 },
-    speed = { 120, 250 }, inward = true, drag = -2.6, align = true, stretch = 0.014,
-    size = { 7, 13 }, sizeCurve = "shrink", alphaCurve = "lateOut",
-    colors = { c(R.cobalt[3], 0.4), c(R.cobalt[4], 1), c(W, 1) } },
+    count = { 11, 15 }, life = { 0.18, 0.34 }, emit = "ring", radius = { 26, 74 },
+    speed = { 120, 230 }, inward = true, drag = -2.6, align = true, stretch = 0.008,
+    size = { 5, 9 }, sizeCurve = "shrink", alphaCurve = "lateOut", alpha = 0.7,
+    colors = { c(R.cobalt[2], 0.35), c(R.cobalt[3], 0.85), c(R.cobalt[4], 0.7) } },
   { layer = "air", blend = "add", shape = "mote",
-    count = { 8, 12 }, life = { 0.25, 0.5 }, emit = "ring", radius = { 30, 78 },
+    count = { 6, 9 }, life = { 0.25, 0.5 }, emit = "ring", radius = { 30, 78 },
     speed = { 90, 190 }, inward = true, drag = -2.2,
-    size = { 5, 9 }, sizeCurve = "shrink", alphaCurve = "lateOut",
-    colors = { c(R.cobalt[4], 0.5), c(W, 1) } },
-  -- the core lighting up as they land
+    size = { 4, 7 }, sizeCurve = "shrink", alphaCurve = "lateOut",
+    colors = { c(R.cobalt[4], 0.5), c(R.cobalt[4], 0.85) } },
+  -- The core lighting up as they land.
+  --
+  -- This fires every 0.28 s for as long as the player stands on a deposit,
+  -- which is the single most common thing anyone does in this game. At 46 px
+  -- and half a second, ending on pure white, it was a continuous blown-out
+  -- starburst with the protagonist erased inside it. Small, short, and the
+  -- colour of cobalt: a pickup is punctuation, not an event.
   { layer = "air", blend = "add", shape = "flare",
-    count = 1, life = 0.5, emit = "point",
-    size = { 46, 46 }, sizeCurve = "softIn", alphaCurve = "softIn",
-    colors = { c(R.cobalt[4], 0.6), c(W, 1), c(R.cobalt[3], 0) } },
+    count = 1, life = 0.18, emit = "point",
+    size = { 17, 17 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.75,
+    colors = { c(R.cobalt[4], 0.55), lt(R.cobalt[4], 0.3, 0.9), c(R.cobalt[3], 0) } },
   { layer = "air", blend = "add", shape = "ring",
-    count = 1, life = 0.42, emit = "point",
-    ring0 = 78, ring1 = 5, ringW = 5, ringSegs = 34, ringCurve = "swell",
-    alphaCurve = "lateOut",
-    colors = { c(R.cobalt[3], 0.35), c(R.cobalt[4], 0.9), c(W, 0) } },
+    count = 1, life = 0.38, emit = "point",
+    ring0 = 52, ring1 = 5, ringW = 4, ringSegs = 34, ringCurve = "swell",
+    alphaCurve = "lateOut", alpha = 0.7,
+    colors = { c(R.cobalt[3], 0.35), c(R.cobalt[4], 0.8), c(R.cobalt[4], 0) } },
 }
 
 DEFS.deposit_pop = {
@@ -1399,7 +1409,12 @@ local function drawRing(p, t)
   if r < 0.5 then return end
   local w = p.w0 * (1 - t) ^ 0.55
   if w < 0.7 then w = 0.7 end
+  -- segment count scales with the radius it is drawn at. A ring authored at
+  -- 34 segments looks round at 30 px and is a visible polygon at 200; one
+  -- segment per ~6 px of arc holds the curve at any size.
   local segs = e.ringSegs
+  local need = r * 1.05
+  if need > segs then segs = need > 96 and 96 or (need - need % 1) end
   local cr, cg, cb, ca = p.cr, p.cg, p.cb, p.ca
   g.setColor(cr, cg, cb, ca * 0.13)
   g.setLineWidth(w * 2.5)
