@@ -251,6 +251,12 @@ function S:update(dt)
     cam:snapTo(770, 720)
   end
   cam:clampToBounds()
+  -- Park the canopy x-ray off the map. It fades out whatever crown covers the
+  -- focus point, and with no focus set the tree system falls back to what the
+  -- camera is looking at -- which here is the middle of a row laid out to be
+  -- looked at. The MATURE tree sat dead centre and rendered as a bare shadow,
+  -- and read for a long time as a broken mesh rather than a working feature.
+  Tree.setFocus(-1e6, -1e6, 1)
   Tree.setViewFromCamera(cam)
 
   local list = self.list
