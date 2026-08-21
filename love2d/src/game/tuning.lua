@@ -105,7 +105,11 @@ T.bots = {
     -- build, it is the absence of one.
     label = "PLANTER", prefix = "SEED", cost = 10, hp = 3, radius = 12, speed = 78,
     costGrowth = 0.26,
-    plantEvery = 15.0, minTreeGap = 40, wanderRetarget = { 1.2, 3.4 },
+    -- Scaled with the cycle. This is a wall-clock period and the clock moved:
+    -- a minute-long cycle is a third of what it was, so a rate left at 15 s
+    -- bought a third of the forest it used to and the sky could not be filled
+    -- however well you played.
+    plantEvery = 10.0, minTreeGap = 40, wanderRetarget = { 1.2, 3.4 },
     desc = "Wanders and plants saplings, forever.",
   },
   builder = {
@@ -183,7 +187,10 @@ T.bots = {
 T.tree = {
   growTime      = 26,          -- sapling -> mature
   elderTime     = 540,         -- mature -> elder; Old Growth makes it far quicker
-  spreadEvery   = { 70, 128 }, -- seconds between seedling attempts
+  -- Also scaled with the cycle, and it matters more than the Planters do:
+  -- spread compounds, so shortening the run cut the number of doublings rather
+  -- than a fixed number of trees.
+  spreadEvery   = { 47, 85 },  -- seconds between seedling attempts
   -- Only trees on the edge of the wood put out seedlings. That is what turns the
   -- forest into an advancing front with a defensible line instead of a mat.
   -- Nothing roots in bare rock. The island's stone spines therefore stay clear,
@@ -221,8 +228,11 @@ T.o2 = {
   -- Traced across three seeds, this lands a thoughtless autoplay run at 87-100%
   -- rather than 65-96%, with the strong runs filling the sky around cycle six
   -- and triggering the early extraction, which is what the win condition is for.
-  fullForest    = 1200,         -- fallback when there is no terrain
-  forestPerArea = 1 / 2700,     -- tree-points per square world unit of plantable land
+  -- Halved. A full sky used to want twelve hundred tree-points; it wants six
+  -- hundred now, and every derived figure below is halved with it so the
+  -- clamp keeps the same shape.
+  fullForest    = 600,          -- fallback when there is no terrain
+  forestPerArea = 1 / 5400,     -- tree-points per square world unit of plantable land
   -- The clamp does most of the work on purpose. A linear-in-area target cannot
   -- be right for both ends: set it so a small island is a real job and the big
   -- ones become unfillable; set it so the big ones are fillable and the small
@@ -232,8 +242,8 @@ T.o2 = {
   -- Builders no longer draining the bank and deposits no longer evaporating,
   -- the forest grows fast enough that the old target was met at cycle four and
   -- cut three cycles off the run.
-  forestMin     = 950,
-  forestMax     = 1400,         -- tree-points that read as a fully restored sky
+  forestMin     = 475,
+  forestMax     = 700,          -- tree-points that read as a fully restored sky
   rise        = 0.42,           -- how fast the reading climbs toward the forest
   fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
   weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 1.5 },
@@ -247,13 +257,17 @@ T.o2 = {
 ------------------------------------------------------------------------ cycles
 T.cycle = {
   count      = 7,
-  dayLen     = { 78, 84, 90, 94, 98, 104, 110 },
-  duskLen    = 12,
+  -- One minute a cycle, dusk included. The ratio of day to night is kept from
+  -- the old curve -- three-fifths day at the start, even by the end -- so the
+  -- shape of the campaign survives the compression even though the run does
+  -- not: seven cycles is now about eight minutes rather than twenty-two.
+  dayLen     = { 32, 32, 31, 30, 29, 28, 27 },
+  duskLen    = 6,
   -- Dusk is otherwise twelve dead seconds. HOLD THE DAWN buys more day at the
   -- price of a worse night: one decision, every cycle, with a real cost.
-  holdExtra  = 30,
+  holdExtra  = 12,
   holdBudget = 1.45,
-  nightLen   = { 52, 62, 70, 78, 86, 94, 104 },
+  nightLen   = { 22, 22, 23, 24, 25, 26, 27 },
   -- The night's spend used to be mostly a function of how big your forest was:
   -- 0.28 a tree meant every tree you grew bought the Blight more of a night,
   -- in exact proportion, so growth was self-punishing and loss was
