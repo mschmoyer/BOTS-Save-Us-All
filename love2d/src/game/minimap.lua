@@ -84,7 +84,14 @@ function M.draw(world, cam, alpha)
   if Draw.softShadow then
     Draw.softShadow(cx + w * 0.5, cy + h * 0.5, w * 0.75, h * 0.9, 0.5 * alpha)
   end
-  g.setColor(P.ramp.water[1][1], P.ramp.water[1][2], P.ramp.water[1][3], a * 0.85)
+  -- The plate has to be a *surface*. At 0.53 the canopy behind it showed
+  -- straight through the sea and the island had no edge: the one readout that
+  -- answers "where is everything" was the least readable thing on the screen.
+  local plateA = math.min(0.94, a * 1.5) * alpha
+  g.setColor(P.black[1], P.black[2], P.black[3], plateA)
+  if Draw.roundRect then Draw.roundRect("fill", cx - 5, cy - 5, w + 10, h + 10, 7)
+  else g.rectangle("fill", cx - 5, cy - 5, w + 10, h + 10, 7) end
+  g.setColor(P.ramp.water[1][1], P.ramp.water[1][2], P.ramp.water[1][3], plateA)
   if Draw.roundRect then Draw.roundRect("fill", cx - 5, cy - 5, w + 10, h + 10, 7)
   else g.rectangle("fill", cx - 5, cy - 5, w + 10, h + 10, 7) end
 
