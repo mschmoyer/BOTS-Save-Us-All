@@ -528,16 +528,21 @@ local RIM = metalRamp[4]
 -- roundRect, capsule, blob, each running cos/sin per vertex in interpreted Lua
 -- -- at full detail whatever size it was on screen, for geometry that never
 -- changes: the hull of a Planter is a pure function of its radius, and that
--- radius is a constant of its type. Measured in the browser build, the entity
--- draw was about half the frame and this was most of its Lua.
+-- radius is a constant of its type.
 --
 -- So each type's static hull is recorded once, the first time one of them is
 -- drawn, and is replayed from its point lists for the rest of the session.
+-- *Measured with the GPU nulled and the JIT off -- the closest thing here to
+-- the browser's interpreter -- `world.entities` went 3.19 ms to 1.59 ms a
+-- frame at 48 bots and 735 trees, and the whole frame 12.3 to 10.6.*
+--
 -- See `Draw.bake`: it records the hull by running the very code that used to
 -- draw it live, so the baked picture cannot drift from the drawn one, and it
 -- replays through `polygon` rather than a Mesh so that LOVE goes on batching
 -- the whole chassis into one GL draw call -- which, measured, it was already
--- doing and a Mesh per hull would have undone.
+-- doing and a Mesh per hull would have undone. The draw calls that do go are
+-- the Planter's four seedling blobs, which each drew their own unbatchable
+-- fan Mesh: 465 to 420 entity draw calls on that same scene.
 --
 -- What actually moves stays live: the eye, the antenna, the load pips, the
 -- jib's hook, the Sentry's barrel, the Harvester's spokes, the Beacon's lamp.
@@ -824,9 +829,13 @@ function Bot:body_planter(r)
   -- the seedling it is carrying, swaying: a stalk and two leaves. Nothing else
   -- on the island has a plant growing out of its head. It is baked standing
   -- straight up and leaned over with a shear about its own root, so the stalk
-  -- stays welded to the chassis exactly where it was and the leaves travel the
-  -- width they always did, within a fifth of a pixel -- and the four blobs and
-  -- the capsule are tessellated once rather than five times a frame per bot.
+  -- stays welded to the chassis exactly where it was. A shear is not quite the
+  -- transform this had: it leans the leaves rather than sliding them, which
+  -- lands them a tenth of their own sway short of where they were and slants
+  -- them by up to half a pixel at full lean, on a leaf three pixels across. In
+  -- exchange the four blobs and the stalk are tessellated once instead of five
+  -- times a frame per Planter, and the blobs stop drawing four unbatchable
+  -- Meshes while they are at it.
   local g = love.graphics
   local sway = math.sin(self.age * 1.6 + self.bob) * r * 0.11
   g.push()

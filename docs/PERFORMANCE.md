@@ -67,15 +67,37 @@ calls and a tree costs two**.
 
 ### Next
 
-3. **Bake the bot bodies.** Every bot re-tessellates about twenty procedural
-   primitives every frame — `roundRect`, `capsule`, `blob`, each running
-   `cos`/`sin` per vertex in interpreted Lua — at full detail regardless of
-   on-screen size. That is ~450 draw calls and about two thirds of the entity
-   draw Lua. Bake each type's static hull to a `Mesh` at boot and draw one
-   quad, keeping the eye, antenna and load pips live. *Expected: entity draw
-   calls 583 -> under 150. Risk: medium — the boot unfold, bob, squash and
-   speak animation all have to survive, and they are transform and overlay
-   effects, so they can.*
+3. ~~**Bake the bot bodies.**~~ **DONE, and this entry's premise was wrong.**
+
+   The claim was that a bot's ~20 procedural primitives are "~450 draw calls",
+   and that baking each hull to a `Mesh` would collapse them to one quad each:
+   "entity draw calls 583 -> under 150".
+
+   They are not ~450 draw calls. **LÖVE batches consecutive stream primitives**
+   (`polygon`/`circle`/`line`) into one GL call with the colour folded into the
+   vertices. A `Mesh` is never batched — it is its own draw call *and* it
+   flushes whatever was accumulating. So the proposed fix was pointed the wrong
+   way, and implementing it literally made things worse: on a fixed 24-bot
+   probe, hull-to-`Mesh` measured **222 -> 288 draw calls**, with builder 8->12,
+   harvester 6->12 and beacon 8->11. Only the planter improved, because its
+   seedling blobs were already unbatchable `fillFan` meshes.
+
+   What shipped instead keeps the batching and removes only the arithmetic:
+   `Draw.bake` records a hull's colours and point lists once, and `Draw.replay`
+   re-issues them through `lg.polygon("fill", pts)` every frame. The `cos`/`sin`
+   never runs again; the batch survives.
+
+   *Measured (seed 7, night, 735 trees, 48 bots, 1600x900): entity draw calls
+   465.2 -> 420.2, total 1522.8 -> 1477.8. The real win is the Lua: entity draw
+   with the GPU nulled and the JIT off, **3.19 ms -> 1.59 ms**, a 50% cut in the
+   interpreter — which is the browser's currency. `demo_draw` is pixel-identical
+   (0 of 1,440,000 pixels differ).*
+
+   Two consequences worth carrying forward. **This is why item 8 is right**: mesh
+   draws do not batch, so per-tree uniforms are not the only thing forcing a call
+   per tree. And **the autoplay game capture is not a valid pixel A/B** — two
+   runs of identical code differ on 96% of pixels by ±1, because the grade is
+   wall-clock dependent. Use a fixed probe scene for pixel regression.
 
 4. **Drop contact shadows on small trees.** `treeDraw` 271 + `treeShadow` 259 =
    530 of 1,178 draw calls, and trees alone are 19.6 screens of overdraw a

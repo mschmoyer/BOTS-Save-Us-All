@@ -311,8 +311,24 @@ through stb_vorbis in wasm instead of interpreted Lua.
 Restated here for sequencing; the analysis and the costings live in that
 document and are not repeated.
 
-- **F1. Bake the bot bodies.** ~450 draw calls, two thirds of entity draw Lua.
-  Keep eye, antenna, load pips, boot unfold, bob, squash and speak live.
+- **F1. Bake the bot bodies.** — **DONE, premise corrected.** The "~450 draw
+  calls" in `PERFORMANCE.md` was wrong: LÖVE batches consecutive stream
+  primitives, and a `Mesh` is never batched, so the prescribed fix measured
+  *worse* (222 → 288 draw calls on a fixed probe). What shipped records the
+  hull's point lists once and replays them through `lg.polygon`, keeping the
+  batch and dropping the per-frame `cos`/`sin`. *Entity draw calls 465 → 420;
+  entity draw Lua, GPU nulled and JIT off, **3.19 ms → 1.59 ms**. `demo_draw`
+  pixel-identical.* Full write-up in `PERFORMANCE.md` item 3.
+
+  Two by-products worth keeping: this is independent evidence for F6 (mesh draws
+  do not batch), and **the autoplay capture is not a valid pixel A/B** — two runs
+  of identical code differ on 96% of pixels by ±1 because the grade is
+  wall-clock dependent. Use a fixed probe scene.
+
+  Carried risk: planter seedling sway became a shear about the root rather than a
+  translate of the tip (~0.5 px slant on a ~3 px leaf), and baked circles use a
+  scale-independent segment count, so a large zoom shows a coarser disc. Both
+  documented in the code; both invisible at play scale.
 - **F2. Drop contact shadows on small trees.** 259 draw calls, 40% of tree
   overdraw, under a canopy anyway.
 - **F3. Tick off-screen trees on a rota.** 3.5 ms of the browser's 17 ms of Lua.
