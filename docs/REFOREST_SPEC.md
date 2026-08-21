@@ -348,3 +348,140 @@ island.
 
 `tools/shot.sh [frames] ["frame numbers to photograph"] [outdir]` — the second argument is a
 list of frame numbers, not a count.
+
+---
+
+## 15. The second review, and the systems it rebuilt
+
+A second harsh review scored the game **5/10** — lower than the first, because it
+looked at different things: the middle of the run, the economy, the chip pool, the
+verbs, and the arithmetic underneath the win condition. Almost everything it found
+was true. This section records what changed, because several of these are systems
+rather than fixes.
+
+### The win condition could not be reached
+
+A full sky was pegged at one tree-point per 4300 square units of land, clamped over
+a range wide enough that a large island demanded nearly two and a half times what a
+small one did. A forest does not scale with an island that way, because the player's
+time does not. Traced across three seeds the meter finished at 65 / 79 / 96 percent
+with no way to close the gap. **A full sky is now about twelve hundred tree-points
+wherever you land**, and the clamp does most of the work: a linear-in-area target
+cannot be right for both ends of the seed range.
+
+That number moved three times as the economy fixes below landed, each of which made
+the forest grow faster. Runs now fill the sky between cycle five and cycle seven, or
+not at all. Filling early is the win condition firing early and is paid for by
+arriving at the extraction with a smaller crew.
+
+### Growth was self-punishing
+
+`budgetPerTree` was 0.28, so every tree the player grew bought the Blight that much
+more of a night, in exact proportion. Growth was self-punishing and loss was
+self-relieving. The night's spend is authored per cycle now and the forest term is a
+much smaller reminder that a bigger wood is a longer perimeter.
+
+### Two invisible economies
+
+**Builders were spending the player's bank** — every fourteen seconds, per builder,
+at half of an escalating price, with no way to see it, dismiss it or turn it off.
+Their own card says they build "from cobalt it finds", and now they do.
+
+**Deposits were being strip-mined at sixty chunks a second.** The player was
+throttled at 0.55s a chunk; the bots were not throttled at all, so a Harvester
+emptied a seven-chunk node in seven frames. The rate belongs to the rock now.
+
+Both fixes made the player much richer, and *both* then had to be braked again:
+removing the Builder's bank charge removed the only thing limiting the size of the
+workforce, and traced runs reached **138 bots** where twenty to forty is the shape of
+the game. A Builder now pays three chunks of its own carry per Planter and walks the
+same escalation curve the player does. `costGrowthMax` went from 6 to 14, because a
+cap that stops biting at twenty planters is a speed bump rather than a brake.
+
+### The middle of the run was a treadmill
+
+The enemy roster was fully unlocked by cycle 4 and the Director's type weights had no
+cycle term at all, so night six was night three with a bigger number in front of it.
+Now:
+
+- **Weights are a function of the cycle.** The Chomper share falls 100% → 32% → 10%
+  across the run as the armoured and ranged share rises; the average wave card
+  triples in cost.
+- **An early night has a lull; a late one has a floor** it never drops back through.
+- **A second front opens at cycle 5**, and from cycle 4 the Blight *reinforces
+  success* — a third of waves land on the last place it was winning, driven by an
+  `enemy:targeted` signal that had been emitted since the beginning and consumed by
+  nothing.
+- **The Warden** (cycle 6) has no attack at all: everything Blight within 250 units
+  shrugs off 55% of every hit and moves 22% faster. It changes the answer from "hit
+  the nearest thing" to "get to the back".
+
+### Half the run had no opposition
+
+Days are 51% of a twenty-one minute campaign and the enemy count was zero in every
+daylight sample of every trace. Now a Maw goes **dormant** at sunrise instead of
+walking off, and anything still with its teeth in the wood at first light digs in and
+leaves a **Blight Scar**.
+
+A Scar is deliberately not a fight — it never moves, never chases, cannot touch the
+player. It eats one tree at a time inside a creep radius that grows all day, it seeds
+another if left to finish growing, it **denies the ground it covers to new planting**,
+and at dusk it is where the night starts. It adds no budget; it moves where the
+budget lands.
+
+That last property had to be damped almost immediately. At four waves in five opening
+on a Scar, a bad dawn compounded: the night began inside the wood you had already
+lost, which cost more trees, which left more Scars. One seed went from 525 trees and
+77% oxygen to 136 trees and 24%; another on the same build never let the Blight get a
+hold at all. **A system with positive feedback and no damper is not difficulty, it is
+a coin flip made at cycle three.**
+
+### The chip pool was a stat-stick draft
+
+Forty of forty-six cards were a scalar on a number the player cannot see, and not one
+card in the pool changed what the player *does*. The pool is **26 cards**, sixteen of
+which change a rule: Planters that walk the line to the flag planting as they go, a
+dusk muster, Builders that copy your last build, the downed dragging themselves toward
+the nearest light, a wood that makes anything chewing it bleed, a pulse that plants a
+ring of saplings. From cycle four one seat in the hand is reserved for a rare.
+
+Deleted outright: SURPLUS (no version of free scaling income is a decision), two rares
+that bought a heart in a game where dying costs six seconds, one card that was purely
+cosmetic, and one whose key was read by nothing anywhere in the tree.
+
+### Three verbs were vestigial
+
+The Pulse cost eight cobalt in a game whose bank sits at 0–13 from cycle two, so the
+panic button was unaffordable at exactly the moments it exists for. It is priced in
+seconds now. Hand-planting cost three cobalt and was dominated by a Planter inside a
+minute; free on a long cooldown it is a placement decision. The rally flag could be
+re-planted free and instantly, so its stated cost was not real. And the Repulsor fired
+all four charges the instant it booted, whether or not anything was near it.
+
+## 16. Bugs that had been there the whole time
+
+Worth recording as a class. Every one of these was invisible because nothing ever
+looked:
+
+- **`VFX.draw("air")` was never called.** Sixty-six particle effects — pollen,
+  fireflies, mist, blight spores, rift ambience — have been invisible for the entire
+  life of the build.
+- **`director:dawn` had never once fired.** The world advances its phase clock before
+  it ticks the Director, so a night whose two clocks are equal ended without the
+  Director seeing its own last frame. The HUD has had a `NIGHT SURVIVED` toast that
+  was never shown.
+- **`stats.lost` was pinned at zero for chew deaths in every run.** A tree could die
+  two ways and the wrong one always won the sweep order, so the dawn tally and the
+  ending memorial reported zero trees lost in a normal game.
+- **A Bulwark's tree kills went through no ledger at all** — no sound, no shake, no
+  stump, no tally — and it latched onto the first tree it ever slammed and never
+  released it.
+- **`Settings.recordRun` had no callers**, so the title screen had read
+  `NO RUN RECORDED` since the feature was written.
+- **The build bar displayed base prices** while the game charged escalated ones, so a
+  slot lit up as buyable and then refused.
+- **`Enemy` seeded its RNG from the wall clock**, so two runs of the same seed
+  diverged and every headless balance trace compared two different games.
+- **The canopy's additive backlight had no depth test** and ran after the whole
+  forest, so a hidden tree's rim painted onto whatever stood in front of it. Removing
+  it was worth half of all the fill in the game.
