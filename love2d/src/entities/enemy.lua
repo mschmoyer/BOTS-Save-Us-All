@@ -10,6 +10,7 @@ local TU      = require("src.game.tuning")
 local T       = TU.enemy
 
 local Draw  = Opt.require("src.engine.draw")
+local DayNight = Opt.require("src.engine.daynight")
 local VFX   = Opt.require("src.engine.vfx")
 local Audio = Opt.require("src.engine.audio")
 
@@ -319,6 +320,21 @@ end
 ------------------------------------------------------------------------- render
 local function bl(t) return P.shade(P.ramp.blight, t) end
 
+-- What the Blight's own light looks like, per behaviour. The bodies are
+-- deliberately near-neutral -- the palette calls the blight a bruise rather
+-- than a sweet -- and at night that reads as correct and plays as invisible:
+-- a chomper walking into a lamp-lit clearing was a dark smudge on dark ground.
+-- One soft glow at the eyes, at night only, in the colour that thing already
+-- has on its face. It costs nothing in daylight and it never repaints the body.
+local EYE = {
+  chomper = P.shade(P.ramp.blight, 3.6),
+  skitter = P.acid,
+  spitter = P.acid,
+  siphon  = P.shade(P.ramp.blight, 3.4),
+  bulwark = P.shade(P.ramp.blight, 3.2),
+  maw     = P.shade(P.ramp.rift, 3),
+}
+
 function Enemy:drawShadow()
   if self.def.float then
     Draw.softShadow(self.x, self.y + 26, self.radius * 0.8, self.radius * 0.3, 0.2)
@@ -342,6 +358,15 @@ function Enemy:draw()
   if fn then fn(self, r, a) else self:body_chomper(r, a) end
 
   g.pop()
+
+  -- its own eyeshine, once the sun is off the island
+  local dark = U.saturate(1 - (DayNight.ambientStrength or 1))
+  if dark > 0.2 and not self.fleeing then
+    local c = EYE[self.type] or EYE.chomper
+    local oy = self.def.float and -22 or -r * 0.25
+    Draw.glow(self.x, self.y + oy, r * (1.0 + dark * 0.5),
+              c, (0.20 + 0.30 * dark) * a * (0.85 + 0.15 * math.sin(self.age * 3.1)), 2)
+  end
 
   if self.stun > 0 then
     Draw.setColor(P.warn, 0.5 * math.min(1, self.stun))
