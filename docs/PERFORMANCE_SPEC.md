@@ -250,6 +250,70 @@ redesign.
   so a readback is required and readback stalls are real. If the readback costs
   more than the 6.3 s it saves, keep the CPU path and say so.
 
+**L2: measured, and NOT SHIPPED. The CPU generator stays.** The blocker is not
+the readback and not the load — it is that this noise cannot be reproduced in
+32-bit float at all.
+
+*Baseline, re-measured.* `fields = 9,744 ms` single-file over `file://`,
+`10,709 ms` in the hosted multi-file build over HTTP (Chromium 1194, SwiftShader,
+1280x720) — worse than the 6.3 s in the warmup header, not better. Natively it is
+709 ms: 500 ms in the noise loop, 136 ms in `_scars`, 27 ms in `_classify`,
+35 ms in `_buildFields`. **25.8 million `sin` calls**, 69% of the loop's LuaJIT
+time.
+
+*The shader works.* The argument reduction is the interesting part and it is
+solved: `x*127.1 + y*311.7 + s*74.7` is `(x*1271 + y*3117 + s*747)/10` with all
+three inputs integers, so the numerator is an exact integer below 2^24 (measured
+worst case 4.6e6) and survives float32 intact. Split it into four 6-bit digits,
+reduce each modulo 2π with a Cody-Waite pair chosen so every product and
+difference is exact, and evaluate sin/cos from a Taylor pair on [-π/4, π/4]
+rather than the hardware's (GLSL ES only promises `sin` to 2^-11 absolute, which
+times 43758 is pure noise). Measured against the Lua hash over 65k lattice
+points: **mean error 0.0012, max 0.0057** — the float32 floor. The full field
+pass then ran in **~90 ms natively including readback and decode, against 500 ms
+of Lua**, and the same trick took `_scars` from 136 ms to 20 ms.
+
+*And it still generates a different island.* The hash's last step is
+`fract(sin(A) * 43758.5453)`, and `fract` is discontinuous. A float32 sine is
+granular at 6e-8; times 43758 that is 0.0026 of pre-fract value, so **about one
+hash in two hundred lands the wrong side of an integer** and comes back wrong by
+a whole unit rather than by a rounding error. At ~200 hashes per cell that is
+roughly one wrapped lattice point per cell, and a wrapped point in a low octave
+takes a whole bay with it. Seed 31337, GPU against CPU: **1.9% of cells changed
+land/water, `landArea` +4.5% (3,099,840 → 3,240,576), `landBox` moved 104 units
+(432,128,2064,2120 → 328,120,2160,2128)**, and the `demo_terrain` captures are
+plainly not the same island — the western shore moves several hundred world
+units. Seed 12345 happened to land well (`landArea` +0.15%, `landBox` identical);
+seeds 777, 424242, 1, 500000 and 31337 did not. Per-seed luck is not a result.
+
+Closing the gap means the sine to ~1e-11 — software double-float through the
+reduction, the polynomial *and* the final multiply, in a language that does not
+promise IEEE single precision to begin with. Estimated 4-6x the shader cost for
+a browser win of maybe 3-5x, not the order of magnitude asked for. Not worth it.
+
+*Two things worth keeping from the attempt, both browser-only:*
+
+1. **`rgba8` canvases do not exist in the web build.**
+   `love.graphics.getCanvasFormats()` under love.js reports `depth16, hdr,
+   normal, rgb565, rgb5a1, rgba16f, rgba4, srgba8, stencil8`. No `rgba8`, and
+   `normal` resolves to **rgba4** — four bits a channel, 2 bytes a pixel. Worse,
+   asking for `"rgba8"` does not fail softly: LÖVE's "format is not supported by
+   your graphics drivers" error escapes `pcall` inside love.js and takes the
+   frame down on the title screen. Any GPU pass here must use the default format
+   and expect four bits, or `rgba16f`, and must not assume `pcall` will save it.
+2. **The readback is cheap and was never the risk.** 426x301 in the hosted build
+   under SwiftShader: `Canvas:newImageData` **23 ms** warm (132 ms on the first
+   call), `getString` 1 ms, the whole round trip well under 1% of what it would
+   save. Natively it is 0.8 ms plus 7.5 ms to decode. If someone finds a way to
+   reproduce the hash, the transport is not what will stop them.
+
+Also worth recording for whoever picks this up: `setBlendMode("replace")` is
+**not** enough for a data canvas. LÖVE rewrites `srcRGB` to `SRC_ALPHA` whenever
+the alpha mode is the default `alphamultiply`, so packed RGB comes back scaled by
+the packed alpha byte. It must be `setBlendMode("replace", "premultiplied")` —
+which is a live bug waiting in `_bakeCoroutine`'s shore-distance pass if its
+alpha ever stops being 1.
+
 **L3. Bake the sound bank.** — **DONE**
 
 *Measured: `Audio.load()` 3.581 s → 0.433 s native (verified independently of the
