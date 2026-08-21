@@ -155,7 +155,19 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
 
-  /* --- boot log: real stages, because the wait is part of the fiction ----- */
+  /* --- boot log ----------------------------------------------------------
+     This panel is not decoration. It reports three real phases, in order, and
+     it stays up until the game says it has drawn a frame:
+
+       0.00-0.10  base64 -> bytes, in this script
+       0.10-0.55  WebAssembly compile (emscripten calls setStatus as it goes)
+       0.55-1.00  the game's own boot, reported over `print` as BOOT|pct|label
+
+     The third phase is the one that used to be a lie. LOVE ran love.load --
+     which synthesized all 324 sound variants -- inside a single main-loop tick,
+     so the page could not paint and the Begin button the player had just
+     pressed stopped answering for twenty-odd seconds. The game now slices that
+     work and reports where it is; see Boot.stage in main.lua. */
   var logEl = $('log'), lines = [], cursor = '<span class="cursor"></span>';
   function say(text, state) {
     lines.push('<b>&gt;</b> ' + text + (state === 'ok' ? ' <span class="ok">ok</span>' : ''));
@@ -165,6 +177,14 @@
   var progress = 0;
   function setProgress(p) { progress = Math.max(progress, p); $('fill').style.width = (progress * 100).toFixed(1) + '%'; }
 
+  // Phase timings, on the console, so tools/webperf.js can read the real split
+  // between decode, wasm compile and the game's own boot instead of guessing.
+  var T0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  function mark(name) {
+    var t = ((window.performance && performance.now) ? performance.now() : Date.now()) - T0;
+    console.log('BOOTPHASE ' + name + ' ' + Math.round(t));
+  }
+
   function b64(s) {
     var bin = atob(s), n = bin.length, u = new Uint8Array(n);
     for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
@@ -172,11 +192,11 @@
   }
 
   say('cold start');
-  setProgress(0.05);
+  setProgress(0.02);
   window.__LOVE_WASM__ = b64('/*__WASM_B64__*/');
-  say('runtime decoded', 'ok'); setProgress(0.45);
+  say('runtime decoded', 'ok'); setProgress(0.07); mark('wasm-decoded');
   window.__LOVE_DATA__ = b64('/*__DATA_B64__*/');
-  say('island data unpacked', 'ok'); setProgress(0.62);
+  say('island data unpacked', 'ok'); setProgress(0.10); mark('data-decoded');
 
   /* --- drifting motes behind the panel: the game's own pollen ------------ */
   (function motes() {
@@ -319,23 +339,42 @@
     arguments: argv,
     INITIAL_MEMORY: 402653184,
     wasmBinary: window.__LOVE_WASM__.buffer,
-    printErr: console.error.bind(console),
-    print: console.log.bind(console),
     canvas: canvas,
     totalDependencies: 0,
     remainingDependencies: 0,
-    setStatus: function (t) { if (t) setProgress(Math.min(0.93, progress + 0.02)); },
+    setStatus: function (t) { if (t) setProgress(Math.min(0.55, progress + 0.02)); },
     monitorRunDependencies: function (left) {
-      if (left === 0) { setProgress(1); ready(); }
+      if (left === 0) { setProgress(0.58); mark('deps-ready'); gate(); }
+    },
+    // The game talks to this panel through stdout. Anything that is not a boot
+    // report goes to the console exactly as it did before.
+    printErr: console.error.bind(console),
+    print: function (text) {
+      if (typeof text === 'string') {
+        if (text.charCodeAt(0) === 66 /* B */) {
+          if (text === 'BOOTREADY') { gameReady(); return; }
+          var m = /^BOOT\|(\d+)\|(.*)$/.exec(text);
+          if (m) {
+            setProgress(0.58 + 0.42 * (+m[1] / 100));
+            if (m[2]) say(m[2], +m[1] >= 100 ? 'ok' : null);
+            return;
+          }
+        }
+      }
+      console.log(text);
     }
   };
   window.Module = Module;
 
-  var started = false, isReady = false;
-  function ready() {
-    if (isReady) return;
-    isReady = true;
-    say('shaders warm', 'ok');
+  var started = false, gated = false, booted = false, watchdog = null;
+
+  /* The click gate. It opens when the runtime is linked, exactly as it used to,
+     so the moment a player can press Begin has not moved. What has changed is
+     that pressing it does something: the main thread is no longer blocked, so
+     the panel keeps painting and the game keeps reporting until it can draw. */
+  function gate() {
+    if (gated) return;
+    gated = true;
     resize();
     var b = $('start');
     b.style.display = 'inline-block';
@@ -345,12 +384,35 @@
       if (e.key === 'Enter' || e.key === ' ') { window.removeEventListener('keydown', once); begin(); }
     });
   }
+
+  /* The game has presented a frame. There is something behind this panel now. */
+  function gameReady() {
+    if (booted) return;
+    booted = true;
+    setProgress(1);
+    mark('first-frame');
+    if (!gated) gate();
+    if (started) dismiss();
+  }
+
   function begin() {
     if (started) return;
     started = true;
-    $('loader').classList.add('gone');
     canvas.focus();
     try { if (Module.SDL2 && Module.SDL2.audioContext) Module.SDL2.audioContext.resume(); } catch (e) {}
+    if (booted) { dismiss(); return; }
+    // Not drawing yet. Keep the panel, retire the button, let the boot report
+    // finish the bar. Anything is better than handing over a black canvas.
+    $('start').style.display = 'none';
+    say('waking the island');
+    // ...and fail open. A runtime that never reports must not trap the player
+    // behind a panel; after this it is the game's problem to look like itself.
+    watchdog = setTimeout(function () { if (!booted) dismiss(); }, 30000);
+  }
+
+  function dismiss() {
+    if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+    $('loader').classList.add('gone');
     setTimeout(function () {
       $('loader').style.display = 'none';
       if (window.__stopMotes) window.__stopMotes();
@@ -364,7 +426,8 @@
   });
 
   window.__loveBoot = function () {
-    say('booting engine');
+    say('compiling engine');
+    mark('compile-start');
     try { Love(Module); } catch (err) { console.error(err); say('engine failed to start'); }
   };
 })();

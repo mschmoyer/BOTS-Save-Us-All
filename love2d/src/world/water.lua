@@ -68,16 +68,23 @@ float crinkle(vec2 w) {
        + (vn(w * 0.1400 + 91.0) - 0.5) * 9.0;
 }
 
-float shoreDist(vec2 w) {
+// x: signed distance to the shoreline, positive on land.
+// y: how hard the sea works this stretch of coast, 0..1, baked into the alpha
+//    of the shore field by terrain.lua's SHORE_GLSL out of the coast's own
+//    facing against the prevailing swell and how much open water lies off it.
+//    It rides in a channel of a texel this function was fetching anyway, so
+//    everything the surf does with it is free.
+vec2 shoreInfo(vec2 w) {
   vec2 uv = clamp(w / uWorld, vec2(0.0), vec2(1.0));
-  float se = Texel(shore, uv).r * 2.0 - 1.0;
+  vec4 S = Texel(shore, uv);
+  float se = S.r * 2.0 - 1.0;
   float d = se * abs(se) * uSdMax;
   // outside the map there is only open ocean. Without this the clamped edge
   // texel smears its value along the whole row.
   vec2 od = max(vec2(0.0) - w, w - uWorld);
   d = d - length(max(od, vec2(0.0))) * 1.6;
   d = d + crinkle(w) * (1.0 - smoothstep(80.0, 260.0, abs(d)));
-  return max(d, -uSdMax);
+  return vec2(max(d, -uSdMax), S.a);
 }
 
 vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
@@ -88,7 +95,8 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float n2 = fbm3(w * 0.0231 - vec2(uTime * 0.088, -uTime * 0.041));
   float n3 = fbm3(w * 0.00105 + 13.0);     // ocean-scale colour variation
 
-  float sd = shoreDist(w);
+  vec2 si = shoreInfo(w);
+  float sd = si.x;
 
   // refraction wobble: strongest in the shallows where you can see the bottom
   float shoreMask = smoothstep(-300.0, 0.0, sd);
@@ -117,23 +125,37 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float crest = smoothstep(0.56, 0.94, n1 + (n2 - 0.5) * 0.35);
   col = mix(col, cSky, crest * 0.05 * calm);
 
+  // How hard the sea works this stretch of coast. Narrowing the lip was never
+  // going to fix it: a strong even line and a thin even line are the same
+  // drawing. `expo` comes off the baked shore field -- the coast's facing
+  // against the swell, and how much open water lies off it -- and a slow field
+  // running along the shore breaks it further, so the surf arrives in lengths
+  // with gaps between them and is allowed to stop entirely in a lee.
+  float ex = clamp(si.y * (0.55 + 0.90 * n3) + (n1 - 0.5) * 0.55, 0.0, 1.0);
+
   // foam bands parallel to the coast, riding on the swell
   float nearShore = 1.0 - smoothstep(0.0, 190.0, -sdw);
   float band = sin(sdw * 0.072 + uTime * 1.25 + n2 * 5.0 + n1 * 2.2);
   float bands = smoothstep(0.34, 0.94, band) * nearShore * nearShore;
 
-  // the breaking lip right at the waterline: narrow, so it stays a wave and not
-  // a soft white ring painted round the whole island
-  float lipW = 8.0 + 8.0 * n2;
+  // The breaking lip. Width, brightness and existence are all `ex`: on a
+  // headland it is wide and violent, in the lee of one it is not there.
+  float lipW = 2.5 + 14.0 * ex;
   float edge = 1.0 - smoothstep(0.0, lipW, -sdw);
-  float surge = 0.55 + 0.45 * sin(uTime * 1.05 + fbm3(w * 0.0045) * 6.2);
-  float lip = edge * edge * surge;
+  float surge = 0.55 + 0.45 * sin(uTime * 1.05 + n1 * 6.2 + n3 * 4.4);
+  float lip = edge * edge * surge * smoothstep(0.08, 0.44, ex);
 
-  float foam = clamp(bands * 0.38 + lip * 0.88, 0.0, 1.0);
+  // ...and what a bay gets instead of a wave: old foam that has drifted in and
+  // is lying on the water in patches, with no edge to it at all.
+  float pool = smoothstep(0.42, 0.78, n2 * 0.70 + n1 * 0.52)
+             * nearShore * (1.0 - ex) * (1.0 - smoothstep(0.0, 34.0, -sdw) * 0.45);
+
+  float foam = clamp(bands * (0.16 + 0.34 * ex) + lip * 0.86 + pool * 0.42, 0.0, 1.0);
   foam *= step(0.0, -sdw + 2.0);
   // the foam is bright but it is still water: hold it under the clipping point
-  // so the whole shore band does not fuse into one blown-out white halo
-  col = mix(col, cFoam * 0.90, foam * 0.70);
+  // so the whole shore band does not fuse into one blown-out white halo, and
+  // hold the quiet water further under it still
+  col = mix(col, cFoam * 0.90, foam * (0.40 + 0.36 * ex));
 
   // sparkle: two slowly drifting noise fields multiplied and hard-thresholded,
   // so only a scattering of crests catches the sun

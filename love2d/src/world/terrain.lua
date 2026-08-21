@@ -651,7 +651,7 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
     float live = smoothstep(0.80, 0.94, hash21(pa.xy + 7.1))
                * smoothstep(0.54, 0.78, fbm3(w * 0.0062 + 41.0));
     dead += cBlight[3] * smoothstep(0.009, 0.0, pa.z * open)
-            * deep * deep * live * (1.0 - seep) * 0.24;
+            * deep * deep * live * (1.0 - seep) * 0.15;
 
     // ---- the rot rim ----
     // Living ground a scar has already reached. Grass does not go grey when it
@@ -717,14 +717,55 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
 }
 ]==]
 
--- Packs the signed shore distance into a standalone canvas for the water shader.
+-- Packs the signed shore distance into a standalone canvas for the water shader,
+-- and -- in the alpha channel, which was carrying a constant 1.0 -- how hard the
+-- sea works each stretch of that coast.
+--
+-- A shoreline is not one stroke of even width. A headland facing the swell is
+-- violent; the head of the bay behind it gets a slick of old foam that has
+-- drifted in and nothing else; between the two the line breaks. Both the sea
+-- and the run-up on the sand need to know which is which, and both of them
+-- already fetch this texel every frame -- so it is measured once, here, out of
+-- the coast's own facing and out of how much open water lies off it, and the
+-- per-frame cost of the whole idea is nothing.
 local SHORE_GLSL = [==[
 extern Image fieldA;
 extern vec2  uFScale;
 extern vec2  uFBias;
+extern vec2  uWorld;
+extern float uSdMax;
+extern vec2  uSwell;      // unit vector the swell travels along
+
+float sdAt(vec2 uv) {
+  float se = Texel(fieldA, clamp(uv, vec2(0.0), vec2(1.0)) * uFScale + uFBias).a * 2.0 - 1.0;
+  return se * abs(se) * uSdMax;
+}
+
 vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
-  vec4 A = Texel(fieldA, clamp(tc, vec2(0.0), vec2(1.0)) * uFScale + uFBias);
-  return vec4(A.a, step(0.5, A.a), A.r, 1.0);
+  vec2 uv = clamp(tc, vec2(0.0), vec2(1.0));
+  vec4 A = Texel(fieldA, uv * uFScale + uFBias);
+
+  // The coast normal, from the gradient of the distance field. `sd` grows
+  // landward, so the seaward normal is the other way. Divide by a floored
+  // length and select afterwards -- written as a branch around a zero-length
+  // gradient this is a 0/0 on any renderer that flattens the branch, which is
+  // the bug that put NaNs through the scar once already.
+  vec2 e = vec2(4.0, 4.0) / uWorld;
+  vec2 g = vec2(sdAt(uv + vec2(e.x, 0.0)) - sdAt(uv - vec2(e.x, 0.0)),
+                sdAt(uv + vec2(0.0, e.y)) - sdAt(uv - vec2(0.0, e.y)));
+  float gl = length(g);
+  vec2 seaward = -g / max(gl, 0.0001);
+  seaward = gl > 0.0001 ? seaward : vec2(0.0, -1.0);
+
+  // which way this stretch of coast is looking, against the swell
+  float face = 0.5 + 0.5 * dot(seaward, -uSwell);
+  // ...and how much water lies off it. A headland has deep water a hundred and
+  // fifty units out; the head of a bay has the other arm of the bay.
+  float off = -sdAt(clamp((uv * uWorld + seaward * 155.0) / uWorld, vec2(0.0), vec2(1.0)));
+  float open = smoothstep(10.0, 150.0, off);
+
+  float expo = clamp(face * 0.55 + open * 0.66 - 0.14, 0.0, 1.0);
+  return vec4(A.a, step(0.5, A.a), A.r, expo);
 }
 ]==]
 
@@ -765,7 +806,8 @@ float crinkle(vec2 w) {
 vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   vec2 w = uView.xy + tc * uView.zw;
   vec2 uv = clamp(w / uWorld, vec2(0.0), vec2(1.0));
-  float se = Texel(shore, uv).r * 2.0 - 1.0;
+  vec4 S = Texel(shore, uv);
+  float se = S.r * 2.0 - 1.0;
   float sd = se * abs(se) * uSdMax;
   // outside the map there is only open ocean, never a smeared edge texel
   vec2 od = max(vec2(0.0) - w, w - uWorld);
@@ -779,15 +821,22 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   sd = sd + (vn(w * 0.31 + 7.0) - 0.5) * 5.0;
 
   float wob = fbm3(w * 0.017 + vec2(uTime * 0.09, -uTime * 0.05));
-  float surge = 0.5 + 0.5 * sin(uTime * 0.62 + fbm3(w * 0.004) * 5.5);
-  float reach = 4.0 + 19.0 * surge * (0.55 + 0.9 * wob);
+  // How hard the sea works this stretch, baked into the shore field: see
+  // SHORE_GLSL. Broken further by a slow field that runs along the coast, so
+  // the wash arrives in tongues with dry sand between them rather than as one
+  // even band -- and it is allowed to stop entirely, which is the only way an
+  // edge like this ever reads as painted rather than as traced.
+  float tongue = fbm3(w * 0.0072 + 41.0);
+  float ex = clamp(S.a * (0.60 + 0.80 * tongue) + (wob - 0.5) * 0.42, 0.0, 1.0);
+  float surge = 0.5 + 0.5 * sin(uTime * 0.62 + tongue * 5.5);
+  float reach = (2.0 + 20.0 * surge * (0.55 + 0.9 * wob)) * (0.18 + 1.05 * ex);
 
   float run = 1.0 - smoothstep(0.0, reach, sd);
   float lip = smoothstep(0.62, 0.93, run) * smoothstep(1.0, 0.91, run);
   float wet = run * run;
 
   vec3 col = mix(cWet, cFoam, clamp(lip * 2.4 + smoothstep(0.90, 1.0, run) * 0.4, 0.0, 1.0));
-  float a = wet * 0.24 + lip * 0.80;
+  float a = (wet * 0.24 + lip * 0.80) * smoothstep(0.05, 0.42, ex);
   a *= smoothstep(-2.0, 2.0, sd);
   return vec4(col * a, a) * vcol;
 }
@@ -913,6 +962,11 @@ function Terrain:_generate()
   -- shader rotates into it and the rock marks lie along it.
   local sa = (hash2(self.seed % 613, 17, 3) * 0.80 + 0.10) * math.pi
   self.strike = { cos(sa), sin(sa) }
+
+  -- ...and one prevailing swell, likewise from the seed. Which coasts get
+  -- hammered and which sit in the lee follows from this one vector.
+  local wa = hash2(self.seed % 809, 43, 11) * U.TAU
+  self.swell = { cos(wa), sin(wa) }
 
   self.genTime = (love.timer and love.timer.getTime() or os.clock()) - t0
 end
@@ -1346,6 +1400,9 @@ function Terrain:_makeShaders()
   put(self._shoreSh, "fieldA", self.fieldA)
   put(self._shoreSh, "uFScale", self._fScale)
   put(self._shoreSh, "uFBias", self._fBias)
+  put(self._shoreSh, "uWorld", { self.w, self.h })
+  put(self._shoreSh, "uSdMax", SD_MAX)
+  put(self._shoreSh, "uSwell", { self.swell[1], self.swell[2] })
 
   local f = self._foamSh
   put(f, "uWorld", { self.w, self.h })
@@ -1429,10 +1486,14 @@ function Terrain:_bakeCoroutine()
     self.shoreCanvas:setFilter("linear", "linear")
     love.graphics.setCanvas(self.shoreCanvas)
     love.graphics.clear(0, 0, 0, 1)
+    -- `replace`: the alpha channel is data now, and under the default blend it
+    -- is composited against the cleared 1.0 and comes back as a constant 1.
+    love.graphics.setBlendMode("replace")
     love.graphics.setShader(self._shoreSh)
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(self._white, 0, 0, 0, SHORE_W, SHORE_H)
     love.graphics.setShader()
+    love.graphics.setBlendMode("alpha")
     love.graphics.setCanvas()
     put(self._foamSh, "shore", self.shoreCanvas)
     emit(1.0)
@@ -1635,19 +1696,19 @@ function Terrain:_scatterMarks(tile, part, parts)
         local clump = N.fbm(wx * 0.0038 + 811.0, wy * 0.0038 - 411.0, 3, sClump)
         clump = U.saturate((clump - 0.34) * 2.6)
         local roll = rng:next()
-        if roll < 0.66 and rng:next() > 0.22 + clump * 0.92 then roll = 0.995 end
+        if roll < 0.71 and rng:next() > 0.22 + clump * 0.92 then roll = 0.995 end
         -- Flowers grow in drifts, not evenly sprinkled -- and the drift has to
         -- be a real one, or every third mark in the meadow is a bloom.
         local bloom = N.fbm(wx * 0.0055 + 301.0, wy * 0.0055 - 77.0, 3, sBloom)
-        if roll >= 0.66 and roll < 0.78 and bloom < 0.615 then roll = 0.30 end
-        if roll < 0.66 then
+        if roll >= 0.71 and roll < 0.81 and bloom < 0.615 then roll = 0.30 end
+        if roll < 0.71 then
           local hgt = (5 + rng:next() * 8) * (0.55 + fert * 0.75)
           local base = P.scale(P.shade(R.grass, 1.0 + rng:next() * 0.7, 0.85), lt)
           local tip  = P.scale(P.shade(R.grass, 2.6 + rng:next() * 1.2 + fert, 0.9), lt)
           love.graphics.setColor(P.alpha(grassShadow, 0.30))
           love.graphics.ellipse("fill", lx + 1.2, ly + 1.0, 2.4, 1.1, 6)
           tuft(lx, ly, hgt, (rng:next() - 0.5) * 5, 1.1 + rng:next() * 0.9, base, tip)
-        elseif roll < 0.78 then
+        elseif roll < 0.81 then
           -- Flowers, in drifts of one species and in little heads rather than
           -- one dot each. Picking a colour per speck put three different hot
           -- hues inside any ten pixels, and three UI-strength hues at two
@@ -1671,22 +1732,23 @@ function Terrain:_scatterMarks(tile, part, parts)
             love.graphics.setColor(P.alpha(fc, 0.34 + rng:next() * 0.16))
             love.graphics.circle("fill", px, py, hr, 5)
           end
-        elseif roll < 0.90 then
-          -- A field stone. Warm, half-buried, and *light*: cut from `stone` and
-          -- pushed toward soil, because the cold blue of `rock` on green grass
-          -- read as a scattering of blueberries -- and taken from the bottom of
-          -- the ramp it read as one anyway, a dark bean lying on a bright field
-          -- with the sun apparently missing it.
-          local r = 1.8 + rng:next() * 3.2
-          local body = P.scale(P.mix(P.shade(R.stone, 3.0 + rng:next() * 0.85),
-                                     R.soil[3], 0.24), lt)
-          love.graphics.setColor(P.alpha(P.darken(R.soil[1], 0.15), 0.26))
+        elseif roll < 0.87 then
+          -- A field stone: warm, half-buried, and drawn *through*. Cut from the
+          -- cold blue of `rock` these read as a scattering of blueberries; cut
+          -- from the top of `stone` instead they read as a scattering of
+          -- chewing gum, which is worse, because there are a lot of them and
+          -- pale dots at even density over a green field is the exact thing
+          -- the flowers were being blamed for.
+          local r = 1.7 + rng:next() * 3.0
+          local body = P.alpha(P.scale(P.mix(P.shade(R.stone, 2.2 + rng:next() * 0.95),
+                                             R.soil[2], 0.30), lt), 0.82)
+          love.graphics.setColor(P.alpha(P.darken(R.soil[1], 0.15), 0.22))
           love.graphics.ellipse("fill", lx + 1.2, ly + 1.0, r, r * 0.7, 6)
           love.graphics.setColor(body)
           love.graphics.ellipse("fill", lx, ly, r, r * 0.76, 6)
-          love.graphics.setColor(P.alpha(P.scale(R.stone[4], lt), 0.26))
+          love.graphics.setColor(P.alpha(P.scale(R.stone[3], lt), 0.24))
           love.graphics.ellipse("fill", lx - r * 0.28, ly - r * 0.30, r * 0.38, r * 0.26, 5)
-        else
+        elseif roll < 0.94 then
           -- Bare earth showing through. An ellipse at ten segments is a disc,
           -- and a scattering of overlapping discs at eight per cent is still a
           -- scattering of discs; this is an irregular patch with a soft second
@@ -1700,6 +1762,8 @@ function Terrain:_scatterMarks(tile, part, parts)
           love.graphics.polygon("fill",
             unpack(shardPts(lx, ly, r * 0.55, rng:angle(), 7, 0.9, 0.55, rng)))
         end
+        -- the last bucket deliberately draws nothing: sward with nothing on it
+        -- is what lets the marks that are there read as marks
 
       elseif b == B_MARSH then
         if rng:chance(0.55) then
@@ -1817,11 +1881,11 @@ function Terrain:_scatterMarks(tile, part, parts)
           -- A curled flake of lifted crust. The one mark here that has a
           -- silhouette and a shadow, and the one that says the surface has
           -- come away rather than merely gone a different colour.
-          local r = 2.6 + rng:next() * 4.4
+          local r = 2.2 + rng:next() * 3.4
           crustFlake(lx, ly, r, rng,
-                     P.alpha(P.darken(R.ash[1], 0.35), 0.40 * sc),
-                     P.alpha(P.scale(P.shade(R.ash, 2.0 + rng:next() * 0.9), lt), 0.34 * sc),
-                     P.alpha(P.scale(R.ash[4], lt), 0.20 * sc))
+                     P.alpha(P.darken(R.ash[1], 0.35), 0.30 * sc),
+                     P.alpha(P.scale(P.shade(R.ash, 1.7 + rng:next() * 0.8), lt), 0.24 * sc),
+                     P.alpha(P.scale(R.ash[3], lt), 0.14 * sc))
         elseif roll < 0.28 then
           -- Dead fibre, combed by a slow flow field so the litter lies the way
           -- it fell. Dark: pale strokes at this length on a dark scar read as

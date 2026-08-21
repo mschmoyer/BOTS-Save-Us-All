@@ -310,29 +310,33 @@ local function dk(col, k, a) local m = P.darken(col, k) return { m[1], m[2], m[3
 local DEFS = {}
 
 ------------------------------------------------------------------ ambient
+-- Sunlit chaff, not fairy dust. It was a four-point sparkle three pixels across
+-- with a 1.7Hz twinkle on it: over a lit canopy that is invisible, and the one
+-- time you caught it, it read as magic. A mote of pollen is a lit speck with a
+-- soft corona and no rhythm of its own -- the only thing that should move it is
+-- the wind that is already moving the leaves.
 DEFS.pollen = {
-  layer = "air", blend = "add", shape = "mote", rate = 7,
+  layer = "air", blend = "add", shape = "glow", rate = 7,
   count = { 1, 2 }, life = { 7, 13 }, emit = "box", boxW = 900, boxH = 600,
-  speed = { 4, 16 }, spread = TAU, drag = 0.2, wind = 0.55,
-  swirl = 9, swirlFreq = 0.7,
-  size = { 3.2, 6.2 }, sizeCurve = "hold", alphaCurve = "breathe",
-  pulse = 0.45, pulseFreq = 1.7, alpha = 0.75,
-  colors = { c(R.leafHi[4], 0.55), c(R.sand[4], 0.85), lt(R.leafHi[4], 0.5, 0.7) },
+  speed = { 3, 13 }, spread = TAU, drag = 0.25, grav = 3, wind = 0.75,
+  swirl = 7, swirlFreq = 0.5,
+  size = { 5, 17 }, sizeCurve = "hold", alphaCurve = "breathe", alpha = 0.5,
+  colors = { c(R.sand[4], 0.45), lt(R.sand[4], 0.4, 0.8), c(R.leafHi[4], 0.35) },
 }
 
+-- This was two emitters: a `halo` for the glow and a `mote` for the body. They
+-- were spawned independently into the same 900x600 box, so the body was never
+-- anywhere near the glow -- and `halo` has a hole in the middle. Every firefly
+-- in the game was a dark-centred donut with its lamp scattered somewhere else
+-- as a white pinprick. One particle now, glow and body baked into one texture,
+-- blinking slowly and out of phase with its neighbours the way they actually do.
 DEFS.fireflies = {
-  { layer = "air", blend = "add", shape = "halo", rate = 2.4,
-    count = 1, life = { 5, 9 }, emit = "box", boxW = 900, boxH = 600,
-    speed = { 6, 16 }, spread = TAU, drag = 0.9, swirl = 26, swirlFreq = 0.55,
-    size = { 26, 42 }, sizeCurve = "hold", alphaCurve = "breathe",
-    pulse = 0.9, pulseFreq = 2.3, alpha = 0.30,
-    colors = { c(P.accent, 0.7), c(R.ember[4], 0.9), c(P.accent, 0.7) } },
-  { layer = "air", blend = "add", shape = "mote",
-    count = 1, life = { 5, 9 }, emit = "box", boxW = 900, boxH = 600,
-    speed = { 6, 16 }, spread = TAU, drag = 0.9, swirl = 26, swirlFreq = 0.55,
-    size = { 4, 6.5 }, sizeCurve = "hold", alphaCurve = "breathe",
-    pulse = 0.9, pulseFreq = 2.3,
-    colors = { lt(R.ember[4], 0.6, 1), c(W, 1), lt(P.accent, 0.4, 1) } },
+  layer = "air", blend = "add", shape = "glow", rate = 2.4,
+  count = 1, life = { 5, 9 }, emit = "box", boxW = 900, boxH = 600,
+  speed = { 5, 15 }, spread = TAU, drag = 0.9, swirl = 26, swirlFreq = 0.55,
+  size = { 15, 30 }, sizeCurve = "hold", alphaCurve = "breathe",
+  pulse = 0.86, pulseFreq = 0.62, alpha = 0.9,
+  colors = { c(P.eye, 0.5), lt(R.ember[4], 0.3, 1), c(P.accent, 0.45) },
 }
 
 DEFS.leaf_litter = {
@@ -345,14 +349,16 @@ DEFS.leaf_litter = {
   colors = { c(R.leaf[3]), c(R.leafHi[4]), c(R.ember[3], 0.9), c(R.bark[3], 0) },
 }
 
+-- Ash is burnt, so it is warm-dark and it is a flake, not a pale sphere: `disc`
+-- in cold `rock` grey made it read as falling hail.
 DEFS.ash = {
-  layer = "air", blend = "alpha", shape = "disc", rate = 9,
+  layer = "air", blend = "alpha", shape = "shard", rate = 9,
   count = { 1, 2 }, life = { 5, 10 }, emit = "box", boxW = 900, boxH = 560,
   speed = { 8, 26 }, spread = TAU, drag = 0.5, grav = 9, wind = 0.7,
   swirl = 14, swirlFreq = 1.1,
-  size = { 2.8, 6.0 }, sizeCurve = "hold", alphaCurve = "lateOut", alpha = 0.85,
-  spin = { -1.4, 1.4 },
-  colors = { c(R.rock[4], 0.55), c(R.rock[3], 0.75), c(R.rock[2], 0) },
+  size = { 2.4, 6.5 }, sizeCurve = "hold", alphaCurve = "lateOut", alpha = 0.85,
+  spin = { -2.2, 2.2 }, tumble = 4.5,
+  colors = { c(R.ash[4], 0.5), c(R.ash[3], 0.8), c(R.ash[2], 0) },
 }
 
 DEFS.rain = {
@@ -382,7 +388,7 @@ DEFS.mist = {
   layer = "ground", blend = "alpha", shape = "smoke", rate = 2.2,
   count = 1, life = { 9, 15 }, emit = "box", boxW = 900, boxH = 400,
   speed = { 5, 16 }, spread = TAU, drag = 0.3, wind = 0.5,
-  size = { 150, 300 }, sizeCurve = "grow", alphaCurve = "breathe", alpha = 0.2,
+  size = { 130, 240 }, sizeCurve = "grow", alphaCurve = "breathe", alpha = 0.17,
   spin = { -0.12, 0.12 },
   colors = { c(P.tod.night.fog, 0.5), c(R.water[4], 0.55), c(P.inkFaint, 0.3) },
 }
@@ -424,29 +430,14 @@ DEFS.dash_trail = {
   colors = { c(P.accentCool, 0.9), c(P.o2, 0.5), c(P.accentCool, 0) },
 }
 
-DEFS.land = {
-  { layer = "ground", blend = "alpha", shape = "ring",
-    count = 1, life = 0.4, emit = "point",
-    ring0 = 4, ring1 = 54, ringW = 9, ringSegs = 36, ringCurve = "swell",
-    alphaCurve = "smoothOut", alpha = 0.8,
-    colors = { c(R.sand[4], 0.85), c(R.soil[3], 0) } },
-  { layer = "ground", blend = "alpha", shape = "smoke",
-    count = { 9, 13 }, life = { 0.4, 0.8 }, emit = "disc", radius = { 2, 12 },
-    speed = { 70, 175 }, spread = TAU, drag = 5.4, grav = -14,
-    size = { 15, 30 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.68,
-    spin = { -2, 2 },
-    colors = { c(R.sand[4], 0.8), c(R.sand[3], 0.5), c(R.soil[2], 0) } },
-  { layer = "world", blend = "alpha", shape = "shard",
-    count = { 4, 7 }, life = { 0.35, 0.6 }, emit = "disc", radius = { 0, 8 },
-    speed = { 120, 260 }, spread = 1.9, drag = 2.2, grav = 900,
-    size = { 4, 8 }, sizeCurve = "hold", alphaCurve = "lateOut",
-    spin = { -13, 13 }, tumble = 9,
-    colors = { c(R.soil[3]), c(R.soil[2]), c(R.soil[1], 0) } },
-}
+-- `land` lived here: a ring, a dust puff and some clods, fired by nothing --
+-- there is no jump and no knockdown in this game. It was `dash_burst` without
+-- the direction and `slam_dust` without the weight, and its only real effect on
+-- the build was to put one more identical expanding ring in the vocabulary.
 
 DEFS.hurt_spray = {
-  { layer = "air", blend = "alpha", shape = "shard",
-    count = { 14, 19 }, life = { 0.35, 0.66 }, emit = "disc", radius = { 0, 6 },
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 11, 15 }, life = { 0.35, 0.66 }, emit = "disc", radius = { 0, 6 },
     speed = { 150, 400 }, spread = 1.5, drag = 3.4, grav = 620,
     size = { 8, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -16, 16 }, tumble = 11,
@@ -455,21 +446,17 @@ DEFS.hurt_spray = {
     count = 1, life = 0.14, emit = "point",
     speed = 0, size = { 54, 54 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut",
     colors = { c(W, 0.85), c(P.danger, 0) } },
+  -- Layer discipline, and it is the rule the whole file now follows: "ground"
+  -- is the floor, "world" is anything with mass and anything opaque -- it sorts
+  -- under the canopy where the thing that threw it is standing -- and "air" is
+  -- only motes and light. Debris and smoke were on "air" all over this file,
+  -- which is why the first frame anyone ever saw of that layer had pale masses
+  -- lying across the treetops.
 }
 
-DEFS.heal = {
-  { layer = "air", blend = "add", shape = "plus",
-    count = { 7, 10 }, life = { 0.6, 1.1 }, emit = "disc", radius = { 4, 20 },
-    speed = { 26, 62 }, angle = -pi * 0.5, spread = 1.0, drag = 1.4, grav = -70,
-    swirl = 22, swirlFreq = 2.6,
-    size = { 8, 15 }, sizeCurve = "softIn", alphaCurve = "softIn",
-    colors = { c(P.accent, 0.9), c(W, 1), c(P.accent, 0) } },
-  { layer = "ground", blend = "add", shape = "ring",
-    count = 1, life = 0.55, emit = "point",
-    ring0 = 8, ring1 = 44, ringW = 4.5, ringSegs = 34, ringCurve = "swell",
-    alphaCurve = "smoothOut",
-    colors = { c(P.accent, 0.9), c(P.accent, 0) } },
-}
+-- `heal` lived here: rising green medical crosses and a ring. Nothing emitted
+-- it, `heal_ground` already says the same sentence better, and a literal first
+-- aid cross is not a shape this world contains anywhere else.
 
 ------------------------------------------------------------------- combat
 DEFS.shove_arc = {
@@ -495,16 +482,16 @@ DEFS.impact = {
     ring0 = 5, ring1 = 58, ringW = 12, ringSegs = 32, ringCurve = "swell",
     alphaCurve = "sharpOut",
     colors = { lt(R.ember[4], 0.55, 0.95), c(R.ember[4], 0.7), c(R.ember[3], 0) } },
-  { layer = "air", blend = "alpha", shape = "shard",
-    count = { 13, 18 }, life = { 0.26, 0.5 }, emit = "disc", radius = { 0, 7 },
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 9, 13 }, life = { 0.26, 0.5 }, emit = "disc", radius = { 0, 7 },
     speed = { 220, 520 }, spread = TAU, drag = 5.5, grav = 320,
     size = { 7, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -20, 20 }, tumble = 13,
     colors = { c(W, 1), c(R.ember[4]), c(R.ember[2], 0) } },
   { layer = "air", blend = "add", shape = "spark",
-    count = { 8, 12 }, life = { 0.15, 0.3 }, emit = "point",
+    count = { 6, 9 }, life = { 0.15, 0.3 }, emit = "point",
     speed = { 260, 620 }, spread = TAU, drag = 7, align = true, stretch = 0.00875,
-    size = { 10, 18 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
+    size = { 7, 20 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
     colors = { c(W, 1), lt(R.ember[4], 0.3, 0.9), c(R.ember[3], 0) } },
   { layer = "world", blend = "alpha", shape = "smoke",
     count = { 4, 6 }, life = { 0.3, 0.6 }, emit = "disc", radius = { 0, 10 },
@@ -514,58 +501,44 @@ DEFS.impact = {
     colors = { c(R.rock[4], 0.6), c(R.rock[3], 0.35), c(R.rock[1], 0) } },
 }
 
+-- Two 72-segment rings, each drawn as three concentric strokes, is 864 line
+-- segments per pulse -- and the player and every repulsor bot fire it. At r=210
+-- a 48-segment circle is off by half a pixel, which nobody has ever seen.
 DEFS.pulse_ring = {
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.62, emit = "point",
-    ring0 = 14, ring1 = 210, ringW = 34, ringSegs = 72, ringCurve = "swell",
+    ring0 = 14, ring1 = 210, ringW = 34, ringSegs = 48, ringCurve = "swell",
     alphaCurve = "smoothOut", alpha = 0.7,
     colors = { c(W, 0.8), c(P.o2, 0.6), c(P.accentCool, 0) } },
   { layer = "air", blend = "add", shape = "ring",
     count = 1, life = 0.5, emit = "point",
-    ring0 = 10, ring1 = 200, ringW = 5, ringSegs = 72, ringCurve = "swell",
+    ring0 = 10, ring1 = 200, ringW = 5, ringSegs = 48, ringCurve = "swell",
     alphaCurve = "sharpOut",
     colors = { c(W, 1), c(P.o2, 0.9), c(P.accentCool, 0) } },
-  { layer = "air", blend = "alpha", shape = "halo",
-    count = 1, life = 0.55, emit = "point",
-    size = { 130, 430 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.16,
+  { layer = "air", blend = "alpha", shape = "glow",
+    count = 1, life = 0.5, emit = "point",
+    size = { 120, 330 }, sizeCurve = "swell", alphaCurve = "smoothOut", alpha = 0.15,
     colors = { c(P.accentCool, 0.6), c(P.o2, 0.3), c(P.accentCool, 0) } },
   { layer = "air", blend = "add", shape = "mote",
-    count = { 14, 20 }, life = { 0.3, 0.6 }, emit = "ring", radius = { 20, 40 },
+    count = { 10, 14 }, life = { 0.3, 0.6 }, emit = "ring", radius = { 20, 40 },
     speed = { 240, 460 }, spread = 0.5, drag = 2.6,
-    size = { 5, 10 }, sizeCurve = "shrink", alphaCurve = "smoothOut",
+    size = { 4, 12 }, sizeCurve = "shrink", alphaCurve = "smoothOut",
     colors = { c(W, 1), c(P.o2, 0.8), c(P.accentCool, 0) } },
 }
 
 DEFS.hit_spark = {
   layer = "air", blend = "add", shape = "streak",
-  count = { 7, 11 }, life = { 0.1, 0.24 }, emit = "point",
+  count = { 5, 8 }, life = { 0.1, 0.24 }, emit = "point",
   speed = { 200, 460 }, spread = 1.6, drag = 9, align = true, stretch = 0.0125,
-  size = { 8, 15 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
+  -- a wider size spread: identical spindles at identical lengths is the single
+  -- most legible "default particle system" tell in the whole library
+  size = { 5, 18 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
   colors = { c(W, 1), lt(R.ember[4], 0.4, 0.9), c(R.ember[3], 0) },
 }
 
-DEFS.crit = {
-  { layer = "air", blend = "add", shape = "flare",
-    count = 1, life = 0.2, emit = "point",
-    size = { 130, 130 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut",
-    colors = { c(W, 1), c(P.warn, 0.7), c(R.ember[3], 0) } },
-  { layer = "air", blend = "add", shape = "ring",
-    count = 2, life = { 0.3, 0.42 }, emit = "point",
-    ring0 = 8, ring1 = 96, ringW = 9, ringSegs = 44, ringCurve = "swell",
-    alphaCurve = "sharpOut",
-    colors = { lt(P.warn, 0.55, 1), c(P.warn, 0.85), c(R.ember[2], 0) } },
-  { layer = "air", blend = "add", shape = "spark",
-    count = { 12, 16 }, life = { 0.2, 0.42 }, emit = "point",
-    speed = { 340, 760 }, spread = TAU, drag = 6.2, align = true, stretch = 0.0075,
-    size = { 13, 24 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
-    colors = { c(W, 1), c(P.warn, 0.9), c(R.ember[2], 0) } },
-  { layer = "air", blend = "alpha", shape = "shard",
-    count = { 8, 12 }, life = { 0.3, 0.6 }, emit = "point",
-    speed = { 180, 430 }, spread = TAU, drag = 4, grav = 400,
-    size = { 6, 12 }, sizeCurve = "hold", alphaCurve = "lateOut",
-    spin = { -22, 22 }, tumble = 14,
-    colors = { c(W, 1), c(P.warn), c(R.ember[2], 0) } },
-}
+-- `crit` lived here: thirty-five particles of white-and-orange firework for a
+-- critical hit the game does not have. It was `impact` with the numbers turned
+-- up, which is the definition of a stock effect.
 
 ------------------------------------------------------------------- growth
 DEFS.plant_burst = {
@@ -605,26 +578,8 @@ DEFS.plant_burst = {
     colors = { c(R.soil[4], 0.6), c(R.soil[3], 0.4), c(R.soil[2], 0) } },
 }
 
-DEFS.grow_up = {
-  { layer = "air", blend = "add", shape = "ring",
-    count = 3, life = { 0.5, 0.85 }, emit = "point",
-    ring0 = 40, ring1 = 8, ringW = 5, ringSegs = 34, ringCurve = "swell",
-    alphaCurve = "breathe",
-    colors = { c(P.accent, 0.8), lt(P.accent, 0.45, 0.9), c(R.leafHi[4], 0) } },
-  { layer = "air", blend = "add", shape = "plus",
-    count = { 10, 14 }, life = { 0.7, 1.3 }, emit = "ring", radius = { 14, 30 },
-    speed = { 18, 44 }, angle = -pi * 0.5, spread = 0.7, drag = 1.1, grav = -120,
-    swirl = 46, swirlFreq = 3.4,
-    size = { 8, 15 }, sizeCurve = "softIn", alphaCurve = "softIn",
-    colors = { c(W, 1), c(P.accent, 0.9), c(R.leafHi[4], 0) } },
-  { layer = "world", blend = "alpha", shape = "leaf",
-    count = { 6, 9 }, life = { 0.9, 1.6 }, emit = "disc", radius = { 4, 18 },
-    speed = { 40, 130 }, spread = TAU, drag = 2.6, grav = -30, wind = 0.4,
-    swirl = 40, swirlFreq = 2.4,
-    size = { 9, 15 }, sizeCurve = "hold", alphaCurve = "lateOut",
-    spin = { -6, 6 }, tumble = 6,
-    colors = { c(R.leafHi[4]), c(R.leaf[3]), c(R.leaf[2], 0) } },
-}
+-- `grow_up` lived here: three contracting rings and a fountain of crosses for a
+-- sapling maturing. Nothing emitted it and `plant_burst` owns growth already.
 
 DEFS.heal_ground = {
   { layer = "ground", blend = "add", shape = "ring",
@@ -676,7 +631,7 @@ DEFS.cobalt_pickup = {
 }
 
 DEFS.deposit_pop = {
-  { layer = "air", blend = "alpha", shape = "shard",
+  { layer = "world", blend = "alpha", shape = "shard",
     count = { 9, 13 }, life = { 0.4, 0.75 }, emit = "disc", radius = { 0, 6 },
     speed = { 130, 280 }, angle = -pi * 0.5, spread = 2.0, drag = 2.6, grav = 700,
     size = { 7, 13 }, sizeCurve = "hold", alphaCurve = "lateOut",
@@ -690,21 +645,24 @@ DEFS.deposit_pop = {
 }
 
 --------------------------------------------------------------------- bots
+-- The most-fired effect in the game -- every spawn, every repair, every rescue --
+-- and it was a hard white circle with ten identically-sized white spindles
+-- radiating evenly out of it. It was the loudest thing in the frame and the
+-- least important thing in the scene, and it was the same stock starburst on a
+-- quiet night forest as on the boss. A robot's eye catching is small, warm,
+-- lopsided and over in a third of a second: one bloom, a short fan of sparks
+-- thrown up and off to one side, and no outline anywhere.
 DEFS.bot_boot = {
-  { layer = "air", blend = "add", shape = "ring",
-    count = 1, life = 0.42, emit = "point",
-    ring0 = 52, ring1 = 12, ringW = 5, ringSegs = 30, ringCurve = "swell",
-    alphaCurve = "breathe",
-    colors = { c(P.eye, 0.6), lt(P.eye, 0.4, 0.95), c(P.eye, 0) } },
+  { layer = "air", blend = "add", shape = "glow",
+    count = 1, life = 0.34, emit = "point",
+    size = { 58, 58 }, sizeCurve = "pop", alphaCurve = "smoothOut", alpha = 0.75,
+    colors = { lt(P.eye, 0.55, 0.9), c(P.eye, 0.8), c(R.metalW[3], 0) } },
   { layer = "air", blend = "add", shape = "streak",
-    count = { 8, 10 }, life = { 0.2, 0.36 }, emit = "disc", radius = { 2, 8 },
-    speed = { 130, 260 }, spread = TAU, drag = 11, align = true, stretch = 0.0125,
-    size = { 6, 11 }, sizeCurve = "shrink", alphaCurve = "sharpOut",
-    colors = { c(W, 1), c(P.eye, 0.9), c(R.metal[4], 0) } },
-  { layer = "air", blend = "add", shape = "flare",
-    count = 1, life = 0.3, emit = "point",
-    size = { 44, 44 }, sizeCurve = "bloom", alphaCurve = "smoothOut", alpha = 0.7,
-    colors = { c(W, 0.9), c(P.eye, 0.7), c(R.metalW[3], 0) } },
+    count = { 3, 5 }, life = { 0.14, 0.3 }, emit = "disc", radius = { 1, 6 },
+    speed = { 90, 250 }, angle = -pi * 0.52, spread = 2.4, drag = 10,
+    align = true, stretch = 0.011,
+    size = { 4, 13 }, sizeCurve = "shrink", alphaCurve = "sharpOut", alpha = 0.85,
+    colors = { lt(P.eye, 0.7, 1), c(P.eye, 0.85), c(R.ember[3], 0) } },
 }
 
 DEFS.bot_spark = {
@@ -727,50 +685,53 @@ DEFS.bot_death = {
   -- a short, colourless flash: no celebration
   { layer = "air", blend = "add", shape = "flare",
     count = 1, life = 0.13, emit = "point",
-    size = { 62, 62 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.7,
-    colors = { c(R.metal[4], 0.9), c(P.eyeDown, 0.5), c(R.metal[2], 0) } },
-  -- smoke that hangs
-  { layer = "air", blend = "alpha", shape = "smoke",
-    count = { 8, 12 }, life = { 1.4, 2.6 }, emit = "disc", radius = { 2, 12 },
+    size = { 58, 58 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.6,
+    colors = { c(R.metal[4], 0.85), c(P.eyeDown, 0.5), c(R.metal[2], 0) } },
+  -- Smoke that hangs -- at the wreck's depth, not above the forest. On "air"
+  -- it drew over every canopy in the frame, and in cold pale `rock` grey a
+  -- dozen 54px puffs became the bright mass floating over the treetops. It is
+  -- burnt machine: warm, dark, and behind the leaves it rises through.
+  { layer = "world", blend = "alpha", shape = "smoke",
+    count = { 6, 9 }, life = { 1.4, 2.6 }, emit = "disc", radius = { 2, 12 },
     speed = { 20, 70 }, spread = TAU, drag = 2.4, grav = -22, wind = 0.35,
     swirl = 12, swirlFreq = 1.1,
-    size = { 22, 54 }, sizeCurve = "puff", alphaCurve = "lateOut", alpha = 0.55,
+    size = { 18, 44 }, sizeCurve = "puff", alphaCurve = "lateOut", alpha = 0.5,
     spin = { -1.2, 1.2 },
-    colors = { c(R.rock[4], 0.7), c(R.rock[3], 0.5), c(R.rock[1], 0) } },
+    colors = { c(R.ash[4], 0.6), c(R.ash[3], 0.45), c(R.ash[1], 0) } },
   -- lingering embers in the wreck
-  { layer = "air", blend = "add", shape = "dot",
-    count = { 5, 8 }, life = { 1.8, 3.4 }, emit = "disc", radius = { 0, 10 },
+  { layer = "world", blend = "add", shape = "dot",
+    count = { 4, 7 }, life = { 1.8, 3.4 }, emit = "disc", radius = { 0, 10 },
     speed = { 8, 40 }, spread = TAU, drag = 1.8, grav = -14, wind = 0.3,
     swirl = 10, swirlFreq = 1.4,
     size = { 3, 6 }, sizeCurve = "shrink", alphaCurve = "emberFade",
     colors = { c(P.eyeDown, 0.9), c(R.ember[3], 0.7), c(R.ember[2], 0) } },
-  -- the eye going out
-  { layer = "air", blend = "add", shape = "dot",
+  -- the eye going out, at the wreck
+  { layer = "world", blend = "add", shape = "glow",
     count = 1, life = 0.9, emit = "point",
-    size = { 16, 16 }, sizeCurve = "shrink", alphaCurve = "flick",
+    size = { 20, 20 }, sizeCurve = "shrink", alphaCurve = "flick",
     colors = { c(P.eyeDown, 1), c(P.eyeDown, 0.4), c(P.eyeDown, 0) } },
 }
 
+-- This is the effect that broke the ending. Eleven to eighteen particles per
+-- emission, up to six emissions a second per happy robot, and forty-five robots
+-- standing in a ring: at 0.95 alpha with a 64px additive halo behind every one
+-- of them, the last shot of the game had a slab of pink polygons lying across
+-- the canopy. It is one bot's feeling, above one bot's head -- three or four
+-- particles, half alpha, and the glow is baked into the heart's own texture.
 DEFS.love_heart = {
   { layer = "air", blend = "alpha", shape = "heart",
-    count = { 3, 5 }, life = { 1.7, 2.6 }, emit = "disc", radius = { 2, 12 },
-    speed = { 16, 34 }, angle = -pi * 0.5, spread = 0.7, drag = 0.9, grav = -22,
-    swirl = 15, swirlFreq = 1.5,
-    size = { 18, 29 }, sizeCurve = "riseIn", alphaCurve = "softIn", alpha = 0.95,
-    spin = { -0.5, 0.5 },
-    colors = { c(P.love, 0.8), lt(P.love, 0.35, 1), c(P.love, 0) } },
-  { layer = "air", blend = "add", shape = "halo",
-    count = { 3, 5 }, life = { 1.7, 2.6 }, emit = "disc", radius = { 2, 12 },
-    speed = { 16, 34 }, angle = -pi * 0.5, spread = 0.7, drag = 0.9, grav = -22,
-    swirl = 15, swirlFreq = 1.5,
-    size = { 42, 64 }, sizeCurve = "riseIn", alphaCurve = "softIn", alpha = 0.15,
-    colors = { c(P.love, 0.7), c(P.love, 0.5), c(P.love, 0) } },
-  { layer = "air", blend = "add", shape = "mote",
-    count = { 5, 8 }, life = { 1.1, 2.0 }, emit = "disc", radius = { 4, 22 },
-    speed = { 8, 26 }, angle = -pi * 0.5, spread = 1.2, drag = 0.8, grav = -18,
-    swirl = 20, swirlFreq = 2.2,
-    size = { 3.5, 6 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.8,
-    colors = { lt(P.love, 0.5, 0.9), c(P.love, 0.7), c(P.love, 0) } },
+    count = { 1, 2 }, life = { 1.5, 2.3 }, emit = "disc", radius = { 2, 9 },
+    speed = { 14, 30 }, angle = -pi * 0.5, spread = 0.6, drag = 0.9, grav = -20,
+    swirl = 13, swirlFreq = 1.4,
+    size = { 10, 19 }, sizeCurve = "riseIn", alphaCurve = "softIn", alpha = 0.52,
+    spin = { -0.4, 0.4 },
+    colors = { c(P.love, 0.6), lt(P.love, 0.4, 0.85), c(P.love, 0) } },
+  { layer = "air", blend = "add", shape = "glow",
+    count = { 2, 3 }, life = { 0.9, 1.7 }, emit = "disc", radius = { 3, 15 },
+    speed = { 8, 24 }, angle = -pi * 0.5, spread = 1.2, drag = 0.8, grav = -16,
+    swirl = 18, swirlFreq = 2.2,
+    size = { 5, 11 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.45,
+    colors = { lt(P.love, 0.5, 0.8), c(P.love, 0.55), c(P.love, 0) } },
 }
 
 DEFS.confused_bubble = {
@@ -789,28 +750,39 @@ DEFS.confused_bubble = {
 }
 
 -------------------------------------------------------------------- blight
+-- The Blight's ambient signature, and it was the same four-point sparkle as
+-- pollen, cobalt and the player's pulse, in the hottest magenta on the ramp,
+-- additive, twinkling at 6Hz. That is a fairy, not an infection. The palette
+-- note is explicit that the hot stop belongs to hairline veins only: a spore
+-- drifting off a rotted thing is plum going olive at the edges, it has a tuft
+-- rather than points, and it does not sparkle.
 DEFS.blight_spore = {
-  layer = "air", blend = "add", shape = "mote", rate = 9,
+  layer = "air", blend = "add", shape = "spore", rate = 9,
   count = { 1, 2 }, life = { 1.8, 3.6 }, emit = "disc", radius = { 2, 16 },
   speed = { 12, 40 }, spread = TAU, drag = 1.1, grav = -18, wind = 0.3,
   swirl = 26, swirlFreq = 2.2,
-  size = { 4, 9 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.8,
-  pulse = 0.3, pulseFreq = 6,
-  colors = { c(R.blight[4], 0.9), c(R.blight[3], 0.8), c(R.blight[2], 0) },
+  size = { 6, 15 }, sizeCurve = "softIn", alphaCurve = "softIn", alpha = 0.55,
+  spin = { -1.6, 1.6 }, tumble = 2.4,
+  colors = { c(R.blight[3], 0.75), c(P.necrosis, 0.6), c(R.blight[2], 0) },
 }
 
+-- Thirty-four additive magenta sparkles and a contracting ring: the Blight died
+-- like a treasure chest opening. It should die like something rotten bursting --
+-- a wet, low, spreading puff of spores that goes olive as it disperses, one
+-- brief hot flash from the vein that let go, and nothing that expands in a
+-- perfect circle.
 DEFS.blight_death = {
-  { layer = "air", blend = "add", shape = "mote",
-    count = { 26, 34 }, life = { 0.5, 1.1 }, emit = "disc", radius = { 0, 12 },
-    speed = { 40, 170 }, spread = TAU, drag = 4.6, grav = -60,
-    swirl = 40, swirlFreq = 5,
-    size = { 6, 14 }, sizeCurve = "shrink", alphaCurve = "flick",
-    colors = { lt(R.blight[4], 0.4, 1), c(R.blight[4], 0.9), c(R.blight[2], 0) } },
-  { layer = "air", blend = "add", shape = "ring",
-    count = 1, life = 0.34, emit = "point",
-    ring0 = 46, ring1 = 6, ringW = 6, ringSegs = 30, ringCurve = "swell",
-    alphaCurve = "lateOut",
-    colors = { c(R.blight[3], 0.4), c(R.blight[4], 0.9), c(W, 0) } },
+  { layer = "world", blend = "alpha", shape = "spore",
+    count = { 13, 18 }, life = { 0.6, 1.3 }, emit = "disc", radius = { 0, 11 },
+    speed = { 40, 165 }, spread = TAU, drag = 4.4, grav = -35,
+    swirl = 34, swirlFreq = 4.2,
+    size = { 8, 19 }, sizeCurve = "shrink", alphaCurve = "lateOut", alpha = 0.9,
+    spin = { -5, 5 }, tumble = 3.5,
+    colors = { c(R.blight[3], 0.95), c(P.necrosis, 0.7), c(R.blight[2], 0) } },
+  { layer = "air", blend = "add", shape = "glow",
+    count = 1, life = 0.2, emit = "point",
+    size = { 46, 46 }, sizeCurve = "sharpOut", alphaCurve = "sharpOut", alpha = 0.6,
+    colors = { c(R.blight[4], 0.85), c(R.blight[3], 0) } },
   { layer = "world", blend = "alpha", shape = "smoke",
     count = { 5, 8 }, life = { 0.7, 1.4 }, emit = "disc", radius = { 0, 10 },
     speed = { 20, 70 }, spread = TAU, drag = 3.4, grav = -30,
@@ -847,8 +819,8 @@ DEFS.rift_open = {
     ring0 = 8, ring1 = 130, ringW = 12, ringSegs = 50, ringCurve = "swell",
     alphaCurve = "sharpOut",
     colors = { lt(R.rift[4], 0.5, 0.95), c(R.rift[4], 0.85), c(R.rift[2], 0) } },
-  { layer = "air", blend = "alpha", shape = "shard",
-    count = { 16, 22 }, life = { 0.4, 0.9 }, emit = "disc", radius = { 0, 14 },
+  { layer = "world", blend = "alpha", shape = "shard",
+    count = { 13, 18 }, life = { 0.4, 0.9 }, emit = "disc", radius = { 0, 14 },
     speed = { 200, 560 }, spread = TAU, drag = 4.4,
     size = { 7, 16 }, sizeCurve = "hold", alphaCurve = "lateOut",
     spin = { -24, 24 }, tumble = 15,
@@ -867,7 +839,9 @@ DEFS.rift_ambient = {
     count = 1, life = { 0.8, 1.5 }, emit = "ring", radius = { 60, 120 },
     speed = { 60, 130 }, inward = true, drag = -0.8, align = true, stretch = 0.00625,
     size = { 3, 7 }, sizeCurve = "shrink", alphaCurve = "lateOut", alpha = 0.85,
-    colors = { c(R.rift[3], 0.3), c(R.rift[4], 0.9), c(P.love, 0.5) } },
+    -- ended on P.love, which is the bots' affection pink and has no business
+    -- inside the machine's tear in the sky
+    colors = { c(R.rift[3], 0.3), c(R.rift[4], 0.9), lt(R.rift[4], 0.55, 0.8) } },
   { layer = "air", blend = "add", shape = "streak", rate = 2.5,
     count = 1, life = { 0.2, 0.4 }, emit = "disc", radius = { 6, 26 },
     speed = { 80, 200 }, spread = TAU, drag = 6, align = true, stretch = 0.0125,
@@ -925,22 +899,22 @@ DEFS.armour_break = {
     spin = { -15, 15 }, tumble = 9,
     colors = { c(R.metal[4]), c(R.metal[3]), c(R.metal[2]), c(R.metal[1], 0) } },
   { layer = "air", blend = "add", shape = "spark",
-    count = { 12, 18 }, life = { 0.2, 0.5 }, emit = "disc", radius = { 0, 12 },
+    count = { 9, 14 }, life = { 0.2, 0.5 }, emit = "disc", radius = { 0, 12 },
     speed = { 260, 640 }, spread = TAU, drag = 5.4, grav = 300,
     align = true, stretch = 0.0075,
-    size = { 7, 14 }, sizeCurve = "shrink", alphaCurve = "flick",
+    size = { 5, 17 }, sizeCurve = "shrink", alphaCurve = "flick",
     colors = { c(W, 1), c(P.warn, 0.9), c(R.ember[2], 0) } },
 }
 
 DEFS.core_expose = {
   { layer = "air", blend = "add", shape = "ring",
-    count = 3, life = { 0.6, 1.0 }, emit = "point",
-    ring0 = 12, ring1 = 180, ringW = 11, ringSegs = 56, ringCurve = "swell",
+    count = 2, life = { 0.6, 1.0 }, emit = "point",
+    ring0 = 12, ring1 = 180, ringW = 11, ringSegs = 44, ringCurve = "swell",
     alphaCurve = "smoothOut",
     colors = { lt(P.danger, 0.55, 1), c(P.danger, 0.85), c(R.blight[2], 0) } },
-  { layer = "air", blend = "add", shape = "halo",
+  { layer = "air", blend = "add", shape = "glow",
     count = 1, life = 1.1, emit = "point",
-    size = { 60, 230 }, sizeCurve = "swell", alphaCurve = "breathe", alpha = 0.5,
+    size = { 60, 260 }, sizeCurve = "swell", alphaCurve = "breathe", alpha = 0.55,
     colors = { c(P.danger, 0.9), c(P.warn, 0.6), c(P.danger, 0) } },
   { layer = "air", blend = "add", shape = "streak",
     count = { 18, 24 }, life = { 0.3, 0.7 }, emit = "disc", radius = { 0, 18 },

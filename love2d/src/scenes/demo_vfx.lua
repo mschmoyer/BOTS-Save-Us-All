@@ -30,18 +30,14 @@ local SHOW = {
   { "footstep",        1.00, 1.00, "burst", dir = true },
   { "dash_burst",      0.85, 0.85, "burst", dir = true },
   { "dash_trail",      1.00, 1.00, "sweep" },
-  { "land",            0.90, 0.90, "burst" },
   { "hurt_spray",      0.90, 0.90, "burst", dir = true },
-  { "heal",            0.95, 0.95, "burst" },
   -- combat
   { "shove_arc",       0.72, 0.72, "burst", dir = true },
   { "impact",          0.85, 0.85, "burst" },
   { "pulse_ring",      0.30, 0.30, "burst" },
   { "hit_spark",       1.00, 1.00, "burst", dir = true },
-  { "crit",            0.58, 0.58, "burst" },
   -- growth
   { "plant_burst",     0.85, 0.85, "burst" },
-  { "grow_up",         0.80, 0.80, "burst" },
   { "heal_ground",     0.38, 0.38, "burst" },
   -- economy
   { "cobalt_shimmer",  1.00, 1.00, "stream" },
@@ -77,8 +73,8 @@ local AUTO_PHASES = 4
 
 local STRESS_TARGET = 8000
 local STRESS_MIX = { "plant_burst", "impact", "bot_death", "blight_death",
-                     "rift_open", "crit", "slam_dust", "core_expose",
-                     "armour_break", "cobalt_pickup", "hurt_spray", "grow_up" }
+                     "rift_open", "dash_burst", "slam_dust", "core_expose",
+                     "armour_break", "cobalt_pickup", "hurt_spray", "love_heart" }
 
 --------------------------------------------------------------------- state
 local opts = {}          -- one reusable options table; VFX never retains it
