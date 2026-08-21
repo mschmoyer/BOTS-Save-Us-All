@@ -749,18 +749,45 @@ end
 local function drawPanel(L, h, alpha)
   local x, y, w, ph = L.px, L.py, L.pw, L.ph
   local r = 10 * L.k
-  Draw.setColor(P.black, 0.30 * alpha)
-  Draw.roundRect("fill", x + 3, y + 5, w, ph, r)
-  Draw.linearGradient(x, y, w, ph,
-    P.alpha(P.darken(P.ramp.rock[1], 0.35), 0.90 * alpha),
-    P.alpha(P.darken(P.ramp.rock[1], 0.55), 0.74 * alpha), math.pi * 0.5)
   local accent = (h.speaker and h.speaker.portrait and h.speaker.portrait.kind == "human")
                  and P.accent or ((h.speaker and h.speaker.portrait and h.speaker.portrait.eye) or P.eye)
-  Draw.setColor(accent, 0.22 * alpha)
+
+  Draw.setColor(P.black, 0.30 * alpha)
+  Draw.roundRect("fill", x + 3, y + 5, w, ph, r)
+
+  -- The body used to be a plain linearGradient, which is a *rectangle*: the
+  -- drop shadow was rounded and the panel sitting on it had four hard corners,
+  -- and this box carries every word of the story. It is masked to its own
+  -- shape now.
+  lg.stencil(function() Draw.roundRect("fill", x, y, w, ph, r) end, "replace", 1)
+  lg.setStencilTest("greater", 0)
+  Draw.linearGradient(x, y, w, ph,
+    -- Opaque enough to be a surface. At 0.80 the island's shoreline showed
+    -- through the panel as a ragged bright line running down the middle of the
+    -- words, and this box carries every line of the story.
+    P.alpha(P.darken(P.ramp.rock[1], 0.30), 0.975 * alpha),
+    P.alpha(P.darken(P.ramp.rock[1], 0.58), 0.935 * alpha), math.pi * 0.5)
+  -- a wash of the speaker's own colour behind the portrait, so a bot and a
+  -- human do not deliver their lines out of identical furniture
+  Draw.radialGradient(x + L.pad + L.plate * 0.5, y + ph * 0.5, L.plate * 1.5,
+                      P.alpha(accent, 0.075 * alpha), P.alpha(accent, 0), ph * 0.9)
+  lg.setStencilTest()
+
+  -- edge: brightest along the top, where the light in this game comes from
+  Draw.setColor(accent, 0.26 * alpha)
   lg.setLineWidth(1)
-  lg.line(x, y + 0.5, x + w, y + 0.5)
-  Draw.setColor(P.black, 0.25 * alpha)
-  lg.line(x, y + ph - 0.5, x + w, y + ph - 0.5)
+  Draw.roundRect("line", x + 0.5, y + 0.5, w - 1, ph - 1, r)
+  Draw.setColor(accent, 0.34 * alpha)
+  lg.line(x + r, y + 0.5, x + w - r, y + 0.5)
+
+  -- corner ticks, the same language the draft cards are cut with
+  local tick = 13 * L.k
+  Draw.setColor(accent, 0.55 * alpha)
+  lg.setLineWidth(2)
+  lg.line(x + 2, y + r + tick, x + 2, y + r * 0.6, x + r * 0.6, y + 2)
+  lg.line(x + w - 2, y + ph - r - tick, x + w - 2, y + ph - r * 0.6,
+          x + w - r * 0.6, y + ph - 2)
+  lg.setLineWidth(1)
   lg.setColor(1, 1, 1, 1)
   return accent
 end
