@@ -262,3 +262,89 @@ it (every `U` rendered as a `J`). `string.format("%F")` is rejected outright. An
 `highp` into the vertex stage and `mediump` into the fragment stage, so an unqualified shared
 uniform links on desktop and fails to link under GLSL ES. **Verify rendering work in the web
 build, not only natively.**
+
+---
+
+## 14. What the outside review found, and what changed
+
+An external critic played it and scored it 6/10. Everything below is what that review, and the
+screenshots taken to check it, actually turned up. It supersedes the numbers in §13 where they
+disagree.
+
+### The climax did not play
+
+**The Extraction was over in six to ten seconds.** Phases keyed off health, the player's shove
+was secretly multiplied by five, and `rebelDelay` was longer than the whole fight, so the first
+cohort never left the treeline. The run spends thirteen minutes building a workforce for a set
+piece the workforce never reached.
+
+`Boss:damage` now owns every point of damage the rig takes. A bot that reaches the hull lands
+its full share; everything else is scaled into hull terms and then **clamped to a per-phase
+floor** — the plates come off when the procession arrives, not when the player hits hard enough.
+The bar visibly stalls against a lit rule and the HUD says `ARMOUR HOLDING`. Phases advance on
+cohorts landing, with a stall failsafe so a crewless run cannot lock.
+
+**The workforce's share scales with the crew.** Twelve bots cannot carry three quarters of a
+fight that size, and pretending they could made a small crew's fight *shorter* than a large
+one's — exactly backwards. It is a curve now: 42% at a dozen, capped at 72%. Building more bots
+does not mean more damage per bot, it means less of the rig left for you.
+
+**Not everyone goes.** A reserve is held back and never asked, and once the hull is under 16%
+no further cohort leaves. Before this the whole crew was always spent and the last shot of the
+game was the player alone on a beach, in front of an ending built around survivors gathering in
+a ring.
+
+Traced, 45-bot crew, headless autoplay: 12 / 34 / 60 bots → **102 s / 92 s / 87 s**, player
+paying 51% / 38% / 32% of the hull, three / five / seven survivors.
+
+### The run-ending crash
+
+The rig sits in the enemy spatial hash so shoves and darts can find it, but it carried neither
+`stun` nor `def`. Owning BRITTLE or PIN BREAKER — two of forty-six chips — and shoving it
+compared a number with nil. A hard crash at the climax, in roughly a quarter of runs.
+
+### You could not see your own workforce
+
+Past five hundred trees the canopy is a solid mass. A 1600×900 capture of an extraction with
+thirty-four bots alive contained **no visible bots**. Only the player had an occlusion-proof
+marker. Every bot now carries one: shape for role, colour for state, fading in only when canopy
+is actually over it. The downed get a ring that empties as their rescue window does and a hole
+punched in the canopy above them. Rebels get an arrowhead on their heading and a wake.
+
+### The rig was a smudge
+
+A hundred-foot extraction platform standing *on* the canopy was depth-sorted into the tree list
+by its feet, at 62 units across — smaller than one tree's crown. It is 88 units now, drawn after
+the canopy and after the canopy's additive rim pass, with a crushed-canopy footprint, warning
+lights, and a column of taken air going up out of the frame that is visible from anywhere on the
+island.
+
+### Smaller things that were wrong
+
+- The camera clamped to the whole 3400×2400 world rect, so a shore filled half the screen with
+  ocean. It clamps to the land's real bounding box now, measured ignoring the scattered skerries.
+- The prologue drew the gameplay HUD under the cinematic bars. The whole chrome layer fades with
+  the letterbox.
+- Tutorial hints drew through the boss bar during the final fight.
+- HOLD THE DAWN — a real decision — was surfaced only as a tutorial hint capped at two repeats.
+  It is a panel under the cycle dial for the whole of dusk.
+- The title screen's light shafts started at the sun's centre at full strength, stamping a hard
+  trapezoid across the disc.
+- The ending's clearing faded canopies to 0.16, and three hundred of those stack into an opaque
+  milk over the one image the run is for.
+- The dialogue panel's body was a `linearGradient`, which is a rectangle: rounded shadow, hard
+  corners, and the island's shoreline showing through it at 0.80 alpha.
+- `Enemy` seeded its own RNG from the wall clock, so two runs of the same seed diverged and every
+  headless balance trace compared two different games.
+
+### Dev switches added for this work
+
+| | |
+| --- | --- |
+| `BOTS_TUNE=tree.frontierMax=7;cycle.budgetPerTree=0.31` | override numeric tuning for one run |
+| `BOTS_CHIPS=brittle,pinBreaker` | hand a run a specific loadout |
+| `BOTS_INPUT=touch\|pad\|kb` | force an input scheme, to capture the touch layout |
+| `BOTS_WEB=1` | tell the game it is running in a page (the shell passes this) |
+
+`tools/shot.sh [frames] ["frame numbers to photograph"] [outdir]` — the second argument is a
+list of frame numbers, not a count.
