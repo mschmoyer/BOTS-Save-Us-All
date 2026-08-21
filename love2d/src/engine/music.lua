@@ -48,19 +48,23 @@ local STATES = {
   dusk = {
     mode = "mixolydian", root = 2, bpm = 82, barsPerChord = 1,
     prog = { 1, 7, 6, 5 },
-    layers = { pad = 0.7, bass = 0.75, arp = 0.3, bell = 0.35, perc = 0.25, choir = 0 },
+    layers = { pad = 0.75, bass = 0.7, arp = 0.45, bell = 0.5, perc = 0.25, choir = 0 },
     density = 0.75,
   },
   night = {
+    -- The night used to be 94% of its energy below 250 Hz: a rumble with a kick
+    -- in it. Pressure is not the same thing as weight -- the bass comes back a
+    -- little and the tune, the arpeggio and the bed come forward, so the night
+    -- is *busier* than the day rather than merely lower.
     mode = "aeolian", root = 2, bpm = 96, barsPerChord = 1,
     prog = { 1, 6, 7, 5 },
-    layers = { pad = 0.55, bass = 0.9, arp = 0.35, bell = 0.3, perc = 0.9, choir = 0 },
+    layers = { pad = 0.7, bass = 0.75, arp = 0.6, bell = 0.55, perc = 0.85, choir = 0 },
     density = 0.95,
   },
   boss = {
     mode = "phrygianDominant", root = 1, bpm = 104, barsPerChord = 1,
     prog = { 1, 2, 1, 7 },      -- the b2 leaning on the tonic: threat, not menace-by-volume
-    layers = { pad = 0.5, bass = 0.9, arp = 0.7, bell = 0.45, perc = 0.9, choir = 0.75 },
+    layers = { pad = 0.6, bass = 0.8, arp = 0.8, bell = 0.55, perc = 0.8, choir = 0.85 },
     density = 1.0,
   },
   draft = {
@@ -129,7 +133,7 @@ end
 -- Per-layer output trim. The score used to run 12 dB louder at the boss than in
 -- the day purely because the bass and kick were sub-heavy; these keep the states
 -- inside a range one music-bus fader can serve.
-local TRIM = { pad = 1.0, bass = 0.6, arp = 0.95, bell = 1.15, perc = 0.72, choir = 0.9 }
+local TRIM = { pad = 1.05, bass = 0.55, arp = 1.0, bell = 1.2, perc = 0.62, choir = 0.95 }
 
 --------------------------------------------------------------------- state
 local M = {

@@ -60,6 +60,8 @@ function Bot:init(x, y, botType, world, rng)
   self.aimAngle    = self.rng:angle()
   self.pulseT      = 0
   self.blink       = self.rng:range(0, 4)
+  self.planted     = 0        -- what this one actually did, for its epitaph
+  self.built       = 0
 
   Audio.play("bot_boot", { pitch = 1 + (self.rng:next() - 0.5) * 0.12, x = x, y = y })
   VFX.emit("bot_boot", x, y, { power = 1 })
@@ -189,6 +191,7 @@ function Bot:update_planter(dt)
       if self.world and self.world:plantTree(
            self.x + self.rng:range(-14, 14), self.y + self.rng:range(6, 22), self) then
         planted = planted + 1
+        self.planted = self.planted + 1
       end
     end
     self.actionT = self.def.plantEvery * (planted > 0 and 1 or 0.35)
@@ -214,6 +217,7 @@ function Bot:update_builder(dt)
     if self.world and self.world:spawnBot(self.x + self.rng:range(-20, 20),
                                           self.y + self.rng:range(10, 26), "planter", "half") then
       self.carry = self.carry - 1
+      self.built = self.built + 1
       self.actionT = self.def.buildEvery / (self.world.chips and self.world.chips:get("buildRate", 1) or 1)
       self.squashT = 0.4
       Audio.play("build_done", { x = self.x, y = self.y })
@@ -393,6 +397,25 @@ function Bot:expire(peaceful)
     if self.world and self.world.decals then self.world.decals.add("scorch", self.x, self.y) end
   end
   Signal.emit("bot:lost", self, peaceful)
+end
+
+--- One line about what this bot actually did, for its death toast and for the
+--- memorial. A number the player watched happen carries more than any chatter.
+function Bot:epitaph()
+  if (self.planted or 0) > 0 then
+    return self.planted == 1 and "planted one tree" or ("planted " .. self.planted .. " trees")
+  end
+  if (self.built or 0) > 0 then
+    return "built " .. self.built .. (self.built == 1 and " planter" or " planters")
+  end
+  if self.type == "repulsor" then
+    local used = self.def.charges - (self.charges or 0)
+    return used > 0 and ("held the line " .. used .. " times") or "never got to fire"
+  end
+  if self.type == "beacon" then return "kept a light on" end
+  if self.type == "sentry" then return "stood watch" end
+  if self.type == "harvester" then return "carried what it found" end
+  return "was here"
 end
 
 ------------------------------------------------------------------------- render

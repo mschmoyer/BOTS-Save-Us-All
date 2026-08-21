@@ -705,7 +705,9 @@ function Buf:loudness(target, win, ceiling)
     end
   end
   if best > 1e-7 then self:gain(target / best) end
-  return self:limit(ceiling or 0.96, 0.004)
+  -- 1.5 ms of look-ahead, not 4: a longer window pulls the gain down *before*
+  -- the transient it is catching, which is exactly how a click becomes a bump
+  return self:limit(ceiling or 0.96, 0.0015)
 end
 
 --- Turn a decaying buffer into a seamless loop by crossfading its tail over its

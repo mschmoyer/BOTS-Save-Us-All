@@ -24,7 +24,7 @@ function Director:init(world)
   self.mawSpawned = false
 end
 
-function Director:beginNight(cycle, duration)
+function Director:beginNight(cycle, duration, extraBudget)
   self.cycle = cycle
   -- The night's pressure scales with the forest, so a big wood is a big target.
   -- A fixed budget against an exponential forest is a threat that shrinks.
@@ -32,6 +32,7 @@ function Director:beginNight(cycle, duration)
   self.budget = TU.cycle.budget[math.min(cycle, #TU.cycle.budget)]
                 + trees * TU.cycle.budgetPerTree
   self.budget = self.budget * (self.world.chips and self.world.chips:get("budget", 1) or 1)
+                            * (extraBudget or 1)
   self.maxAlive = math.floor(TU.cycle.maxAlive[math.min(cycle, #TU.cycle.maxAlive)]
                              + trees * TU.cycle.maxAlivePerTree)
   self.spent = 0

@@ -232,7 +232,7 @@ def("pickup", {
         env = { type = "perc", a = 0.001, d = d, curve = 2.6 }, amp = 0.45 },
       { osc = "sine", freq = hz * 3, env = { type = "perc", a = 0.001, d = d * 0.4, curve = 3 },
         amp = 0.13 },
-      { osc = "sub", at = 0, amp = 0.55, spec = { dur = 0.12,
+      { osc = "sub", at = 0, amp = 1.6, spec = { dur = 0.12,
         layers = { { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.011, curve = 4 },
                      amp = 1 } },
         fx = { { "resonate", mix = 0.8, gain = 1.5, modes = glassModes(hz * 2.4) },
@@ -256,7 +256,7 @@ def("pickup_streak", {
         env = { type = "perc", a = 0.001, d = 0.13, curve = 2.4 }, amp = 0.5 },
       { osc = "fm", freq = hz * 2, ratio = 2, index = { type = "exp", tau = 0.03, peak = 1.4 },
         env = { type = "perc", a = 0.001, d = 0.09, curve = 3 }, amp = 0.16 },
-      { osc = "sub", at = 0, amp = 0.4, spec = { dur = 0.1,
+      { osc = "sub", at = 0, amp = 1.3, spec = { dur = 0.1,
         layers = { { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.008, curve = 4 },
                      amp = 1 } },
         fx = { { "resonate", mix = 0.8, gain = 1.4, modes = glassModes(hz * 3.1) } },
@@ -321,7 +321,7 @@ def("build_done", {
       { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.0025, curve = 3 }, amp = 0.5 },
       { osc = "sine", freq = { from = hz * 1.6, to = hz * 0.5, tau = 0.02 },
         env = { type = "perc", a = 0.001, d = 0.15, curve = 3 }, amp = 0.6 },
-      { osc = "sub", at = 0.001, amp = 0.75, spec = { dur = 0.7, layers = {
+      { osc = "sub", at = 0.001, amp = 1.5, spec = { dur = 0.7, layers = {
         { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.004, curve = 3 }, amp = 1 } },
         fx = { { "resonate", mix = 0.95, gain = 2.2, modes = brassModes(ring, 0.8) } },
         normalize = 0.85, trim = false } },
@@ -485,7 +485,7 @@ def("bot_down", {
       amp = 0.28 }
     -- and one relay click, after the filter has already closed, as the eye goes
     -- out. It is the last thing you hear, and it is the point of the sound.
-    layers[#layers + 1] = { osc = "sub", at = 1.52 + (v - 1) * 0.04, amp = 1, spec = {
+    layers[#layers + 1] = { osc = "sub", at = 1.52 + (v - 1) * 0.04, amp = 1.8, spec = {
       dur = 0.55,
       layers = { { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0016, curve = 3 },
                    amp = 1 } },
@@ -574,19 +574,21 @@ def("shove_hit", {
     local body = 110 * r:range(0.86, 1.18)
     return { dur = 0.42, layers = {
       { osc = "sine", freq = { from = body * 2.4, to = body, tau = 0.018 },
-        env = { type = "perc", a = 0.001, d = r:range(0.14, 0.2), curve = 2.6 }, amp = 0.75 },
+        env = { type = "perc", a = 0.001, d = r:range(0.14, 0.2), curve = 2.6 }, amp = 0.6 },
       { osc = "tri", freq = body * 3.1, env = { type = "perc", a = 0.001, d = 0.06, curve = 3 },
-        amp = 0.18 },
-      -- the contact: 2 ms of broadband, kept out of the saturator so it stays a
-      -- click rather than becoming part of the thump
-      { osc = "sub", at = 0, amp = 0.85, spec = { dur = 0.16, layers = {
+        amp = 0.16 },
+      -- The contact: 4 ms of broadband, mixed *loud*. A 110 Hz sine carries far
+      -- more energy in a 10 ms window than a 4 ms click ever can, so a click at
+      -- "equal amplitude" measures 30 dB down and is simply not heard. It has to
+      -- be mixed several times hotter than looks reasonable on paper.
+      { osc = "sub", at = 0, amp = 2.2, spec = { dur = 0.18, layers = {
         { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.0035, curve = 3 }, amp = 1 },
-        { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.02, curve = 5 }, amp = 0.35 } },
-        fx = { { "svf", type = "hp", cutoff = 1300, q = 0.7 },
-               { "resonate", mix = 0.35, gain = 1.4, modes = wetModes(760 * r:range(0.9, 1.1)) } },
-        normalize = 0.9, trim = false } },
+        { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.022, curve = 5 }, amp = 0.3 } },
+        fx = { { "svf", type = "hp", cutoff = 1700, q = 0.7 },
+               { "resonate", mix = 0.3, gain = 1.4, modes = wetModes(880 * r:range(0.9, 1.1)) } },
+        normalize = 0.95, trim = false } },
     }, fx = {
-      { "softclip", drive = 2.2, mix = 0.6 },
+      { "softclip", drive = 2.2, mix = 0.38 },
       { "svf", type = "lp", cutoff = 8000, q = 0.9 },
       { "svf", type = "hp", cutoff = 55, q = 0.7 },
       { "reverb", mix = 0.13 },
@@ -936,10 +938,11 @@ def("wave_start", {
         amp = 0.4 },
       -- the hit: transient, then the sub that falls out from under the player
       { osc = "sub", at = HIT, amp = 1, spec = { dur = 2.9, layers = {
-        { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.02, curve = 4 }, amp = 0.55 },
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.006, curve = 3 }, amp = 1.1 },
+        { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.06, curve = 4 }, amp = 0.4 },
         { osc = "sine", freq = { from = 150, to = 44, tau = 0.85 },
-          env = { type = "bp", points = { { 0, 0 }, { 0.005, 1 }, { 0.35, 0.62 }, { 1.7, 0.36 },
-                                          { 2.7, 0 } } }, amp = 0.95 },
+          env = { type = "bp", points = { { 0, 0 }, { 0.004, 1 }, { 0.22, 0.5 }, { 1.5, 0.28 },
+                                          { 2.7, 0 } } }, amp = 1.05 },
         { osc = "tri", freq = { from = 300, to = 88, tau = 0.85 },
           env = { type = "bp", points = { { 0, 0 }, { 0.004, 0.7 }, { 0.9, 0.2 }, { 2.2, 0 } } },
           amp = 0.3 },
@@ -948,11 +951,11 @@ def("wave_start", {
       -- the horn: the part a phone speaker can actually reproduce
       { osc = "sub", at = HIT, amp = 1.25, spec = { dur = 2.8, layers = {
         { osc = "saw", freq = { from = base, to = base * 0.62, tau = 1.7, curve = "lin" },
-          env = { type = "bp", points = { { 0, 0 }, { 0.02, 1 }, { 1.9, 0.72 }, { 2.7, 0 } } },
-          amp = 0.34, detune = -11 },
+          env = { type = "bp", points = { { 0, 0 }, { 0.015, 1 }, { 0.5, 0.66 }, { 1.9, 0.5 },
+                                          { 2.7, 0 } } }, amp = 0.4, detune = -11 },
         { osc = "saw", freq = { from = base * 0.944, to = base * 0.585, tau = 1.7, curve = "lin" },
-          env = { type = "bp", points = { { 0, 0 }, { 0.025, 1 }, { 1.9, 0.72 }, { 2.7, 0 } } },
-          amp = 0.34, detune = 14 },
+          env = { type = "bp", points = { { 0, 0 }, { 0.02, 1 }, { 0.5, 0.66 }, { 1.9, 0.5 },
+                                          { 2.7, 0 } } }, amp = 0.4, detune = 14 },
         -- an octave up, quiet: the part a phone speaker reproduces at all
         { osc = "square", duty = 0.31,
           freq = { from = base * 2, to = base * 1.24, tau = 1.7, curve = "lin" },
@@ -968,8 +971,8 @@ def("wave_start", {
       { osc = "fm", freq = 466, ratio = 7.02,
         index = { type = "bp", points = { { 0, 0 }, { HIT, 0 }, { HIT + 0.5, 3.6 },
                                           { 2.4, 1.1 }, { 3.4, 0 } } },
-        env = { type = "bp", points = { { 0, 0 }, { HIT, 0 }, { HIT + 0.3, 0.26 },
-                                        { 2.7, 0.07 }, { 3.4, 0 } } }, amp = 0.24 },
+        env = { type = "bp", points = { { 0, 0 }, { HIT, 0 }, { HIT + 0.35, 0.2 },
+                                        { 2.7, 0.06 }, { 3.4, 0 } } }, amp = 0.2 },
     }, fx = {
       { "svf", type = "lp", cutoff = { from = 1400, to = 6000, tau = 0.75 }, q = 1.0 },
       { "svf", type = "hp", cutoff = 34, q = 0.7 },
@@ -1091,7 +1094,7 @@ def("ui_move", {
     return { dur = 0.16, layers = {
       { osc = "sine", freq = hz, env = { type = "perc", a = 0.001, d = r:range(0.04, 0.07),
                                          curve = 3 }, amp = 0.4 },
-      { osc = "sub", at = 0, amp = 0.5, spec = { dur = 0.09,
+      { osc = "sub", at = 0, amp = 1.5, spec = { dur = 0.09,
         layers = { { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.005, curve = 4 },
                      amp = 1 } },
         fx = { { "resonate", mix = 0.85, gain = 1.6, modes = glassModes(hz * 2.7) } },
@@ -1108,14 +1111,14 @@ def("ui_select", {
     local hz = 660 * r:range(0.94, 1.07)
     local gap = r:range(0.045, 0.07)
     return { dur = 0.4, layers = {
-      { osc = "sub", at = 0, amp = 1, spec = { dur = 0.22, layers = {
-        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.004, curve = 3 }, amp = 0.8 },
+      { osc = "sub", at = 0, amp = 1.9, spec = { dur = 0.22, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.004, curve = 3 }, amp = 1.6 },
         { osc = "sine", freq = hz, env = { type = "perc", a = 0.001, d = 0.09, curve = 3 },
           amp = 0.5 } },
         fx = { { "resonate", mix = 0.4, gain = 1.5, modes = glassModes(hz * 4) } },
         normalize = 0.85, trim = false } },
-      { osc = "sub", at = gap, amp = 1, spec = { dur = 0.3, layers = {
-        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 0.7 },
+      { osc = "sub", at = gap, amp = 1.9, spec = { dur = 0.3, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 1.5 },
         { osc = "sine", freq = hz * 1.5, env = { type = "perc", a = 0.001, d = 0.16, curve = 2.6 },
           amp = 0.5 },
         { osc = "sine", freq = hz * 3, env = { type = "perc", a = 0.001, d = 0.06, curve = 3 },
@@ -1135,14 +1138,14 @@ def("ui_back", {
     local hz = 660 * r:range(0.94, 1.07)
     local gap = r:range(0.04, 0.065)
     return { dur = 0.34, layers = {
-      { osc = "sub", at = 0, amp = 1, spec = { dur = 0.2, layers = {
-        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 0.7 },
+      { osc = "sub", at = 0, amp = 1.7, spec = { dur = 0.2, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 1.4 },
         { osc = "sine", freq = hz, env = { type = "perc", a = 0.001, d = 0.08, curve = 3 },
           amp = 0.5 } },
         fx = { { "resonate", mix = 0.4, gain = 1.4, modes = glassModes(hz * 4) } },
         normalize = 0.85, trim = false } },
-      { osc = "sub", at = gap, amp = 1, spec = { dur = 0.26, layers = {
-        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 0.6 },
+      { osc = "sub", at = gap, amp = 1.7, spec = { dur = 0.26, layers = {
+        { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 1.2 },
         { osc = "sine", freq = hz * 0.75, env = { type = "perc", a = 0.001, d = 0.13, curve = 2.6 },
           amp = 0.5 } },
         fx = { { "resonate", mix = 0.35, gain = 1.4, modes = glassModes(hz * 3) } },
@@ -1180,14 +1183,14 @@ def("card_pick", {
     local face = 2400 * r:range(0.9, 1.14)
     local body = 150 * r:range(0.92, 1.1)
     return { dur = 0.75, layers = {
-      { osc = "sub", at = 0, amp = 1, spec = { dur = 0.3, layers = {
+      { osc = "sub", at = 0, amp = 2.6, spec = { dur = 0.32, layers = {
         { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.004, curve = 3 }, amp = 1 },
         { osc = "noise", env = { type = "perc", a = 0.0004, d = 0.03, curve = 5 }, amp = 0.3 } },
         fx = { { "resonate", mix = 0.55, gain = 1.8, modes = glassModes(face) },
-               { "svf", type = "hp", cutoff = 900, q = 0.7 } },
-        normalize = 0.9, trim = false } },
+               { "svf", type = "hp", cutoff = 1100, q = 0.7 } },
+        normalize = 0.95, trim = false } },
       { osc = "sine", freq = { from = body * 1.6, to = body * 0.62, tau = 0.02 },
-        env = { type = "perc", a = 0.001, d = 0.1, curve = 2.8 }, amp = 0.45 },
+        env = { type = "perc", a = 0.001, d = 0.1, curve = 2.8 }, amp = 0.38 },
       -- the confirming fifth, up an octave from where it used to hide
       { osc = "tri", freq = 523, env = { type = "perc", a = 0.004, d = 0.3, curve = 2.2 },
         amp = 0.18 },
@@ -1268,16 +1271,16 @@ end })
 mdef("bass", { gain = 0.72, dur = 1.0, rate = 11025, sparse = 2, build = function(hz)
   return { dur = 1.0, layers = {
     { osc = "sine", freq = hz, env = { type = "perc", a = 0.005, d = 0.7, curve = 1.7 },
-      amp = 0.62 },
-    { osc = "sine", freq = hz * 0.5, env = { type = "perc", a = 0.008, d = 0.5, curve = 1.9 },
-      amp = 0.2 },
-    { osc = "tri", freq = hz * 2, env = { type = "perc", a = 0.004, d = 0.26, curve = 2.2 },
-      amp = 0.2 },
+      amp = 0.45 },
+    { osc = "sine", freq = hz * 0.5, env = { type = "perc", a = 0.008, d = 0.45, curve = 1.9 },
+      amp = 0.08 },
+    { osc = "tri", freq = hz * 2, env = { type = "perc", a = 0.004, d = 0.3, curve = 2.2 },
+      amp = 0.34 },
     { osc = "square", duty = 0.3, freq = hz * 3,
-      env = { type = "perc", a = 0.002, d = 0.07, curve = 3 }, amp = 0.08 },
+      env = { type = "perc", a = 0.002, d = 0.12, curve = 3 }, amp = 0.16 },
   }, fx = {
-    { "svf", type = "lp", cutoff = { from = 1600, to = 420, tau = 0.3 }, q = 1.1 },
-    { "svf", type = "hp", cutoff = 42, q = 0.7 },
+    { "svf", type = "lp", cutoff = { from = 2200, to = 620, tau = 0.3 }, q = 1.1 },
+    { "svf", type = "hp", cutoff = 52, q = 0.7 },
     { "softclip", drive = 1.5, mix = 0.5 },
   }, normalize = 0.82, trim = false }
 end })
@@ -1332,12 +1335,12 @@ local PERC = {
   -- the kick used to be pure sub under a 2.6 kHz lowpass; it now has a beater
   -- click so it reads as a pulse on a laptop instead of a pressure change
   kick = { gain = 0.85, rate = 11025, spec = function(r) return { dur = 0.7, layers = {
-    { osc = "sine", freq = { from = 165 * r:range(0.94, 1.07), to = 48, tau = 0.035 },
-      env = { type = "perc", a = 0.001, d = r:range(0.32, 0.46), curve = 1.8 }, amp = 0.9 },
-    { osc = "noise", env = { type = "perc", a = 0.0003, d = 0.004, curve = 3 }, amp = 0.32 },
-    { osc = "tri", freq = 96, env = { type = "perc", a = 0.001, d = 0.09, curve = 3 }, amp = 0.2 },
+    { osc = "sine", freq = { from = 178 * r:range(0.94, 1.07), to = 54, tau = 0.03 },
+      env = { type = "perc", a = 0.001, d = r:range(0.24, 0.34), curve = 1.9 }, amp = 0.85 },
+    { osc = "noise", env = { type = "perc", a = 0.0002, d = 0.003, curve = 3 }, amp = 0.5 },
+    { osc = "tri", freq = 104, env = { type = "perc", a = 0.001, d = 0.09, curve = 3 }, amp = 0.24 },
   }, fx = { { "softclip", drive = 1.7, mix = 0.6 },
-            { "svf", type = "hp", cutoff = 42, q = 0.7 },
+            { "svf", type = "hp", cutoff = 56, q = 0.7 },
             { "svf", type = "lp", cutoff = 4200, q = 0.8 } },
     normalize = 0.85, trim = false } end },
   hat = { gain = 0.3, spec = function(r) return { dur = 0.28, layers = {

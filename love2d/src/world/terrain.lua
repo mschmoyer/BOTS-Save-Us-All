@@ -430,17 +430,21 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   sd = sd + crinkle(w);
   if (sd < -2.0 || sd > 46.0) { return vec4(0.0); }
 
+  // one more octave of pixel-scale wobble: the run-up has to have a crisp,
+  // detailed leading edge or the whole coast wears a soft white halo
+  sd = sd + (vn(w * 0.31 + 7.0) - 0.5) * 5.0;
+
   float wob = fbm3(w * 0.017 + vec2(uTime * 0.09, -uTime * 0.05));
   float surge = 0.5 + 0.5 * sin(uTime * 0.62 + fbm3(w * 0.004) * 5.5);
-  float reach = 6.0 + 30.0 * surge * (0.55 + 0.9 * wob);
+  float reach = 4.0 + 19.0 * surge * (0.55 + 0.9 * wob);
 
   float run = 1.0 - smoothstep(0.0, reach, sd);
-  float lip = smoothstep(0.55, 1.0, run) * smoothstep(1.0, 0.80, run);
+  float lip = smoothstep(0.62, 0.93, run) * smoothstep(1.0, 0.91, run);
   float wet = run * run;
 
-  vec3 col = mix(cWet, cFoam, clamp(lip * 2.2 + smoothstep(0.85, 1.0, run) * 0.5, 0.0, 1.0));
-  float a = wet * 0.34 + lip * 0.75;
-  a *= smoothstep(-2.0, 3.0, sd);
+  vec3 col = mix(cWet, cFoam, clamp(lip * 2.4 + smoothstep(0.90, 1.0, run) * 0.4, 0.0, 1.0));
+  float a = wet * 0.24 + lip * 0.80;
+  a *= smoothstep(-2.0, 2.0, sd);
   return vec4(col * a, a) * vcol;
 }
 ]==]
@@ -1185,15 +1189,21 @@ function Terrain:_scatterMarks(tile, part, parts)
             local l = 3 + rng:next() * 9
             love.graphics.setLineWidth(1)
             love.graphics.line(lx, ly, lx + cos(a) * l, ly + sin(a) * l)
-          else
-            -- ripple ridges in the sand, following the shore
+          elseif d < 62 then
+            -- Ripple ridges in the sand. Long straight one-pixel lines read as
+            -- scratches on the lens, so these are short, bowed three-point
+            -- ridges that only exist inside the tide band where they belong.
             local gx = self.gradx[i] or 0
             local gy = self.grady[i] or 0
             local a = atan2(gy, gx) + 1.5707963
-            local l = 6 + rng:next() * 16
-            love.graphics.setColor(P.alpha(R.sand[4], 0.10 + rng:next() * 0.10))
+            local l = 4 + rng:next() * 9
+            local ca_, sa_ = cos(a), sin(a)
+            local bow = (rng:next() - 0.5) * l * 0.45
+            love.graphics.setColor(P.alpha(R.sand[4], 0.07 + rng:next() * 0.07))
             love.graphics.setLineWidth(1)
-            love.graphics.line(lx - cos(a) * l, ly - sin(a) * l, lx + cos(a) * l, ly + sin(a) * l)
+            love.graphics.line(lx - ca_ * l, ly - sa_ * l,
+                               lx - sa_ * bow, ly + ca_ * bow,
+                               lx + ca_ * l, ly + sa_ * l)
           end
 
         elseif b == B_ROCK then

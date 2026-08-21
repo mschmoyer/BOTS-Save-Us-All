@@ -381,6 +381,16 @@ end
 function Player:draw()
   if self.state == "down" then self:drawDown() return end
   local g = love.graphics
+
+  -- A ring on the ground and a rim on the body. Once the island is a forest the
+  -- player is a 30 px figure among nine hundred canopies; without these you
+  -- genuinely cannot find yourself.
+  local pulse = 0.55 + math.sin(self.age * 2.4) * 0.12
+  Draw.setColor(P.accent, 0.16 * pulse)
+  g.setLineWidth(2)
+  g.ellipse("line", self.x, self.y + self.radius * 0.55, self.radius * 1.5, self.radius * 0.6)
+  g.setLineWidth(1)
+  Draw.glow(self.x, self.y, self.radius * 2.6, P.accent, 0.1)
   local flicker = (self.invuln > 0 and math.floor(self.invuln * 22) % 2 == 0) and 0.45 or 1
 
   -- dash afterimages
@@ -426,9 +436,13 @@ function Player:draw()
     Draw.capsule("fill", 0, 0, math.cos(sweep) * r * 2.1, math.sin(sweep) * r * 2.1, r * 0.24)
   end
 
-  -- helmet
+  -- helmet, with a cool rim on the light side so the silhouette separates
   Draw.setColor(suitColor(self.suit and 3.0 or 2.2), flicker)
   love.graphics.circle("fill", 0, -r * 0.72, r * 0.62)
+  Draw.setColor(P.accentCool, 0.5 * flicker)
+  love.graphics.setLineWidth(1.6)
+  love.graphics.arc("line", "open", 0, -r * 0.72, r * 0.62, math.pi * 0.85, math.pi * 1.75)
+  love.graphics.setLineWidth(1)
   if self.suit then
     -- visor faces the aim direction
     Draw.setColor(P.accentCool, 0.9 * flicker)

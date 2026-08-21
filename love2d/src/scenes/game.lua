@@ -167,6 +167,7 @@ function Game:update(dt, realDt)
   for i = 1, #TU.bots.order do
     if Input.pressed("build" .. i) then self:build(TU.bots.order[i]) end
   end
+  if Input.pressed("commit") then world:holdDawn() end
   if BuildMenu.update then BuildMenu.update(dt, self.camera) end
   Minimap.update(realDt)
 

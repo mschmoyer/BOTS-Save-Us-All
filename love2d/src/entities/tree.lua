@@ -45,6 +45,8 @@ local P     = require("src.engine.palette")
 local Class = require("src.core.class")
 local Wind  = require("src.world.wind")
 local DayNight = require("src.engine.daynight")
+local VFX   = require("src.core.optional").require("src.engine.vfx")
+-- demos and the title screen own their own atmosphere; they can switch this off
 local T     = require("src.game.tuning").tree
 
 local sin, cos, floor, sqrt, abs, min, max, exp =
@@ -102,6 +104,7 @@ local TUNE = {
   leafDrift     = 54,
   leafSize      = 3.1,
   ambientLeaf   = 0.055,  -- chance/sec of an idle leaf on a mature tree
+  ambientMote   = 5.5,    -- seconds between pollen/firefly puffs, per tree
   gustLeaf      = 2.6,    -- ... scaled by gust strength
   chewLeaf      = 9.0,
 
@@ -801,6 +804,7 @@ function Tree.setViewFromCamera(cam)
 end
 
 Tree.zoom = 1
+Tree.ambient = true
 
 --- Call after a batch of tree draws to restore the default pipeline.
 function Tree.endPass()
@@ -1116,8 +1120,32 @@ function Tree:shed(n, speed)
   end
 end
 
+-- Ambient forest life. `pollen` and `fireflies` are fully authored in vfx.lua
+-- and nothing in the game ever emitted either of them: the day had no motes and
+-- the night had nothing at all to look at. A tree is the natural owner of both.
+local AMB_POLLEN = { power = 1 }
+local AMB_FLY    = { power = 1 }
+
 function Tree:updateLeaves(dt, windStr)
-  -- emission
+  -- ambient motes: pollen while the sun is up, fireflies once it is down
+  if Tree.ambient and self.alive and self.growth > 0.55 and self.onScreen then
+    self.ambTimer = (self.ambTimer or self.phase) - dt
+    if self.ambTimer <= 0 then
+      self.ambTimer = TUNE.ambientMote * (0.6 + (self.phase % 1))
+      local night = U.saturate(-(DayNight.sunHeight or 1) * 1.7 + 0.30)
+      local r = self.canopyR
+      local ax = self.x + (Wind.time * 0.7 + self.phase) % 1 * r * 2 - r
+      local ay = self.y - self.height * 0.55 + ((self.phase * 3.7) % 1) * r - r * 0.5
+      if night > 0.2 then
+        AMB_FLY.power = night
+        VFX.emit("fireflies", ax, ay, AMB_FLY)
+      elseif night < 0.5 then
+        AMB_POLLEN.power = 1 - night * 2
+        VFX.emit("pollen", ax, ay, AMB_POLLEN)
+      end
+    end
+  end
+  -- leaf emission
   if self.alive and self.growth > 0.4 then
     local rate = TUNE.ambientLeaf + windStr * windStr * TUNE.gustLeaf * 0.02
     if self.chewers > 0 then rate = rate + TUNE.chewLeaf end

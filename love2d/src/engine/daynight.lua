@@ -29,7 +29,7 @@ local START = { day = 0.00,   dusk = 0.40,    night = 0.52,   dawn = 0.88 }
 
 -- Scalar lighting response per phase. The *colours* all come from P.tod; these
 -- are the numbers the palette does not carry.
-local AMB    = { day = 1.06, dusk = 0.52, night = 0.40, dawn = 0.70 } -- ambient strength
+local AMB    = { day = 1.06, dusk = 0.54, night = 0.50, dawn = 0.72 } -- ambient strength
 local CONTR  = { day = 1.06, dusk = 1.12, night = 1.20, dawn = 1.06 } -- grade contrast
 -- How much of the phase's hue goes into the *ambient* (which multiplies albedo)
 -- rather than into the grade. Pushing a saturated hue through a multiply is what
@@ -151,7 +151,7 @@ local function recompute()
   -- shadows take the sky's colour, strongest when the ambient is weakest. This
   -- is the *floor* of the frame: at night it is the difference between a scene
   -- you can read the silhouettes in and a black rectangle with lamps on it.
-  local liftAmt = 0.30 * U.saturate(1 - DN.ambientStrength) + 0.018
+  local liftAmt = 0.34 * U.saturate(1 - DN.ambientStrength) + 0.018
   DN.lift[1] = DN.skyTint[1] * liftAmt
   DN.lift[2] = DN.skyTint[2] * liftAmt
   DN.lift[3] = DN.skyTint[3] * liftAmt

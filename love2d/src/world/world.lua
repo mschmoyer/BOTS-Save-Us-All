@@ -564,6 +564,7 @@ function World:setPhase(phase)
   -- draft returning to day is what actually advances the cycle.
   if phase == "day" and prev == "dawn" then
     self.cycle = self.cycle + 1
+    self.heldThisCycle = false
     if self.cycle > TU.cycle.count or self.o2 >= TU.o2.target - 0.5 then
       self:beginExtraction()
       return
@@ -578,7 +579,8 @@ function World:setPhase(phase)
     Music.setState("dusk")
     Signal.emit("phase:dusk", self.cycle, self.director:sideVector())
   elseif phase == "night" then
-    self.director:beginNight(self.cycle, self.phaseDur)
+    self.director:beginNight(self.cycle, self.phaseDur, self.holdBudget)
+    self.holdBudget = nil
     Music.setState("night")
     Signal.emit("phase:night", self.cycle)
   elseif phase == "dawn" then
@@ -591,6 +593,26 @@ function World:setPhase(phase)
     Music.setState("day")
     Signal.emit("phase:day", self.cycle)
   end
+end
+
+--- Trade a harder night for half a minute more daylight. Offered once a cycle,
+--- only while dusk is running.
+function World:holdDawn()
+  if self.phase ~= "dusk" or self.heldThisCycle then return false end
+  self.heldThisCycle = true
+  self.holdBudget = TU.cycle.holdBudget
+  -- straight back into daylight, briefly; dusk will come round again
+  self.phase = "day"
+  self.phaseT = 0
+  self.phaseDur = TU.cycle.holdExtra
+  Music.setState("day")
+  Audio.play("o2_milestone", { pitch = 0.8 })
+  Signal.emit("world:heldDawn", self.cycle)
+  return true
+end
+
+function World:canHoldDawn()
+  return self.phase == "dusk" and not self.heldThisCycle
 end
 
 function World:advancePhase()
@@ -1023,7 +1045,10 @@ Signal.on("bot:lost", function(bot, peaceful)
   w.lostNames[#w.lostNames + 1] = bot.name
   w.allLostNames = w.allLostNames or {}
   w.allLostNames[#w.allLostNames + 1] = { name = bot.name, type = bot.type,
-                                          cycle = w.cycle, trait = bot.trait }
+                                          cycle = w.cycle, trait = bot.trait,
+                                          planted = bot.planted or 0,
+                                          built = bot.built or 0 }
+  Signal.emit("bot:epitaph", bot.name, bot:epitaph())
   if w.chips:has("salvage") then
     w:addCobalt(math.floor(bot.def.cost * 0.5), bot.x, bot.y)
   end

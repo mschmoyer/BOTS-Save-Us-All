@@ -122,8 +122,9 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   float band = sin(sdw * 0.072 + uTime * 1.25 + n2 * 5.0 + n1 * 2.2);
   float bands = smoothstep(0.34, 0.94, band) * nearShore * nearShore;
 
-  // the breaking lip right at the waterline
-  float lipW = 13.0 + 12.0 * n2;
+  // the breaking lip right at the waterline: narrow, so it stays a wave and not
+  // a soft white ring painted round the whole island
+  float lipW = 8.0 + 8.0 * n2;
   float edge = 1.0 - smoothstep(0.0, lipW, -sdw);
   float surge = 0.55 + 0.45 * sin(uTime * 1.05 + fbm3(w * 0.0045) * 6.2);
   float lip = edge * edge * surge;
@@ -147,7 +148,14 @@ vec4 effect(vec4 vcol, Image tx, vec2 tc, vec2 sc) {
   // canvases are drawn on top, this only shows through their antialiased edge
   col = mix(col, cShallow * 0.85, smoothstep(-4.0, 6.0, sdw) * 0.6);
 
-  col = mix(col, col * uTint * 1.12, uTintK);
+  // The tint is a straight multiply, so a dark night sky used to take the whole
+  // sea to black and the island lost its silhouette. Keep a floor under it, and
+  // hand the darkness back some moon glitter so night water is still water.
+  float tintL = dot(uTint, vec3(0.2126, 0.7152, 0.0722));
+  col = mix(col, col * (uTint * 1.12 + 0.13), uTintK);
+  float dark = 1.0 - smoothstep(0.12, 0.46, tintL);
+  float glint = smoothstep(0.86, 1.0, s1 * s2 * 2.30) * smoothstep(0.48, 0.90, n1);
+  col += cFoam * glint * dark * uTintK * 0.55 * calm;
   col = clamp(col, 0.0, 1.0);
   return vec4(col, 1.0) * vcol;
 }

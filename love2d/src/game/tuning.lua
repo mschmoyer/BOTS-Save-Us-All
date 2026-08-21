@@ -137,6 +137,10 @@ T.cycle = {
   count      = 7,
   dayLen     = { 78, 84, 90, 94, 98, 104, 110 },
   duskLen    = 12,
+  -- Dusk is otherwise twelve dead seconds. HOLD THE DAWN buys more day at the
+  -- price of a worse night: one decision, every cycle, with a real cost.
+  holdExtra  = 30,
+  holdBudget = 1.45,
   nightLen   = { 52, 62, 70, 78, 86, 94, 104 },
   budget     = { 26, 46, 74, 108, 150, 200, 262 },   -- floor for the night's spend
   budgetPerTree = 0.42,        -- ...plus this much for every tree you have grown
