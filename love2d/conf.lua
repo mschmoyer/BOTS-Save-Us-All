@@ -6,8 +6,11 @@ function love.conf(t)
   t.appendidentity     = false
 
   t.window.title       = "BOTS: Save Us All - Reforest"
-  t.window.width       = 1600
-  t.window.height      = 900
+  -- The browser build runs at whatever aspect the window is, so every screen has
+  -- to survive shapes other than 16:9. BOTS_W/BOTS_H let the capture harness
+  -- test that; without them these were the only dimensions anything ever saw.
+  t.window.width       = tonumber(os.getenv("BOTS_W") or "") or 1600
+  t.window.height      = tonumber(os.getenv("BOTS_H") or "") or 900
   t.window.minwidth    = 854
   t.window.minheight   = 480
   t.window.resizable   = true

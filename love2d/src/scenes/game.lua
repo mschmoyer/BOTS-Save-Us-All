@@ -54,11 +54,10 @@ function Game:enter(opts)
   if BuildMenu.init then BuildMenu.init(self.world) end
 
   self.buildSel = 1
-  self.showPerf = false
+  self.showPerf = cfg("BOTS_PERF") ~= nil
 
     if cfg("BOTS_AUTOPLAY") then
     self.world.player.agent = require("src.game.autoplay").new(self.world)
-    self.showPerf = true
     J.enabled = false
     self.storyCapture = cfg("BOTS_STORY") ~= nil
   end
@@ -312,17 +311,22 @@ function Game:photo()
   if HUD.toast then HUD.toast("SAVED " .. name, nil, "photo mode") end
 end
 
+--- Developer readout. Deliberately not in the top-left: that is where the HUD
+--- keeps the resource stack, and this used to sit on top of the cobalt figure in
+--- every capture. Debug text is the one place raw love.graphics.print is allowed.
 function Game:drawPerf()
   local w = self.world
+  local sw, sh = love.graphics.getDimensions()
   local lines = string.format(
     "fps %d  ms %.1f\ntrees %d  bots %d  blight %d\nparticles %d\nphase %s %.0f/%.0f  cycle %d\nO2 %.1f%%  cobalt %d",
     love.timer.getFPS(), love.timer.getAverageDelta() * 1000,
     w.treeCount, #w.bots, #w.enemies, (VFX.count and VFX.count()) or 0,
     w.phase, w.phaseT, w.phaseDur, w.cycle, w.o2, w.cobalt)
-  love.graphics.setColor(0, 0, 0, 0.5)
-  love.graphics.rectangle("fill", 8, 8, 260, 92)
-  love.graphics.setColor(1, 1, 1, 0.9)
-  love.graphics.print(lines, 14, 12)
+  local x, y = sw * 0.5 - 130, 130
+  love.graphics.setColor(P.black[1], P.black[2], P.black[3], 0.5)
+  love.graphics.rectangle("fill", x, y, 260, 92, 4)
+  love.graphics.setColor(P.ink[1], P.ink[2], P.ink[3], 0.85)
+  love.graphics.print(lines, x + 6, y + 4)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
