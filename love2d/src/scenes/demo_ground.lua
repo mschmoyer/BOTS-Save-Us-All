@@ -98,6 +98,7 @@ function S:update(dt) self.t = self.t + dt; self.terrain:update(dt) end
 
 function S:draw()
   local T = self.terrain
+  local t0 = love.timer.getTime()
   local w, h = love.graphics.getDimensions()
   local cols, rows = 3, 2
   local pw, ph = math.floor(w / cols), math.floor(h / rows)
@@ -128,6 +129,19 @@ function S:draw()
     love.graphics.rectangle("line", px, py, pw, ph)
     love.graphics.setColor(1, 1, 1, 1)
   end
+  -- Measured across the panels only: this is the ground's whole per-frame cost.
+  -- Under Xvfb it is software-rasterised and enormous in absolute terms, but it
+  -- is comparable between two runs of the same capture, which is what it is for.
+  self.frameMs = love.timer.getTime() - t0
+  -- Cost readout. The bake may get slower; the frame may not.
+  love.graphics.setColor(P.alpha(P.black, 0.66))
+  love.graphics.rectangle("fill", 0, h - 20, 560, 20)
+  love.graphics.setColor(P.inkDim)
+  love.graphics.print(string.format(
+    "seed %d   gen %.0f ms   bake %.0f ms   %.1f MB   tiles/panel %d   frame %.2f ms",
+    self.seed, (T.genTime or 0) * 1000, (T.bakeTime or 0) * 1000,
+    T:memoryEstimate(), T.tilesDrawn or 0, (self.frameMs or 0) * 1000), 8, h - 17)
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 function S:keypressed(k) if k == "escape" then love.event.quit() end end

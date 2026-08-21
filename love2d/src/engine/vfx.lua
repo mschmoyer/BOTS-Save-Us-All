@@ -1474,7 +1474,7 @@ local SKIP = os.getenv("BOTS_VFX_SKIP")
 function VFX.draw(layerName)
   local li = LAYER_IX[layerName or "world"]
   if not li or not inited then return end
-  if SKIP and layerName == SKIP then return end
+  if SKIP and SKIP:find(layerName, 1, true) then return end
   local g = love.graphics
   local bAlpha, bAdd = batches[li][1], batches[li][2]
 

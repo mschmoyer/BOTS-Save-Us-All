@@ -137,8 +137,22 @@ T.bots = {
 
   -- Each bot of a type you already own makes the next one dearer. This is what
   -- stops a runaway workforce, and it is why the cost-cutting chips matter.
+  -- What the Home Rig can keep running at once. Cobalt's only sink is the
+  -- workforce -- the Pulse and hand-planting are both priced in seconds now --
+  -- so without a ceiling the crew simply absorbs the whole economy, and traced
+  -- runs reached a hundred and thirty-eight. A cap turns "how many bots do I
+  -- have" into "what is my crew made of", which is a decision; accumulation is
+  -- not. Forty-eight is also where the extraction's rebel-share curve stops
+  -- paying, so the cap and the reason to build sit at the same number.
+  maxCrew      = 48,
   costGrowth   = 0.14,
-  costGrowthMax = 6.0,         -- never more than 4x the base price
+  -- The comment here used to say "never more than 4x the base price" over a
+  -- value of 6. It is 14 now, and the reason is that the cap was the only thing
+  -- deciding how big a workforce could get: past about twenty planters the
+  -- price stopped rising, so every further bot was the same price as the last
+  -- and traced runs ran to a hundred and thirty. The escalation has to keep
+  -- biting for the whole run or it is not a brake, it is a speed bump.
+  costGrowthMax = 14.0,        -- never more than fourteen times the base price
 
   downedTime   = 20,           -- seconds a bot survives at 0 hp before expiring
   bootTime     = 0.9,

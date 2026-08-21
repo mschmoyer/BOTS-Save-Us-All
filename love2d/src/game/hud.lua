@@ -1064,8 +1064,16 @@ local function drawResources(w, a)
 
   local bx = x + 112
   crewGlyph(bx + 10, ty + 14, 10, 0.9 * a)
-  UI.text(itos(HUD.botCount), bx + 28, ty + 1, UI.ts.h3,
-          UI.c(P.ink, a), "left", a, 0.02)
+  -- The crew has a ceiling, so the readout is a fraction rather than a count:
+  -- the question is what your workforce is made of, not how much of it there is.
+  local cap = TU.bots.maxCrew or 0
+  local full = cap > 0 and HUD.botCount >= cap
+  local nw = UI.text(itos(HUD.botCount), bx + 28, ty + 1, UI.ts.h3,
+                     UI.c(full and P.warn or P.ink, a), "left", a, 0.02)
+  if cap > 0 then
+    UI.caption("/" .. itos(cap), bx + 28 + nw + 3, ty + 18, UI.ts.micro,
+               UI.c(full and P.warn or P.inkDim, 0.8 * a), "left", nil, 1)
+  end
   UI.caption("BOTS", bx + 28, ty + 30, UI.ts.micro,
              UI.c(P.ink, 0.72 * a), "left", nil, 1)
 end

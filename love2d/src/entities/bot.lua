@@ -237,8 +237,14 @@ function Bot:update_builder(dt)
   -- Planters, and a dearer machine costs it more of what it found.
   local want    = (self.world and self.world.copyType) or "planter"
   local wantDef = T[want] or T.planter
+  -- A Builder pays in what it found rather than out of the bank, so the
+  -- player's own escalating price never touched it -- which made it the way
+  -- around the only brake on the size of the workforce. It walks the same
+  -- curve now, in carry rather than cobalt.
+  local crew = (self.world and self.world.countBots and self.world:countBots(want)) or 0
   local buildCost = (self.def.buildCost or 2)
                     * math.max(1, math.ceil(wantDef.cost / T.planter.cost))
+                    * (1 + math.floor(crew / 24))
   if self.actionT <= 0 and self.carry >= buildCost then
     -- Out of its own carry, and nothing out of the player's bank: the cobalt
     -- it walked over is the cobalt the machine is made of.

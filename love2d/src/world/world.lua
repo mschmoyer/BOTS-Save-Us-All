@@ -377,6 +377,15 @@ function World:spawnBot(x, y, botType, free)
       if lx then x, y = lx, ly else return false end
     else return false end
   end
+  -- The Rig can only run so many of them. This is checked before the price so
+  -- a full crew never silently takes the player's cobalt.
+  if self:botCount() >= (TU.bots.maxCrew or 999) then
+    if not free then
+      Audio.play("ui_back")
+      Signal.emit("ui:denied", "crew")
+    end
+    return false
+  end
   if not free then
     local cost = self:botCost(botType)
     if not self:spendCobalt(cost) then
