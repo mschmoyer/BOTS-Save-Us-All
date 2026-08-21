@@ -51,6 +51,7 @@ function Game:enter(opts)
   if (os.getenv("BOTS_AUTOPLAY") or "") ~= "" then
     self.world.player.agent = require("src.game.autoplay").new(self.world)
     self.showPerf = true
+    J.enabled = false
   end
   self.speed = tonumber(os.getenv("BOTS_SPEED") or "") or 1
   self.telemetryT = 0
@@ -61,11 +62,48 @@ function Game:enter(opts)
   end, self.world.enemies)
   Touch.setCobaltSource(function() return self.world.cobalt end)
 
+  -- Dev jump: start a session near a late beat so the finale can be iterated on
+  -- without playing thirteen minutes of it first.
+  local jump = os.getenv("BOTS_JUMP")
+  if jump and jump ~= "" then self:devJump(jump) end
+
   DayNight.set("day", 0)
   Music.setState("day")
   if Story.begin then Story.begin(self.world, "prologue") end
 
   self:bindSignals()
+end
+
+--- Populate the world as if a run had already been played.
+function Game:devJump(what)
+  local w = self.world
+  local rng = w.rng
+  local trees = tonumber(os.getenv("BOTS_JUMP_TREES") or "") or 260
+  local bots = tonumber(os.getenv("BOTS_JUMP_BOTS") or "") or 34
+  for _ = 1, trees * 6 do
+    if w.treeCount >= trees then break end
+    if w.terrain then
+      local x, y = w.terrain:randomLandPoint(rng, {})
+      if x then w:plantTree(x, y, "dev") end
+    end
+  end
+  for i = 1, #w.trees do
+    local t = w.trees[i]
+    t.growth = 1
+    if t.refreshMesh then t:refreshMesh() end
+    if t.refreshStage then t:refreshStage(true) end
+  end
+  for i = 1, bots do
+    local x, y = w.homeX + rng:range(-320, 320), w.homeY + rng:range(-320, 320)
+    w:spawnBot(x, y, TU.bots.order[(i % #TU.bots.order) + 1], true)
+  end
+  w.cobalt = 120
+  if what == "extraction" then
+    w.cycle = 5
+    w:beginExtraction()
+  elseif what == "night" then
+    w:setPhase("night")
+  end
 end
 
 function Game:bindSignals()
@@ -124,7 +162,12 @@ function Game:update(dt, realDt)
   self.camera:follow(p.x, p.y, p.vx, p.vy, realDt)
   self.camera.zoomTarget = TU.camera.zoom * (world.phase == "extraction" and 0.94 or 1)
 
-  if self.world.player.agent then self:telemetry(dt) end
+  if self.world.player.agent then
+    -- headless autoplay has nobody to press a key, so cutscenes are skipped
+    if Dialogue.isActive and Dialogue.isActive() then Dialogue.abort() end
+    self.world.cutscene = false
+    self:telemetry(dt)
+  end
 
   DayNight.update(realDt)
   self:syncDayNight()
@@ -144,12 +187,14 @@ function Game:telemetry(dt)
   local w = self.world
   if not self.telemetryHeader then
     self.telemetryHeader = true
-    print("TRACE,t,cycle,phase,trees,mature,elders,bots,blight,o2,cobalt,planted,lost,botsLost,fps")
+    print("TRACE,t,cycle,phase,pt,pd,trees,mature,elders,bots,blight,o2,cobalt,nodes,cut,planted,lost,botsLost")
   end
-  print(string.format("TRACE,%.0f,%d,%s,%d,%d,%d,%d,%d,%.2f,%d,%d,%d,%d,%d",
-    w.time, w.cycle, w.phase, w.treeCount, w.matureTrees or 0, w.elderTrees or 0,
-    w:botCount(), #w.enemies, w.o2, w.cobalt,
-    w.stats.planted, w.stats.lost, w.stats.botsLost, love.timer.getFPS()))
+  local nodes = 0
+  for i = 1, #w.cobalts do if w.cobalts[i].node then nodes = nodes + 1 end end
+  print(string.format("TRACE,%.0f,%d,%s,%.0f,%.0f,%d,%d,%d,%d,%d,%.2f,%d,%d,%s,%d,%d,%d",
+    w.time, w.cycle, w.phase, w.phaseT, w.phaseDur, w.treeCount, w.matureTrees or 0,
+    w.elderTrees or 0, w:botCount(), #w.enemies, w.o2, w.cobalt, nodes,
+    tostring(w.cutscene), w.stats.planted, w.stats.lost, w.stats.botsLost))
 end
 
 --- Map the world's phase clock onto the visual day/night cycle.

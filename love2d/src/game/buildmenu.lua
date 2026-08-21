@@ -282,9 +282,10 @@ function BuildMenu.drawBar(a)
   for i = 1, N do
     drawSlot(i, BAR.x + (i - 1) * (BAR.slotW + BAR.gap), BAR.y, BAR.slotW, BAR.h, world, a)
   end
-  -- the affordance for the wheel, tucked under the bar
-  UI.prompt(BAR.x + BAR.w * 0.5, BAR.y + BAR.h + 12, "radial", "BUILD WHEEL",
-            UI.ts.micro, P.inkFaint, 0.65 * a, "center")
+  -- The affordance for the wheel sits beside the bar, not under it: the bar
+  -- already ends one safe inset from the bottom of the screen.
+  UI.prompt(BAR.x - 16, BAR.y + BAR.h * 0.5 - 5, "radial", "WHEEL",
+            UI.ts.micro, P.inkFaint, 0.7 * a, "right")
 end
 
 --------------------------------------------------------------------- ghost

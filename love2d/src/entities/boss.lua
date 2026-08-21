@@ -20,7 +20,7 @@ function Boss:init(x, y, world, botCount)
   self.kind   = "boss"
   self.world  = world
   self.radius = 62
-  self.maxHp  = math.max(T.hpFloor, botCount * T.hpPerBot)
+  self.maxHp  = math.floor(U.clamp(botCount * T.hpPerBot, T.hpFloor, T.hpCap))
   self.hp     = self.maxHp
   self.phase  = 1
   self.state  = "arrive"
@@ -86,7 +86,7 @@ function Boss:update(dt)
     self.state, self.stateT = "slam", 0
   end
 
-  if self.phase >= 1 and self.droneT <= 0 then
+  if self.phase >= 1 and self.droneT <= 0 and w and w:enemyCount() < 34 then
     self.droneT = T.droneEvery * (self.phase >= 2 and 0.7 or 1)
     if w then
       for i = 1, 1 + self.phase do
@@ -166,6 +166,24 @@ function Boss:updateSlam(dt)
     self.slammed = false
     self.slamT = T.slamEvery
   end
+end
+
+--- The player's shove and a sentry dart both route through here. Armour plates
+--- soak most of it early; once the core is exposed you can really hurt it.
+function Boss:shove(dx, dy, force, damage, stun)
+  local dmg = damage or 0
+  if self.plates > 0 then
+    dmg = dmg * 0.5
+    VFX.emit("hit_spark", self.x + dx * 0.4, self.y + dy * 0.4, { color = P.warn })
+    if dmg < 1 then
+      self.flash = 0.1
+      Audio.play("shove_hit", { pitch = 0.6, x = self.x, y = self.y })
+      return true
+    end
+  end
+  self.stagger = math.min(1, (self.stagger or 0) + 0.25)
+  self:damage(math.max(1, math.floor(dmg)), self.x - dx, self.y - dy)
+  return true
 end
 
 function Boss:onDamage(n, sx, sy)

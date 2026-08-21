@@ -43,8 +43,9 @@ T.player = {
 T.cobalt = {
   nodeYield      = 4,          -- chunks per deposit
   nodeRespawn    = 26,         -- seconds
-  nodesAtStart   = 22,
-  nodeMax        = 30,
+  nodesAtStart   = 26,
+  nodeMax        = 34,
+  nodeFloor      = 14,          -- the island always has this many out there
   driftSpeed     = 460,        -- fly-to-player speed
   magnetRange    = 90,
   startingCobalt = 30,
@@ -57,7 +58,7 @@ T.bots = {
 
   planter = {
     label = "PLANTER", prefix = "SEED", cost = 10, hp = 3, radius = 12, speed = 78,
-    plantEvery = 12.0, minTreeGap = 46, wanderRetarget = { 1.2, 3.4 },
+    plantEvery = 15.0, minTreeGap = 40, wanderRetarget = { 1.2, 3.4 },
     desc = "Wanders and plants saplings, forever.",
   },
   builder = {
@@ -86,6 +87,11 @@ T.bots = {
     desc = "Light, growth, and a place to revive the fallen.",
   },
 
+  -- Each bot of a type you already own makes the next one dearer. This is what
+  -- stops a runaway workforce, and it is why the cost-cutting chips matter.
+  costGrowth   = 0.2,
+  costGrowthMax = 6.0,         -- never more than 4x the base price
+
   downedTime   = 20,           -- seconds a bot survives at 0 hp before expiring
   bootTime     = 0.9,
   chatterEvery = { 9, 26 },
@@ -94,15 +100,15 @@ T.bots = {
 -------------------------------------------------------------------------- trees
 T.tree = {
   growTime      = 26,          -- sapling -> mature
-  elderTime     = 150,         -- mature -> elder (with the Old Growth chip)
+  elderTime     = 110,         -- mature -> elder (only with the Old Growth chip)
   spreadEvery   = { 88, 155 }, -- seconds between seedling attempts
   spreadRange   = { 70, 190 },
-  spreadReject  = 56,          -- min distance to another tree
+  spreadReject  = 46,          -- min distance to another tree
   chewTime      = 9.0,         -- seconds a chomper needs to fell a tree
   o2Sapling     = 0.35,
   o2Mature      = 1.0,
   o2Elder       = 2.0,
-  maxTrees      = 900,
+  maxTrees      = 1100,
   windSway      = 0.055,
 }
 
@@ -112,7 +118,7 @@ T.tree = {
 -- falls. That is what makes defending trees legible.
 T.o2 = {
   target      = 100,            -- percent
-  fullForest  = 380,            -- tree-points that read as a fully restored sky
+  fullForest  = 980,            -- tree-points that read as a fully restored sky
   rise        = 0.42,           -- how fast the reading climbs toward the forest
   fall        = 0.95,           -- ...and how fast it drops. Loss is felt sooner.
   weight      = { sapling = 0.35, young = 0.6, mature = 1.0, elder = 2.0 },
@@ -147,8 +153,12 @@ T.enemy = {
 
 -------------------------------------------------------------------------- boss
 T.boss = {
-  hpPerBot     = 1,
-  hpFloor      = 12,
+  -- The size of your workforce is the difficulty of the fight, exactly as in the
+  -- 2019 original - but the bots only carry about three quarters of it, so the
+  -- last stretch is always yours.
+  hpPerBot     = 1.35,
+  hpFloor      = 30,
+  hpCap        = 150,
   speed        = 108,
   contactDmg   = 1,
   phase2At     = 0.66,

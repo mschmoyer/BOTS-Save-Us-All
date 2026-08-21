@@ -48,14 +48,14 @@ local T = {
   quiet     = 3.2,
   gatherMax = 7.0,
   settle    = 2.0,
-  after     = 4.2,       -- silence after the last word. This is the whole point.
-  ringGap   = 34,        -- arc length each bot wants on the circle
-  ringMin   = 92,
+  after     = 2.6,       -- silence after the last word. This is the whole point.
+  ringGap   = 40,        -- arc length each bot wants on the circle
+  ringMin   = 132,
   ringMax   = 250,
   walk      = 96,
-  zoomIn    = 1.24,
+  zoomIn    = 1.72,
   zoomOut   = 0.70,
-  scroll    = 30,        -- credits, pixels per second
+  scroll    = 46,        -- credits, pixels per second
   barFrac   = 0.105,
 }
 
@@ -155,7 +155,9 @@ function S:enter(world)
 
   if Music.setState then Music.setState("ending") end
   if Music.setIntensity then Music.setIntensity(0) end
-  if DayNight.set then DayNight.set("dawn", 0.15) end
+  -- the sun comes up across the whole ending, and is fully up by the credits
+  self.dawnT = 0
+  if DayNight.set then DayNight.set("dawn", 0) end
 
   self:layoutCredits()
 end
@@ -270,8 +272,9 @@ function S:update(dt, realDt)
   local world = self.world
   if Wind.update then Wind.update(realDt) end
   if VFX.update then VFX.update(realDt) end
-  if DayNight.update then DayNight.update(realDt) end
   if Music.update then Music.update(realDt) end
+  self.dawnT = min(1, (self.dawnT or 0) + realDt / 64)
+  if DayNight.set then DayNight.set("dawn", self.dawnT) end
   if Audio.update and world and world.player then
     Audio.update(realDt, world.player.x, world.player.y)
   end
@@ -303,6 +306,7 @@ function S:update(dt, realDt)
   self.bar = U.approach(self.bar, barWant, realDt * (barWant > 0 and 1.5 or 0.9))
 
   if stage ~= "credits" then self:stepBots(realDt) end
+  Story.refresh(world)      -- the helmet comes off mid-scene; the portrait knows
 
   -- camera: in on the circle, then slowly out over the forest
   local cam = self.camera
@@ -335,6 +339,7 @@ function S:update(dt, realDt)
     if self.stageT > T.after then self:advance("credits") end
   elseif stage == "credits" then
     local fast = Input.down("confirm") and 4 or 1
+    self.dawnT = min(1, self.dawnT + realDt * (fast - 1) / 64)
     self.creditsT = self.creditsT + realDt * fast
     self.scrollY = self.scrollY + T.scroll * realDt * fast
     if self.scrollY > self.creditsH + lg.getHeight() * 0.25 then self:toTitle() end
@@ -356,7 +361,14 @@ end
 
 --------------------------------------------------------------------- credits
 -- Laid out once into a flat list of rows so the scroll is a single offset.
-local ROW = { gap = 34, head = 54, line = 30, big = 86 }
+local ROW = { gap = 34, head = 56, line = 30, big = 92 }
+local SHADOW = { dx = 0, dy = 2, alpha = 0.65 }
+local CRED = {}
+local function credOpts()
+  for k in pairs(CRED) do CRED[k] = nil end
+  CRED.shadow = SHADOW
+  return CRED
+end
 
 function S:layoutCredits()
   local rows = {}
@@ -368,7 +380,9 @@ function S:layoutCredits()
 
   push("space", nil, nil, ROW.big)
   push("title", C.title, nil, 46)
+  rows[#rows].h = 68
   push("sub", C.sub, nil, 20)
+  rows[#rows].h = ROW.head
   push("space", nil, nil, ROW.head)
 
   push("head", C.tally, nil, ROW.head)
@@ -407,14 +421,14 @@ end
 --- A sapling, drawn beside a name. It grows as the line comes up the screen.
 local function sapling(x, y, k, alpha)
   if k <= 0.02 then return end
-  local hgt = 15 * k
-  Draw.setColor(P.shade(P.ramp.bark, 2.4), alpha)
-  lg.setLineWidth(1.6)
+  local hgt = 22 * k
+  Draw.setColor(P.shade(P.ramp.bark, 2.6), alpha)
+  lg.setLineWidth(1.8)
   lg.line(x, y, x, y - hgt)
-  local leaf = min(1, k * 1.5) * 4.6
+  local leaf = min(1, k * 1.4) * 5.4
   Draw.setColor(P.shade(P.ramp.leafHi, 3), alpha * 0.95)
-  lg.circle("fill", x - leaf * 0.62, y - hgt + 1, leaf)
-  lg.circle("fill", x + leaf * 0.66, y - hgt - 2.4, leaf * 0.86)
+  lg.circle("fill", x - leaf * 0.66, y - hgt + 1.5, leaf)
+  lg.circle("fill", x + leaf * 0.70, y - hgt - 3.0, leaf * 0.86)
 end
 
 function S:drawCredits()
@@ -427,6 +441,13 @@ function S:drawCredits()
   local rx = cx + colW * 0.5
   local top = h - self.scrollY
 
+  -- a scrim, not a curtain: the forest stays visible behind every word
+  local k = U.saturate(self.creditsT / 5)
+  Draw.setColor(P.black, 0.30 * k)
+  lg.rectangle("fill", 0, 0, w, h)
+  Draw.radialGradient(cx, h * 0.5, colW * 1.35,
+                      P.alpha(P.black, 0.34 * k), P.alpha(P.black, 0), h * 0.72)
+
   for i = 1, #rows do
     local r = rows[i]
     local y = top + r.y
@@ -434,25 +455,25 @@ function S:drawCredits()
       -- fade in from the bottom edge, out at the top: the words grow and go
       local a = U.saturate((h - y) / 140) * U.saturate((y - 4) / 120)
       if a > 0.004 then
-        local k = r.kind
-        if k == "title" then
-          UI.text(r.text, cx, y, 46, P.ink, "center", a, 0.16)
-        elseif k == "sub" then
-          UI.text(r.text, cx, y, 20, P.accent, "center", a * 0.9, 0.42)
-        elseif k == "head" then
-          UI.rule(lx, y + 22, colW, P.ink, 0.14 * a, nil)
-          UI.caption(r.text, cx, y, 12, P.inkDim, "center", a * 0.9)
-        elseif k == "stat" then
-          UI.caption(r.text, lx, y, 12, P.inkFaint, "left", a * 0.95)
-          UI.text(r.value, rx, y - 3, 19, P.ink, "right", a, 0.04)
-        elseif k == "name" then
-          local grow = U.saturate((h * 0.78 - y) / 200)
-          sapling(lx + 8, y + 17, grow, a)
-          UI.text(r.text, lx + 30, y, 19, P.ink, "left", a * 0.95, 0.1)
-        elseif k == "none" then
-          UI.caption(r.text, cx, y, 12, P.accent, "center", a)
-        elseif k == "close" then
-          UI.text(r.text, cx, y, 26, P.accent, "center", a, 0.3)
+        local kind = r.kind
+        if kind == "title" then
+          UI.text(r.text, cx, y, 46, P.ink, "center", a, 0.16, credOpts())
+        elseif kind == "sub" then
+          UI.text(r.text, cx, y, 20, P.accent, "center", a * 0.9, 0.42, credOpts())
+        elseif kind == "head" then
+          UI.rule(lx, y + 24, colW, P.ink, 0.18 * a, nil)
+          UI.text(r.text, cx, y, 13, P.inkDim, "center", a * 0.95, 0.26, credOpts())
+        elseif kind == "stat" then
+          UI.text(r.text, lx, y + 3, 13, P.inkDim, "left", a * 0.95, 0.2, credOpts())
+          UI.text(r.value, rx, y - 2, 20, P.ink, "right", a, 0.04, credOpts())
+        elseif kind == "name" then
+          local grow = U.saturate((h * 0.80 - y) / 220)
+          sapling(lx + 12, y + 20, grow, a)
+          UI.text(r.text, lx + 42, y, 19, P.ink, "left", a * 0.95, 0.1, credOpts())
+        elseif kind == "none" then
+          UI.text(r.text, cx, y, 13, P.accent, "center", a, 0.26, credOpts())
+        elseif kind == "close" then
+          UI.text(r.text, cx, y, 26, P.accent, "center", a, 0.3, credOpts())
         end
       end
     end

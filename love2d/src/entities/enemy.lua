@@ -96,7 +96,10 @@ function Enemy:update_chomper(dt)
   local w = self.world
   if not self.target or not self.target.alive then
     self.target = w and w:nearestTree(self.x, self.y, 2200, true)
-    if self.target then self.target.markedBy = self end
+    if self.target then
+      self.target.markedBy = self
+      Signal.emit("enemy:targeted", self, self.target)
+    end
     self.chewT = 0
   end
   local t = self.target

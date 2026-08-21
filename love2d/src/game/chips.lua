@@ -69,7 +69,8 @@ local byId = {}
 for _, c in ipairs(C) do byId[c.id] = c end
 Chips.byId = byId
 
-function Chips:init()
+function Chips:init(world)
+  self.world = world
   self.owned = {}
   self.mods = {}
   self.list = {}
@@ -78,6 +79,7 @@ end
 function Chips:add(chip)
   if type(chip) == "string" then chip = byId[chip] end
   if not chip then return end
+  if chip.onAdd then chip.onAdd(self) end
   self.owned[chip.id] = (self.owned[chip.id] or 0) + 1
   self.list[#self.list + 1] = chip
   if chip.mod then
@@ -92,6 +94,7 @@ function Chips:add(chip)
       end
     end
   end
+  chip._world = self.world
   Signal.emit("chip:added", chip)
 end
 

@@ -63,6 +63,7 @@ Dialogue.tuning = T
 
 ----------------------------------------------------------------------- state
 local A = nil            -- the active handle, or nil
+local LAST = nil         -- the finished handle, held while the bars retract
 
 Dialogue.bar = 0         -- current letterbox amount, 0..1
 local barTarget = 0
@@ -314,26 +315,28 @@ local function drawHumanPortrait(spec, tt, tone, speak, blink)
     end
   else
     -- no helmet. hair, brows, eyes, and a mouth that finally shows.
+    -- the hairline sits clear above the brow: any lower and the shadow reads
+    -- as a mask across his eyes, which is the opposite of the point.
     Draw.setColor(P.shade(P.ramp.bark, 2.0))
-    Draw.blob(0, -5.7 * u, 2.7 * u, 18, 21, 0.10, 0.62)
+    Draw.blob(0, -6.62 * u, 2.78 * u, 18, 21, 0.10, 0.44)
     Draw.setColor(P.shade(P.ramp.bark, 1.6))
-    Draw.roundRect("fill", -2.6 * u, -6.3 * u, 5.2 * u, 1.3 * u, 0.6 * u)
+    Draw.roundRect("fill", -2.55 * u, -6.75 * u, 5.1 * u, 1.15 * u, 0.55 * u)
 
     local open = U.saturate(tone.eye * (1 - blink))
     for s = -1, 1, 2 do
       local ex = s * 0.95 * u + look * 0.28 * u
-      Draw.setColor(P.white, 0.82)
-      Draw.roundRect("fill", ex - 0.52 * u, -4.9 * u - 0.30 * u * open,
-                     1.04 * u, 0.60 * u * open, 0.28 * u)
+      Draw.setColor(P.white, 0.78)
+      Draw.roundRect("fill", ex - 0.45 * u, -4.86 * u - 0.26 * u * open,
+                     0.90 * u, 0.52 * u * open, 0.25 * u)
       if open > 0.2 then
         Draw.setColor(P.shade(P.ramp.bark, 1.2))
-        lg.circle("fill", ex + look * 0.14 * u, -4.9 * u, 0.26 * u * open)
+        lg.circle("fill", ex + look * 0.14 * u, -4.86 * u, 0.235 * u * open)
       end
       -- brow
       Draw.setColor(P.shade(P.ramp.bark, 1.7))
       local inner, outer = -tone.brow * 0.55 * u, tone.brow * 0.28 * u
-      Draw.capsule("fill", ex - s * 0.66 * u, -5.75 * u + outer,
-                   ex + s * 0.60 * u, -5.75 * u + inner, 0.16 * u)
+      Draw.capsule("fill", ex - s * 0.66 * u, -5.42 * u + outer,
+                   ex + s * 0.60 * u, -5.42 * u + inner, 0.15 * u)
     end
 
     Draw.setColor(P.darken(skin, 0.16))
@@ -527,6 +530,8 @@ function Handle:finish(skipped)
   self.cam = nil
   if self.world then self.world.cutscene = false end
   if A == self then A = nil end
+  -- the panel does not snap out: it fades with the letterbox
+  LAST = self
   barTarget = 0
   barRate = 1 / T.barOut
   Signal.emit("dialogue:done", self.id, skipped == true)
@@ -606,6 +611,7 @@ function Dialogue.play(sequence, opts)
     done   = false,
   }, Handle)
   A = h
+  LAST = nil
   if h.world then
     h.world.cutscene = true
     h.world.flags = h.world.flags or {}
@@ -632,7 +638,9 @@ end
 --- Force-close without running anything else. Only for scene teardown.
 function Dialogue.abort()
   if A and not A.done then A:finish(true) end
+  A, LAST = nil, nil
   barTarget = 0
+  Dialogue.bar = 0
 end
 
 function Dialogue.update(dt, realDt)
@@ -641,7 +649,13 @@ function Dialogue.update(dt, realDt)
   Dialogue.bar = U.approach(Dialogue.bar, barTarget, barRate * realDt)
 
   local h = A
-  if not h or h.done then return end
+  if not h or h.done then
+    if LAST then
+      LAST.tt = LAST.tt + realDt
+      if Dialogue.bar <= 0.002 then LAST = nil end
+    end
+    return
+  end
   h.tt = h.tt + realDt
 
   -- blink: a quick close every few seconds, offset per speaker
@@ -688,18 +702,24 @@ function Dialogue.releaseCamera(camera, dt)
 end
 
 --------------------------------------------------------------------- layout
+--- The panel is sized by its contents, not by the screen: portrait, gutter,
+--- one measured column of body copy, and a tail wide enough for the chevron.
+--- A box with 300px of empty air on the right reads as a bug, not as a frame.
 function Dialogue.layout()
   local w, h = lg.getDimensions()
   local k = U.clamp(h / 900, 0.72, 1.5)
   local bar = floor(h * T.barFrac)
-  local panelW = min(w - 96 * k, T.panelMaxW * k)
   local panelH = U.clamp(h * 0.235, 150 * k, 236 * k)
-  local px = floor((w - panelW) * 0.5)
-  local py = floor(h - bar - panelH - 20 * k)
   local pad = 18 * k
   local plate = panelH - pad * 2
-  local textX = px + pad + plate + 30 * k
-  local colW = min(px + panelW - pad - textX, T.colMaxW * k)
+  local gutter = 30 * k
+  local tail = 26 * k
+  local avail = (w - 96 * k) - (pad * 2 + plate + gutter + tail)
+  local colW = max(180 * k, min(T.colMaxW * k, avail))
+  local panelW = min(w - 96 * k, min(T.panelMaxW * k, pad * 2 + plate + gutter + colW + tail))
+  local px = floor((w - panelW) * 0.5)
+  local py = floor(h - bar - panelH - 20 * k)
+  local textX = px + pad + plate + gutter
   return {
     w = w, h = h, k = k, bar = bar,
     px = px, py = py, pw = panelW, ph = panelH, pad = pad,
@@ -742,14 +762,19 @@ local function drawPanel(L, h, alpha)
   return accent
 end
 
+--- The panel belongs to the last thing that was SAID, not to the current step.
+--- A `wait` between two lines is silence, not a blank screen, so the words stay
+--- up while the beat lands -- and they fade out with the bars at the end.
 function Dialogue.draw()
   local L = Dialogue.layout()
   drawBars(L, Dialogue.bar)
 
-  local h = A
-  if not h or h.done or not h.step then return end
-  local s = h.step
-  if s.kind ~= "line" then return end
+  local h = A or LAST
+  if not h then return end
+  if not h.speaker or not h._lay then return end
+
+  local live = (h == A) and not h.done and h.step ~= nil
+  local onLine = live and h.step.kind == "line"
 
   local alpha = U.saturate(Dialogue.bar * 1.4)
   if alpha <= 0.01 then return end
@@ -759,10 +784,10 @@ function Dialogue.draw()
   local sp = h.speaker or {}
   local spec = sp.portrait or { kind = "bot", botType = "planter" }
   local speak = 0
-  if not h.complete then
+  if onLine and not h.complete then
     speak = 0.55 + 0.45 * math.sin(h.tt * 21)
   else
-    speak = max(0, 0.34 - h.holdT * 1.4)
+    speak = max(0, 0.34 - (h.holdT or 0) * 1.4)
   end
   drawPlate(spec, L.px + L.pad, L.py + L.pad, L.plate, h.tt, h.tone or TONE.flat,
             speak, h.blink > 0 and 1 or 0, alpha)
@@ -781,8 +806,12 @@ function Dialogue.draw()
   -- the words
   local lay = h._lay
   if lay then
+    -- optically centre the block in the room left under the rule, so a single
+    -- short line does not hang off the top of an otherwise empty panel
     local lineH = L.body * 1.52
-    local ty = ruleY + 14 * L.k
+    local top = ruleY + 14 * L.k
+    local bottom = L.py + L.ph - L.pad
+    local ty = top + max(0, (bottom - top - #lay.lines * lineH) * 0.40)
     for i = 1, #lay.lines do
       local text = lay.lines[i]
       local start = lay.starts[i]
@@ -804,7 +833,7 @@ function Dialogue.draw()
     end
 
     -- continue chevron
-    if h.complete then
+    if onLine and h.complete and not h.step.auto then
       local pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(h.tt * 3.4))
       local cx = L.px + L.pw - L.pad - 12 * L.k
       local cy = L.py + L.ph - L.pad - 6 * L.k + math.sin(h.tt * 3.4) * 2 * L.k

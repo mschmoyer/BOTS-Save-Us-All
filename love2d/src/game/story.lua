@@ -96,6 +96,10 @@ local function refreshCast(world)
   if p ~= nil and p.suit ~= nil then Story.cast.human.portrait.suit = p.suit end
 end
 
+--- Public: the ending scene stages its own sequence and still needs the
+--- portraits to track the world (the helmet comes off mid-line).
+function Story.refresh(world) refreshCast(world or Story.world) end
+
 ---------------------------------------------------------------------- helpers
 local function livingBots(world)
   return world and world.bots or nil
@@ -252,8 +256,11 @@ local function playerOf(w) return w and w.player end
 
 local TUT = {
   {
+    -- not gated on the prologue flag: the prologue can be skipped, and a
+    -- skipped prologue must not cost the player the only hint that teaches
+    -- them the game has started
     id = "move",
-    arm  = function(w) return w.flags.prologueDone == true end,
+    arm  = function(w) return (Story.time or 0) > 1.4 end,
     done = function(w) return (Story.moved or 0) > 260 end,
     anchor = playerOf,
     color = P.accent,
@@ -350,6 +357,7 @@ local function resetState()
   Story.armed    = {}
   Story.cooldown = 0
   Story.reactT   = 0
+  Story.time     = 0
   Story.moved    = 0
   Story.lastX, Story.lastY = nil, nil
   Story.did      = {}
@@ -603,6 +611,7 @@ function Story.update(dt)
   local world = Story.world
   if not world then return end
 
+  Story.time = (Story.time or 0) + dt
   if Story.reactT > 0 then Story.reactT = Story.reactT - dt end
 
   local p = world.player
@@ -635,6 +644,8 @@ local function hintFor(step)
   return nil, c.hint
 end
 
+local HINT_TEXT = { tracking = 0.08, snap = true }
+
 --- One hint, anchored to the thing it is about. A stem, a word, a key.
 local function drawHint(step, alpha, world)
   local cam = world.camera
@@ -656,9 +667,13 @@ local function drawHint(step, alpha, world)
   local action, words = hintFor(step)
 
   local size = 17
-  local lw = Text.measure(label, size, nil) or 0
+  local lw = Text.measure(label, size, HINT_TEXT) or 0
+  if lw > 300 then
+    size = size * 300 / lw
+    lw = 300
+  end
   local subH = 20
-  local boxW = max(lw, 96) + 34
+  local boxW = max(lw, 92) + 40
   local boxH = size + subH + 26
   local bx = floor(sx - boxW * 0.5)
   local by = floor(sy - boxH - 16 + rise)
@@ -670,7 +685,7 @@ local function drawHint(step, alpha, world)
   Draw.setColor(col, 0.65 * e)
   lg.circle("fill", sx, sy - 3 + rise, 2.1)
 
-  UI.panel(bx, by, boxW, boxH, 0.50 * e, 6, col, 0.20 * e)
+  UI.panel(bx, by, boxW, boxH, 0.72 * e, 6, col, 0.26 * e)
   Draw.setColor(col, 0.9 * e)
   lg.setLineWidth(2)
   lg.line(bx + 12, by + 0.5, bx + 12 + min(26, boxW * 0.34), by + 0.5)

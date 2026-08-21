@@ -31,6 +31,14 @@ do
   local s = os.getenv("BOTS_SHOTS")
   if s then for n in s:gmatch("%d+") do H.shots[tonumber(n)] = true end end
   if not next(H.shots) then H.shots[H.frames] = true end
+  -- Software rendering costs over a second a frame, so a long capture only draws
+  -- the frames it is about to photograph, plus a short run-up so anything that
+  -- animates inside draw has settled.
+  H.drawOn = {}
+  for f in pairs(H.shots) do
+    for k = math.max(1, f - 4), f do H.drawOn[k] = true end
+  end
+  H.drawAll = (os.getenv("BOTS_DRAW_ALL") or "") ~= ""
 end
 Boot.headless = H
 
@@ -202,7 +210,8 @@ function love.run()
 
     love.update(dt)
 
-    if love.graphics and love.graphics.isActive() then
+    local wantDraw = (not H.on) or H.drawAll or H.drawOn[H.frame]
+    if wantDraw and love.graphics and love.graphics.isActive() then
       love.graphics.origin()
       love.graphics.clear(love.graphics.getBackgroundColor())
       love.draw()

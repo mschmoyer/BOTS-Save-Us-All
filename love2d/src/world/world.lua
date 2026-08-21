@@ -62,7 +62,7 @@ function World:init(seed, opts)
   self.treeCount   = 0
   self.o2          = 0
   self.o2Debt      = 0
-  self.chips       = Chips.new()
+  self.chips       = Chips.new(self)
   self.director    = Director.new(self)
 
   self.cycle       = 1
@@ -72,6 +72,7 @@ function World:init(seed, opts)
   self.cutscene    = false
   self.stats       = { planted = 0, lost = 0, botsLost = 0, botsBuilt = 0, killed = 0,
                        cobaltMined = 0, rescued = 0 }
+  self.allLostNames = {}       -- never cleared: the ending reads the whole run
   self.dawnReport  = nil
 
   if Tree.prewarm then pcall(Tree.prewarm) end
@@ -237,11 +238,18 @@ function World:loseCobaltFraction(f)
   Signal.emit("cobalt:lost", lost)
 end
 
---- Take one chunk from a deposit near a point. Used by builders and harvesters.
-function World:consumeCobaltNear(x, y, r)
+--- Take one chunk from a deposit near a point. Used by builders and harvesters
+--- (which keep the chunk themselves) and by the player, who gets a loose chunk
+--- that flies back to them.
+function World:consumeCobaltNear(x, y, r, dropLoose)
   local c = self.hCobalt:nearest(x, y, r, function(cc) return cc.alive and cc.node end)
-  if c then return c:mine() end
-  return false
+  if not c or not c:mine() then return false end
+  if dropLoose then
+    local loose = CobaltE.new(c.x, c.y, self, self.rng, false)
+    loose:push(c.x - x, c.y - y, 140)
+    self:addEntity(self.cobalts, self.hCobalt, loose)
+  end
+  return true
 end
 
 ----------------------------------------------------------------------- actions
@@ -254,11 +262,13 @@ function World:plantTree(x, y, by)
   local gap = TU.tree.spreadReject * 0.74
   if self.hTree:nearest(x, y, gap, function(t) return t.alive end) then return false end
 
+  local oldGrowth = self.chips:has("oldGrowth")
   local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000), {
     startGrown = (by == "player" and self.chips:has("greenThumb")) and 0.5 or nil,
   }) or nil
   if not t then return false end
   t.world = self
+  t.canElder = oldGrowth
   self:addEntity(self.trees, self.hTree, t)
   self.treeCount = self.treeCount + 1
   self.stats.planted = self.stats.planted + 1
@@ -282,6 +292,25 @@ function World:fellTree(t, by)
   Signal.emit("tree:lost", t, by)
 end
 
+--- How many of a type are standing right now.
+function World:countBots(botType)
+  local n = 0
+  for i = 1, #self.bots do
+    local b = self.bots[i]
+    if b.alive and b.state ~= "dead" and b.type == botType then n = n + 1 end
+  end
+  return n
+end
+
+--- The price of the next bot of this type, with escalation and chips applied.
+function World:botCost(botType)
+  local def = TU.bots[botType]
+  if not def then return 0 end
+  local owned = self:countBots(botType)
+  local mul = math.min(1 + owned * TU.bots.costGrowth, TU.bots.costGrowthMax)
+  return math.ceil(def.cost * mul * self.chips:get("botCost", 1))
+end
+
 function World:spawnBot(x, y, botType, free)
   local def = TU.bots[botType]
   if not def then return false end
@@ -292,7 +321,7 @@ function World:spawnBot(x, y, botType, free)
     else return false end
   end
   if not free then
-    local cost = math.ceil(def.cost * self.chips:get("botCost", 1))
+    local cost = self:botCost(botType)
     if not self:spendCobalt(cost) then
       Audio.play("ui_back")
       Signal.emit("ui:denied", "cobalt")
@@ -304,6 +333,9 @@ function World:spawnBot(x, y, botType, free)
   b.hp = b.maxHp
   self:addEntity(self.bots, self.hBot, b)
   self.stats.botsBuilt = self.stats.botsBuilt + 1
+  if self.phase == "extraction" and self.boss and self.boss.alive and self.botsRebelled then
+    b:rebel(self.boss)
+  end
   Signal.emit("bot:built", b)
   return b
 end
@@ -418,12 +450,17 @@ end
 function World:beamSweep(x, y, angle, len, dt)
   local ex, ey = x + math.cos(angle) * len, y + math.sin(angle) * len
   local step = 90
+  self.beamFrame = (self.beamFrame or 0) + 1
+  local frame = self.beamFrame
   for d = 60, len, step do
     local px, py = x + math.cos(angle) * d, y + math.sin(angle) * d
     self.hTree:each(px, py, 46, function(t)
-      if t.alive and U.pointSegDist2(t.x, t.y, x, y, ex, ey) < 46 * 46 then
+      -- overlapping samples must not burn the same tree several times a frame
+      if t.alive and t.burnFrame ~= frame
+         and U.pointSegDist2(t.x, t.y, x, y, ex, ey) < 34 * 34 then
+        t.burnFrame = frame
         t.burn = (t.burn or 0) + dt
-        if t.burn > 0.45 then self:fellTree(t, "beam") end
+        if t.burn > 1.8 then self:fellTree(t, "beam") end
       end
     end)
     self.hBot:each(px, py, 40, function(b)
@@ -457,7 +494,25 @@ function World:drainO2(rate, dt)
   self.o2Debt = math.min(TU.o2.debtCap, (self.o2Debt or 0) + rate * dt)
 end
 
+local SPEECH_MAX = 3
 function World:speak(who, line)
+  -- A forest of forty bots all talking is noise. Keep a few, prefer the ones
+  -- nearest the player, and never let the same bot double up.
+  for i = #self.speeches, 1, -1 do
+    if self.speeches[i].who == who then table.remove(self.speeches, i) end
+  end
+  if #self.speeches >= SPEECH_MAX then
+    local p = self.player
+    local worst, worstD = nil, -1
+    for i = 1, #self.speeches do
+      local s = self.speeches[i]
+      local d = p and U.dist2(s.who.x, s.who.y, p.x, p.y) or 0
+      if d > worstD then worst, worstD = i, d end
+    end
+    local mine = p and U.dist2(who.x, who.y, p.x, p.y) or 0
+    if worstD <= mine then return end
+    table.remove(self.speeches, worst)
+  end
   self.speeches[#self.speeches + 1] = { who = who, line = line, t = 0, dur = 3.2 }
   Audio.play("bot_chatter", { volume = 0.35, pitch = 0.9 + (who.serial % 7) * 0.04,
                               x = who.x, y = who.y })
@@ -545,6 +600,8 @@ function World:beginExtraction()
     if lx then x, y = lx, ly end
   end
   self.boss = Boss.new(x, y, self, self:botCount())
+  -- the boss lives in the enemy hash so shoves, pulses and sentry darts find it
+  self.hEnemy:insert(self.boss)
   for i = 1, #self.bots do
     local b = self.bots[i]
     if b.state == "work" then b.mood = "confused" end
@@ -555,6 +612,7 @@ function World:beginExtraction()
 
   Timer.global:after(TU.boss.rebelDelay, function()
     if not self.boss or not self.boss.alive then return end
+    self.botsRebelled = true
     for i = 1, #self.bots do
       local b = self.bots[i]
       if b.state == "work" or b.mood == "confused" then b:rebel(self.boss) end
@@ -587,7 +645,15 @@ function World:update(dt)
   sweep(self.enemies, self.hEnemy, dt)
   sweep(self.cobalts, self.hCobalt, dt)
   sweep(self.projectiles, nil, dt)
-  if self.boss and self.boss.alive then self.boss:update(dt) end
+  if self.boss then
+    if self.boss.alive then
+      self.boss:update(dt)
+      self.hEnemy:update(self.boss)
+    elseif self.boss._unhashed ~= true then
+      self.boss._unhashed = true
+      self.hEnemy:remove(self.boss)
+    end
+  end
 
   -- recount trees after the sweep so the HUD never lies
   local n = 0
@@ -616,6 +682,16 @@ function World:update(dt)
   if self.pickupStreakT then
     self.pickupStreakT = self.pickupStreakT - dt
     if self.pickupStreakT <= 0 then self.pickupStreak = 0 self.pickupStreakT = nil end
+  end
+
+  -- keep enough cobalt on the island that the economy is a route-planning
+  -- problem rather than a scarcity lottery
+  self.nodeTopUp = (self.nodeTopUp or 0) - dt
+  if self.nodeTopUp <= 0 then
+    self.nodeTopUp = 3
+    local nodes = 0
+    for i = 1, #self.cobalts do if self.cobalts[i].node then nodes = nodes + 1 end end
+    if nodes < TU.cobalt.nodeFloor then self:spawnCobaltNode() end
   end
 
   if Decals.update then Decals.update(dt) end
@@ -648,6 +724,20 @@ function World:updateOxygen(dt)
   local rate = ideal > self.o2 and TU.o2.rise or TU.o2.fall
   self.o2 = U.damp(self.o2, ideal, rate, dt)
   self.o2Ideal = ideal
+
+  local step = math.floor(self.o2 / 25)
+  if step > (self.o2Step or 0) and step > 0 then
+    self.o2Step = step
+    Audio.play("o2_milestone")
+    Signal.emit("o2:milestone", step * 25)
+  end
+
+  -- Filling the sky is the win condition, not surviving a fixed number of
+  -- nights: the moment the air is breathable, they come to take it.
+  if self.o2 >= TU.o2.target - 0.3 and self.phase ~= "extraction"
+     and self.phase ~= "ending" then
+    self:beginExtraction()
+  end
 end
 
 --- Forests compound: mature trees drop seedlings nearby. Amortised over frames
@@ -854,9 +944,21 @@ Signal.on("bot:lost", function(bot, peaceful)
   w.stats.botsLost = w.stats.botsLost + 1
   w.lostNames = w.lostNames or {}
   w.lostNames[#w.lostNames + 1] = bot.name
+  w.allLostNames = w.allLostNames or {}
+  w.allLostNames[#w.allLostNames + 1] = { name = bot.name, type = bot.type,
+                                          cycle = w.cycle, trait = bot.trait }
   if w.chips:has("salvage") then
     w:addCobalt(math.floor(bot.def.cost * 0.5), bot.x, bot.y)
   end
+end)
+
+-- Old Growth retro-fits the forest you already have; that is what makes it a
+-- late-draft prize rather than a slow burn.
+Signal.on("chip:added", function(chip)
+  if chip.id ~= "oldGrowth" then return end
+  local w = chip._world
+  if not w then return end
+  for i = 1, #w.trees do w.trees[i].canElder = true end
 end)
 
 Signal.on("enemy:killed", function(e)

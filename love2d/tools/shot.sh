@@ -12,6 +12,6 @@ rm -rf "$SAVE" "$OUT"; mkdir -p "$OUT"
 BOTS_IDENTITY="$ID" BOTS_HEADLESS=1 BOTS_FRAMES="$FRAMES" BOTS_SHOTS="$SHOTS" \
   BOTS_SCENE="${BOTS_SCENE:-}" SDL_AUDIODRIVER=dummy \
   xvfb-run -a -s "-screen 0 ${BOTS_W:-1600}x${BOTS_H:-900}x24" \
-  love . 2>&1 | grep -viE 'alsa|could not open device' | head -60
+  love . 2>&1 | grep -viE 'alsa|could not open device' 
 cp "$SAVE"/shot_*.png "$OUT"/ 2>/dev/null
 ls -1 "$OUT" 2>/dev/null

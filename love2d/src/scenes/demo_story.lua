@@ -293,19 +293,31 @@ function D:selfTest()
     if Dialogue.isActive() then fired = true break end
   end
   Dialogue.abort()
-  local queued = 0
+
   Signal.emit("bot:built", w.bots[1])
   Signal.emit("bot:lost", w.bots[1], false)
   Signal.emit("phase:day", 5)
-  for _ = 1, 60 do Story.update(1 / 60) end
-  queued = #Story.pending
+  for _ = 1, 30 do Story.update(1 / 60) end
+  local queued = #Story.pending
+
+  -- with every cutscene skipped, the tutorial should still find its first step
+  local hint = "none"
+  for _ = 1, 180 do
+    Dialogue.abort()
+    w.cutscene = false
+    Story.update(1 / 60)
+    if Story.tut.active then hint = Story.tut.active.id break end
+  end
+
   Dialogue.abort()
   Story.reset()
   for i = #w.speeches, 1, -1 do w.speeches[i] = nil end
+  w.allLostNames = { "SEED-04", "SEED-11", "FRAME-02", "PYLON-03", "LAMP-01" }
   w.flags = {}
   w.cutscene = false
-  self.testLine = string.format("director: prologue %s, queue %d, tutorial %d steps",
-                                fired and "fired" or "STALLED", queued, #Story.tutorialSteps)
+  self.testLine = string.format(
+    "director: prologue %s, queued %d, first hint '%s', %d tutorial steps",
+    fired and "fired" or "STALLED", queued, hint, #Story.tutorialSteps)
   print(self.testLine)
 end
 

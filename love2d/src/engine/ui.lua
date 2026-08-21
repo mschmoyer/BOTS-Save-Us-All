@@ -210,6 +210,11 @@ function UI.pips(x, y, n, filled, r, gap, color, dim)
   end
 end
 
+-- Captions are drawn at 0.2 tracking, so anything that measures one has to ask
+-- for the same tracking or it comes back short and the next thing collides.
+local TRK = { tracking = 0.2 }
+function UI.captionWidth(str, size) return Text.measure(str, size, TRK) end
+
 --- A key/button prompt: the glyph in a chip, then the label.
 --- Returns the total width consumed.
 function UI.prompt(x, y, action, label, size, color, alpha, align)
@@ -220,7 +225,7 @@ function UI.prompt(x, y, action, label, size, color, alpha, align)
   local gw = Text.measure(g, size, nil)
   local boxW = max(gw + 14, size + 14)
   local boxH = size + 12
-  local lw = label and Text.measure(label, size, nil) or 0
+  local lw = label and Text.measure(label, size, TRK) or 0
   local total = boxW + (label and (lw + 10) or 0)
   if align == "right" then x = x - total elseif align == "center" then x = x - total * 0.5 end
 
@@ -699,7 +704,11 @@ function UI.tabs(ctx, id, x, y, w, h, labels, index, opts)
     local tx = x + (i - 1) * tw
     local tid = id .. "#" .. i
     local focused, hot, activated, ts = ctx:interact(tid, tx, y, tw, h, true)
-    if activated and i ~= index then index = i changed = true end
+    -- focus *is* selection: sweeping the strip with a stick changes the page,
+    -- rather than making the player confirm every tab they pass through.
+    if (activated or (focused and not opts.manual)) and i ~= index then
+      index = i changed = true
+    end
     local on = (i == index)
     local k = max(ts.focus, on and 1 or 0)
     UI.text(labels[i], tx + tw * 0.5, y + (h - UI.ts.small) * 0.5, UI.ts.small,
@@ -924,7 +933,7 @@ function UI.promptRow(x, y, list, size, color, alpha, align, gap)
     local it = list[i]
     local g = Input.glyph(it[1])
     local gw = max(Text.measure(g, size, nil) + 14, size + 14)
-    total = total + gw + (it[2] and (Text.measure(it[2], size, nil) + 10) or 0)
+    total = total + gw + (it[2] and (UI.captionWidth(it[2], size) + 10) or 0)
     if i < #list then total = total + gap end
   end
   local px = x

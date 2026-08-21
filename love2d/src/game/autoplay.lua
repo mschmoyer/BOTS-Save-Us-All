@@ -49,8 +49,7 @@ function A:decide(p, dt)
 
     -- spend whenever we can afford the next thing in the plan
     local nextBot = BUILD_PLAN[((self.buildIdx - 1) % #BUILD_PLAN) + 1]
-    local def = TU.bots[nextBot]
-    if w.cobalt >= def.cost + 6 then
+    if w.cobalt >= w:botCost(nextBot) + 6 then
       act.build = nextBot
       self.buildIdx = self.buildIdx + 1
     end

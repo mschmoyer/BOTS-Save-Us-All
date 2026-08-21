@@ -308,6 +308,8 @@ function Bot:rebel(target)
   self.mood = "love"
   self.target = target
   self.stateT = 0
+  -- nothing stops them now; the run they make is the whole point of the game
+  self.invuln = 900
   VFX.emit("love_heart", self.x, self.y - 20, { power = 1 })
   self:say("rebel")
 end

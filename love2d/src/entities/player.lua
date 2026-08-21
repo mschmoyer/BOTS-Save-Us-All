@@ -89,7 +89,12 @@ function Player:update(dt, camera)
   self.autoAct = auto
 
   -- aim resolves from mouse / right stick / touch, falling back to facing
-  local ax, ay = Input.aimVector(self.x, self.y, self.faceX, self.faceY, camera)
+  local ax, ay
+  if self.agent then
+    ax, ay = self.faceX, self.faceY
+  else
+    ax, ay = Input.aimVector(self.x, self.y, self.faceX, self.faceY, camera)
+  end
   self.aimX, self.aimY = ax, ay
 
   ------------------------------------------------------------------ dash
@@ -127,6 +132,16 @@ function Player:update(dt, camera)
 
   local moved = self:integrate(dt, 0)
   self:constrain(self.world and self.world.terrain, 0.2)
+
+  -- Standing on a deposit works it loose. Shoving is faster and is the skilled
+  -- option, but nobody should have to be told that walking into cobalt works.
+  self.mineT = (self.mineT or 0) - dt
+  if self.world and self.mineT <= 0 then
+    if self.world:consumeCobaltNear(self.x, self.y, self.radius + T.carry.pickupRange, true) then
+      self.mineT = 0.42
+      self.squash = 0.94
+    end
+  end
 
   -- footfalls
   self.footAccum = (self.footAccum or 0) + moved

@@ -16,6 +16,9 @@ local J = {
   -- accessibility multipliers (0 disables)
   shakeAmount = 1,
   flashAmount = 1,
+  -- The headless balance harness turns this off: hitstop and time dilation are
+  -- measured in real seconds, so at 8x sim speed they would swallow the run.
+  enabled = true,
   time = 0,
 }
 
@@ -33,6 +36,7 @@ function J.stop(dur) J.hitstop = math.min(T.hitstopMax, math.max(J.hitstop, dur)
 
 --- Slow time to `scale` for `dur`, then ease back.
 function J.dilate(scale, dur)
+  if not J.enabled then return end
   J.targetScale = scale
   J.dilateLeft = dur
 end

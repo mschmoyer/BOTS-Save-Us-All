@@ -404,6 +404,26 @@ local function treeGlyph(x, y, r, alpha, hot)
   Draw.blob(x, y - r * 0.42, r * 0.86, 12, 7, 0.16, 0.88, "fill")
 end
 
+--------------------------------------------------------------------- scrims
+--- The HUD has to be readable over a noon meadow and over a purple rift, so it
+--- seats itself on a little darkness. Bands on the two edges that carry
+--- readouts, plus a touch more weight in the four corners where the densest
+--- clusters live. Deliberately short of anything that reads as a panel.
+-- One soft ellipse per cluster (never a rectangle -- a rectangle of shadow has
+-- an edge, and an edge reads as a panel), plus two very light edge bands to tie
+-- them together.
+local function drawScrims(a)
+  local sw, sh = L.sw, L.sh
+  UI.vgrad(0, 0, sw, 120, P.black, P.black, 0.18 * a, 0)
+  UI.vgrad(0, sh - 130, sw, 130, P.black, P.black, 0, 0.22 * a)
+  Draw.softShadow(PAD + 40, PAD + 52, 250, 150, 0.42 * a)         -- cobalt / forest
+  Draw.softShadow(sw * 0.5, L.o2y + 34, 330, 120, 0.34 * a)       -- oxygen
+  Draw.softShadow(L.dialX, L.dialY + 6, 250, 140, 0.44 * a)       -- cycle dial
+  Draw.softShadow(PAD + 60, sh - PAD - 80, 300, 210, 0.40 * a)    -- hearts + feed
+  Draw.softShadow(sw - PAD - 130, sh - PAD - 30, 260, 120, 0.40 * a) -- workforce
+  Draw.softShadow(sw * 0.5, sh - PAD - 34, 430, 110, 0.34 * a)    -- build bar
+end
+
 ------------------------------------------------------------------- the oxygen
 local function drawOxygen(w, a)
   local t = U.saturate(HUD.o2Shown / TU.o2.target)
@@ -446,15 +466,18 @@ local function drawOxygen(w, a)
     lg.circle("fill", ex, ey, 2.6, 10)
   end
 
-  -- label above, numeral below: the arc is the picture, these are the caption
-  UI.caption("OXYGEN", cx, L.o2y - 13, UI.ts.micro, UI.c(P.inkDim, 0.75 * a), "center")
-  local ny2 = L.o2y + 14
+  -- The arc is the picture; this is its caption. One baseline, three parts:
+  -- what it is, what it reads, and what it is aiming at. Nothing sits on top of
+  -- the arc, which is why the numeral hangs below it rather than inside it.
+  local ny2 = L.o2y + 30
   local numSize = UI.ts.h2 * (1 + pulse * 0.12)
-  local nw = UI.text(dec1(HUD.o2Shown), cx - 8, ny2, numSize,
+  local base = ny2 + numSize * 0.36
+  local nw = UI.text(dec1(HUD.o2Shown), cx - 6, ny2, numSize,
                      UI.mix(P.ink, P.o2, 0.35 + 0.65 * pulse), "right", a, 0.02)
-  UI.text("%", cx - 4, ny2 + numSize * 0.36, UI.ts.small,
-          UI.c(P.o2, 0.7 * a), "left", a, 0.05)
-  UI.caption("TARGET " .. itos(TU.o2.target), cx + 46, ny2 + numSize * 0.36, UI.ts.micro,
+  UI.text("%", cx - 2, base, UI.ts.small, UI.c(P.o2, 0.7 * a), "left", a, 0.05)
+  UI.caption("OXYGEN", cx - 6 - nw - 14, base + 2, UI.ts.micro,
+             UI.c(P.inkDim, 0.8 * a), "right")
+  UI.caption("TARGET " .. itos(TU.o2.target), cx + 34, base + 2, UI.ts.micro,
              UI.c(P.inkFaint, 0.6 * a), "left")
 end
 
@@ -594,7 +617,8 @@ local function drawRoster(w, a)
   end
   UI.rule(x0, y - 8, n * cellW, P.ink, 0.09 * a)
   if total > 0 then
-    UI.caption(itos(total), x0 - 12, y - 16, UI.ts.micro, UI.c(P.accentCool, 0.8 * a), "right")
+    UI.caption(itos(total) .. " ONLINE", x0, y - 16, UI.ts.micro,
+               UI.c(P.accentCool, 0.8 * a), "left")
   end
 end
 
@@ -737,6 +761,7 @@ function HUD.draw(w, cam)
   local prevLW = lg.getLineWidth()
   lg.setLineStyle("smooth")
 
+  drawScrims(a)
   drawThreat(a)
   drawTelegraph(w, a)
   drawHurt(a)

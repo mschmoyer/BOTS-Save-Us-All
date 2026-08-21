@@ -932,7 +932,7 @@ function Tree:update(dt)
     if self.growth < 1 then
       self.growth = min(1, self.growth + dt / T.growTime * self.growthMul)
       self:refreshMesh()
-    elseif self.elderness < 1 then
+    elseif self.elderness < 1 and self.canElder then
       self.elderT = self.elderT + dt * self.growthMul
       local e = U.saturate(self.elderT / T.elderTime)
       if e ~= self.elderness then
