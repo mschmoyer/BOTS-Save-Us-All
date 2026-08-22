@@ -501,8 +501,14 @@ end
 
 --- One row. `used` counts kinds of fact, `said` counts finished sentences,
 --- `heads` counts kinds of fact that have LED a row, `prev` is the line above.
+--- `prevSecond` is the clause that CLOSED the row above. The head has had an
+--- adjacency guard since the page was written (`prevHead`, passed to `phrase`
+--- as `avoid`); the second clause had only the cumulative `exact` penalty,
+--- which is a score and can be outvoted. Captured: three consecutive rows
+--- ending "it never went down." -- the same form-letter effect the head guard
+--- exists to stop, one clause further right.
 local function composeRow(list, used, said, worded, heads, jit, prev, prevHead,
-                          maxW, size)
+                          maxW, size, prevSecond)
   local MEM = TU.bots.memorial
   local cand = {}
   local function claim(c, ph, vk)
@@ -549,13 +555,19 @@ local function composeRow(list, used, said, worded, heads, jit, prev, prevHead,
     end
     for i = n + 1, #cand do cand[i] = nil end
     table.sort(cand, function(a, b) return a._score < b._score end)
-    for i = 1, n do
-      local line = hp .. ". " .. cand[i]._say
-      if line ~= prev and rowWidth(line, size) <= maxW then
-        claim(head, hp, hv)
-        heads[head.key] = (heads[head.key] or 0) + 1
-        claim(cand[i], cand[i]._ph, cand[i]._vk)
-        return line, hp
+    -- Two passes. The first refuses to repeat the clause that closed the row
+    -- above; the second drops that refusal, because a row with no second
+    -- clause at all is worse than a repeat and this must never starve.
+    for pass = 1, 2 do
+      for i = 1, n do
+        local line = hp .. ". " .. cand[i]._say
+        if line ~= prev and rowWidth(line, size) <= maxW
+           and (pass == 2 or cand[i]._ph ~= prevSecond) then
+          claim(head, hp, hv)
+          heads[head.key] = (heads[head.key] or 0) + 1
+          claim(cand[i], cand[i]._ph, cand[i]._vk)
+          return line, hp, cand[i]._ph
+        end
       end
     end
     -- ...but a promoted head only earns the row if the work came with it. On
@@ -586,16 +598,17 @@ function S:composeMemorial(colW, size)
   if not rows then return end
   local maxW = colW * TU.bots.memorial.rowWidth
   local used, said, worded, heads = {}, {}, {}, {}
-  local prev, prevHead = nil, nil
+  local prev, prevHead, prevSecond = nil, nil, nil
   for i = 1, #rows do
     local r = rows[i]
     local list = r.clauses
     if list and #list > 0 then
-      r.epitaph, prevHead = composeRow(list, used, said, worded, heads,
-                                       rowJitter(i), prev, prevHead, maxW, size)
+      r.epitaph, prevHead, prevSecond = composeRow(list, used, said, worded,
+                                       heads, rowJitter(i), prev, prevHead,
+                                       maxW, size, prevSecond)
     else
       r.epitaph = (r.line or "was here") .. "."
-      prevHead = nil
+      prevHead, prevSecond = nil, nil
     end
     prev = r.epitaph
   end

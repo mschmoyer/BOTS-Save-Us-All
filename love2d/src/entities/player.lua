@@ -110,7 +110,18 @@ function Player:speedMul()
 end
 
 ------------------------------------------------------------------------ update
-function Player:update(dt, camera)
+--- `realDt` is the wall clock, and it is here for one reason: the idle.
+---
+--- game.lua freezes the simulation while anybody is talking -- `world:update(
+--- talking and 0 or dt, realDt)` -- so during every cutscene this function ran
+--- with dt = 0 and the idle clock could not advance. That is the whole reason
+--- the prologue was a parked sprite, and dropping the `canAct()` gate in
+--- `updateIdle` (the obvious fix, and the one this was diagnosed as) does
+--- nothing on its own: measured before and after, the player region changed by
+--- the same 3,950 pixels either way. Ambient motion is not simulation, so it
+--- gets the real clock, exactly as `World:update` already does for the x-ray
+--- when the sim is stopped. With dt > 0 the two are the same number.
+function Player:update(dt, camera, realDt)
   self:updateCommon(dt)
 
   if self.state == "down" then
@@ -255,7 +266,7 @@ function Player:update(dt, camera)
   self.bob = self.bob + dt * (2 + sp * 5)
   -- idle first: it is what decides where he is looking, and the gaze that
   -- reads it is resolved in the same frame rather than the next one.
-  self:updateIdle(dt, mx, my)
+  self:updateIdle(realDt or dt, mx, my)
   self:updateNotice(dt)
 end
 
@@ -345,7 +356,15 @@ function Player:updateIdle(dt, mx, my)
                 and self.dashTimer <= 0 and not self.charging and not self.carrying
                 and self.shoveAnim <= 0.02
                 and U.len(self.vx, self.vy) < TI.stillSpeed
-                and self:canAct()
+                -- NOT `canAct()`, which is false during any cutscene. He is the
+                -- SUBJECT of the cutscenes -- the prologue is the longest
+                -- uninterrupted look at him in the game before the ending -- and
+                -- gating stillness on it meant `idleT` reset every frame, so
+                -- `settle` stayed 0 and even the ambient weight shift was off.
+                -- Measured over the prologue: 5.3 seconds and three spoken
+                -- lines with ONE pixel in the whole 90x140 player region
+                -- differing by more than 10/255. He was a parked sprite.
+                and self.state == "alive"
 
   if still then
     self.idleT = self.idleT + dt

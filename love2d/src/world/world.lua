@@ -1439,7 +1439,7 @@ function World:update(dt, realDt)
 
   if self.rallyX then self.rallyT = (self.rallyT or 0) + dt end
   if self.rig then self.rig:update(dt) end
-  if self.player then self.player:update(dt, self.camera) end
+  if self.player then self.player:update(dt, self.camera, realDt) end
   -- CULLING IS A SIMULATION INPUT, so it cannot be left to the draw pass.
   --
   -- `Tree:update` sets `onScreen` from the module view rect, and two things in
