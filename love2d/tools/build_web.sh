@@ -37,9 +37,10 @@ trap 'rm -rf "$WORK"' EXIT
 #     src/entities/tree.lua.
 [ -n "${BOTS_SKIP_TREE_BAKE:-}" ] || tools/bake_trees.sh
 
-# 1. zip the project into a .love (source only)
-zip -qr "$WORK/game.love" main.lua conf.lua src \
-  -x 'src/scenes/demo_*' -x '*.md'
+# 1. zip the project into a .love (source, plus assets/music -- the only binary
+#    media in the game; everything else is still generated at runtime)
+zip -qr "$WORK/game.love" main.lua conf.lua src assets \
+  -x 'src/scenes/demo_*' -x '*.md' -x '*.DS_Store'
 
 # 2. emscripten-backed LOVE runtime (compatibility build: no SharedArrayBuffer
 #    needed). NOTE: -c is not an Asyncify build -- the release wasm is actually

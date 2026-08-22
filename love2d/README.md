@@ -108,8 +108,39 @@ src/world/          terrain generation, water, wind, weather, the world itself
 src/entities/       player, bots, enemies, boss, trees, cobalt, projectiles, home rig
 src/game/           tuning constants, chips, director, story, dialogue, HUD, minimap
 src/scenes/         title, game, draft, pause, options, ending, and demo_* test scenes
+assets/music/       the score -- the only binary media in the game (Ogg Vorbis)
 tools/              syntax check, headless capture, web build, browser capture
 ```
+
+## The score
+
+Three streamed tracks -- `title`, `day`, `night` -- named in `T.music.tracks` in
+`src/game/tuning.lua` and played by `src/engine/music.lua`. The game's seven musical
+states fold onto those three slots, so dusk plays the day's track and the extraction
+the night's; a state change landing on the file already playing does not restart it.
+
+Day and night are the exception: they *blend*. Both tracks run at once, split by a
+continuous `M.night` that dusk pulls to 1 over `dayToNight` seconds and dawn pulls
+back over `nightToDay`. The split is smootherstep-eased (no corner at either end)
+and mixed equal-power (no 3 dB sag in the middle). `dayToNight` matches
+`T.cycle.duskLen`, so the score is dark on the frame the sky is.
+
+To add or replace a track, encode to Ogg Vorbis at ~96 kbps and repoint the slot:
+
+```bash
+ffmpeg -i master.mp3 -vn -map 0:a:0 -c:a pcm_s16le -ar 44100 -ac 2 -f wav - \
+  | oggenc -Q -b 96 -o assets/music/the-track.ogg -
+BOTS_SCENE=src.scenes.demo_track tools/shot.sh 3400 1250,2350,3350 /tmp/track
+```
+
+`demo_track` walks a whole cycle and plots the mix: the blend should cross at 0.71
+with flat ends, and a fold should move nothing. `assets/music/frontier-static.ogg`
+is encoded and shipped but bound to no slot yet.
+
+Before this, the score was generated the same way everything else is: a sequencer
+firing synthesized one-shots on a musical clock, with six layers, seven modes and a
+five-part finale. It still runs -- `src/engine/music_procedural.lua`, driven by
+`demo_music` and `demo_audio` -- but nothing in the shipped game calls it.
 
 Two rules keep the codebase coherent:
 

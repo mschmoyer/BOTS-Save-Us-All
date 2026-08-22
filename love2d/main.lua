@@ -149,7 +149,10 @@ function Boot.applyQuality()
     ps.vignette = Settings.get("fxVignette", true)
     ps.distort  = Settings.get("fxDistortion", true)
   end
-  local q = Settings.get("quality", "high")
+  -- BOTS_QUALITY forces a detail level for a capture: the render scale that
+  -- comes with "low" is the only way to exercise the scene-canvas path
+  -- headlessly, and it is not reachable from the options screen without a human.
+  local q = cfg("BOTS_QUALITY") or Settings.get("quality", "high")
   local level = (q == "low" and 0) or (q == "medium" and 1) or 2
   local ok, Lighting = pcall(require, "src.engine.lighting")
   if ok and Lighting.setQuality then Lighting.setQuality(level) end

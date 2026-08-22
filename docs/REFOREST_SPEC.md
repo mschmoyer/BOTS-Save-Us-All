@@ -23,7 +23,7 @@ end of the night you will care whether they come back.*
 | **The bots are people** | Every bot has a generated name, a personality line, idle chatter, a boot-up animation and a death that costs you something. Downed bots can be *carried* to a Beacon and revived. |
 | **You are fragile** | The player has 2 offensive verbs (shove, pulse) and 1 movement verb (dash). You never out-damage the swarm; you *reposition* and *protect*. |
 | **The victory is hollow** | The ending is not a celebration. Keep the 2019 punchline and give it room to breathe. |
-| **Everything is procedural** | Zero external art or audio assets. Terrain, trees, bots, UI, the display typeface and every sound are generated at runtime. This is a hard constraint *and* the visual identity. |
+| **Everything is procedural, except the score** | Zero external *art* assets: terrain, trees, bots, UI, the display typeface and every sound effect are generated at runtime. This is a hard constraint *and* the visual identity. The one exception is the music, which is authored: three streamed tracks in `love2d/assets/music` (title, day, night), played by `src/engine/music.lua`. The procedural score that preceded them is kept, unwired, in `src/engine/music_procedural.lua`. |
 
 ---
 

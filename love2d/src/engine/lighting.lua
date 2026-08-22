@@ -382,7 +382,11 @@ function L.finish()
   if coneOn then g.setShader() end
 
   -- ---- composite ------------------------------------------------------------
-  g.origin()
+  -- The accumulation pass owns its own transform; the composite runs under the
+  -- caller's, because postfx scales window coordinates into a scene canvas that
+  -- is smaller than the window. Resetting to origin here drew the light sheet
+  -- at window size into that smaller canvas.
+  g.pop()
   g.setCanvas(prevCanvas)
   local up = 1 / scale
 
@@ -405,7 +409,6 @@ function L.finish()
   end
   g.setShader()
 
-  g.pop()
   g.setShader(prevShader)
   g.setBlendMode(pbm, pam)
   g.setColor(pr, pg, pb, pa)

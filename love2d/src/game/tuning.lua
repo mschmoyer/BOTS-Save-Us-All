@@ -937,4 +937,32 @@ T.camera = {
   landPad     = 260,
 }
 
+------------------------------------------------------------------------- music
+-- Authored tracks, streamed from assets/music (see src/engine/music.lua). Three
+-- slots; the game's seven musical states fold onto them, so dusk plays the day's
+-- track and the extraction the night's.
+--
+-- frontier-static.ogg is encoded and shipped but bound to no slot: bind or drop
+-- it before release, it is 1.8 MB nobody hears.
+T.music = {
+  tracks = {
+    title = "assets/music/stellar-drift-title.ogg",
+    day   = "assets/music/beyond-the-airlock.ogg",
+    night = "assets/music/frontier-thrum-night.ogg",
+  },
+  gain = { title = 1.0, day = 1.0, night = 1.0 },   -- per-slot trim
+
+  -- Day and night blend rather than cut. The fall matches T.cycle.duskLen so the
+  -- score is dark on the frame the sky is; move that, move this. The climb is
+  -- quicker -- relief should arrive faster than dread -- and is a fixed duration
+  -- because dawn has none of its own.
+  dayToNight = 12,
+  nightToDay = 9,
+
+  -- Hard cuts only: menus, finale, stop().
+  fadeIn   = 1.6,
+  fadeOut  = 2.2,
+  stopFade = 1.5,
+}
+
 return T

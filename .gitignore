@@ -4,3 +4,8 @@ love2d/build/
 # tools/bake_audio.sh) and the tree mesh library (12.5 MB of vertex buffers
 # from tools/bake_trees.sh). The game runs happily without either.
 love2d/src/bake/
+/.vercel
+/node_modules
+
+# Scratch: raw music masters land here; only the encoded assets/music ogg ships.
+love2d/tmp/

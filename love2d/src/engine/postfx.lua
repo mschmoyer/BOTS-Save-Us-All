@@ -407,18 +407,33 @@ end
 
 --------------------------------------------------------------------- the scene
 --- Bind the scene target. Everything the world draws goes here.
+--- Bind the scene target *and* the transform that maps window coordinates into
+--- it. The scene canvas is `SW x SH`, not `W x H`, whenever `settings.scale` is
+--- below 1 -- and everything that draws into it (the camera, the lighting
+--- composite, the weather sheet) works in window coordinates. Without this
+--- scale the world was drawn full size into a smaller canvas and then blown
+--- back up to the window: the frame was cropped to its top-left corner, which
+--- at the auto-selected `quality=low` (scale 0.7) parked the player about 70%
+--- across and 70% down instead of in the middle.
 function Post.beginScene(r, g, b)
   if not scene then Post.init() end
   prevCanvas = love.graphics.getCanvas()
   love.graphics.setCanvas(scene)
   local c = P.black
   love.graphics.clear(r or c[1], g or c[2], b or c[3], 1)
+  love.graphics.push()
+  if SW ~= W or SH ~= H then love.graphics.scale(SW / W, SH / H) end
 end
 
 function Post.endScene()
+  love.graphics.pop()
   love.graphics.setCanvas(prevCanvas)
   prevCanvas = nil
 end
+
+--- The window -> scene-canvas factor `beginScene` installs. Anything that
+--- resets the transform mid-scene has to put it back itself.
+function Post.sceneScale() return (W and W > 0) and (SW / W) or 1 end
 
 function Post.getSceneCanvas() return scene end
 
