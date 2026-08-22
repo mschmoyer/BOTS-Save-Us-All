@@ -133,8 +133,15 @@ seconds. **Read the PNGs.** Nothing about this game can be judged from the sourc
 
 **Three traps in that harness**, each of which has produced a confident wrong number:
 
-- The autoplay **trace** is not reproducible run to run on a contended machine — two identical
-  runs ended at 466 and 250 trees. Do not A/B with it.
+- The autoplay **trace** *was* not reproducible — two identical runs ended at 466 and 250
+  trees — and this was diagnosed as machine contention for a long time. It was not. **LuaJIT
+  randomises its string hash seed per process**, so `pairs()` over a string-keyed table walks
+  in a different order in every run, and two such loops fed gameplay: the weather pool in
+  `world/weather.lua` and the wave composition and escort tie-break in `game/director.lua`.
+  Both now iterate a fixed order, and three parallel same-seed runs produce **byte-identical**
+  traces. A same-seed trace is now a valid A/B — but if you ever add a `pairs()` loop whose
+  iteration order can reach the RNG or a tie-break, you will silently break that again, and
+  nothing will fail loudly when you do.
 - The autoplay **capture** is not a valid pixel A/B: two runs of identical code differ on 96%
   of pixels by ±1, because the grade is wall-clock dependent, and after a few thousand frames
   the two runs are not even in the same game state.

@@ -7,7 +7,12 @@
 -- tests before it goes in:
 --
 --   1. Would a machine that plants trees actually say this?
---   2. Is it worth reading the second time?
+--   2. Is it worth reading the TWENTIETH time? Not the second -- measured, the
+--      shared day pool is drawn about a hundred and twenty times a day and
+--      cycles three times a phase, so a run reads every line in it twenty-odd
+--      times. Flat reports survive that. Anything with a turn in it dies on
+--      the fifth reading and grates by the tenth, which is why a wistful line,
+--      a brave line and a funny line have all been cut from here since.
 --   3. Does it belong to a bot, or is it the writer talking to the player?
 --
 -- Anything cute fails test 3. Nothing in here explains the theme, admires the
@@ -50,26 +55,48 @@ N.chatter = {
   day = {
     "good dirt here", "another one in", "it will be tall", "i like this spot",
     "the ground is warm", "more sun today", "this row is not done",
-    "nothing yet", "the ground is wet here", "i will come back to this one",
+    "i will come back to this one", "the seed did not take",
     "most of it is under the ground", "i put one behind the rock",
-    "the wind turns at noon", "i am saving this hill",
+    "i will need more seed", "i am saving this hill",
     "somebody planted here before me", "this one grew overnight",
     "i will do the slope next", "i have been standing here too long",
     "it is taller than me now", "we are ahead of yesterday",
     "the rig is that way", "i marked this one", "there is room past the rocks",
-    "the old row is still standing",
+    "the old row is still standing", "this one is dead. taking it out.",
+    "nothing came here last night", "there are rocks under this",
+    "one of the old ones fell over", "i am on the second row",
   },
-  -- Night. Shorter lines, closer together, and nobody says it will be fine.
+  -- Night. Shorter lines, closer together, and nobody says it will be fine --
+  -- which "morning is not far" did, so it is gone. Two lines about "the little
+  -- ones" were cut with it: the register was worn through at five uses across
+  -- this pool, `fusser` and `counter`, and "i am between it and the tree" is
+  -- what the other two were trying to be.
   night = {
     "lights on", "stay near me", "i hear them", "do not go far",
-    "keep the little ones safe", "i am not afraid",
     "count us when it is light", "they do not like the lamp",
     "if i stop, keep going", "the little ones are covered",
     "it is coming this way", "do not look at it. work.",
-    "we lost the far row", "i am still here", "morning is not far",
+    "we lost the far row", "i am still here", "i cannot see you",
     "the lamp is holding", "i cannot see the north row", "one got past me",
-    "stand in the light", "it went for the small ones",
-    "i am between it and the tree", "say something",
+    "stand in the light", "who is on the east row",
+    "i am between it and the tree", "say something", "i lost it in the trees",
+    "it is quiet on this side", "the north lamp is nearest",
+    "i am coming to you",
+  },
+  -- The seventh night, and only the seventh. The dial has said THE LAST NIGHT
+  -- for a minute, forty machines are out in it, and until this pool existed the
+  -- ambient script was byte-identical to cycle one's. Wired the way `radio` is:
+  -- one small pool, gated on story state, displacing part of a shared pool for
+  -- the rest of the run. story.lua raises N.lastNight at the last dusk.
+  --
+  -- Nothing in here knows what happens after, and nothing in here is told. "and
+  -- then what" is "for who" a second time, from a different machine, and it is
+  -- never answered either. "we counted seven" is the only line in the file that
+  -- names a tuning constant -- tools/poolcheck.lua fails if it stops matching
+  -- T.cycle.count.
+  lastnight = {
+    "one more night", "we counted seven", "everyone is out tonight",
+    "i was here for the first one", "and then what",
   },
   -- First light, and the thing the night pool asked for. "count us when it is
   -- light" is a request nobody ever fulfilled; this is the answer to it, and
@@ -90,7 +117,7 @@ N.chatter = {
   -- end lands on a player who has heard a machine say it four times.
   radio = {
     "still zero", "i listened all night", "nothing on nine",
-    "i will check again", "channel nine is clear",
+    "i will check again",
   },
   -- Its own damage. Reports of condition, never complaints, and the best of
   -- them report the tree instead of the machine.
@@ -98,17 +125,19 @@ N.chatter = {
     "something broke", "still working", "that is fine", "keep going",
     "do not stop for me", "my arm is slow now", "it did not get the tree",
     "i can still walk", "i am at half", "i can finish the row", "again",
-    "do not carry me yet", "leave me. the row is not done.",
+    "do not carry me yet",
   },
   -- Said by whoever was standing nearby. Never on the first loss of the run:
   -- the first-loss beat opens on "it stopped" and needs to say it first, so
   -- that line is not in here.
   --
-  -- %s is the name of the bot that just went down -- see N.remember. It turns
-  -- "say the name" from an instruction into a thing somebody then does.
+  -- %s is the name of the bot that just went down -- see N.remember. It is the
+  -- whole of what this pool does with a name: the instruction that used to sit
+  -- next to it ("say the name") read as a ritual somebody invented rather than
+  -- as a machine reacting, and the %s line does the job without being asked.
   loss = {
     "where did it go", "it will not get up", "i cannot hear them",
-    "we lost one", "say the name", "i will finish its row",
+    "we lost one", "i will finish its row",
     "put it down gently", "%s was on this row", "who was standing with it",
     "i was too far", "do not step there", "it is not lit any more",
   },
@@ -136,14 +165,13 @@ N.chatter = {
     "why", "my orders stopped", "where do i stand",
     "it is standing on the trees", "where is he", "that is not blight",
     "i am waiting", "it does not stop", "the north rows are gone",
-    "i will keep planting",
   },
   -- On the way past, at a run, once. "get behind us" is the answer to the only
   -- order he ever gave them that they refused. The line this pool is a
   -- rehearsal for is said in the cutscene and only there.
   rebel = {
     "go", "we have you", "get behind us", "stay there", "we are closer",
-    "we are going", "goodbye",
+    "we are going",
   },
   -- Not crew. Every machine that was working somewhere else on the island when
   -- the rebellion started, walking in off the treeline. World:speak drops a
@@ -151,7 +179,7 @@ N.chatter = {
   -- `rebel` line rather than on top of it. Nobody in here is glad to be here
   -- and nobody says what they came for: they say what they left.
   reinforce = {
-    "i heard it from the water", "i was on the far side", "i left the row",
+    "i was down by the water", "i was on the far side", "i left the row",
     "more behind me",
   },
   -- The oxygen crossed another quarter. The sky line is the prologue's first
@@ -159,18 +187,17 @@ N.chatter = {
   grown = {
     "the sky changed colour", "the numbers went up",
     "i cannot count them any more", "i cannot see the water from here",
-    "more of it every day",
   },
   -- The player traded daylight for a worse night.
   hold = {
     "more light", "we can finish this row", "i will not stop at dark",
-    "i will work fast", "keep the sun up",
+    "i will work fast", "the night will be longer",
   },
   -- The rig emptied the sky. About a second and a half before the cut, and
   -- nobody in here promises a next time.
   failed = {
     "the air is going", "hold on to me", "get to the rig",
-    "i am still holding one", "it is taking it back",
+    "i am still holding one",
   },
 }
 
@@ -185,7 +212,7 @@ N.traitLines = {
   counter = {
     day = { "%d", "that makes %d", "i counted wrong. starting again.",
             "i counted them again", "i will count again at noon",
-            "i counted the small ones twice" },
+            "the number is right" },
     night = { "%d", "%d standing", "i counted us", "we were more this morning",
               "i cannot count in the dark" },
   },
@@ -199,7 +226,7 @@ N.traitLines = {
               "there is light at the rig" },
   },
   quiet = {
-    day = { "working", "shade already", "here", "one more", "done", "again" },
+    day = { "working", "shade already", "here", "one more", "done", "growing" },
     night = { "lit", "awake", "hold", "it moved", "cold" },
   },
   fusser = {
@@ -217,14 +244,42 @@ N.traitLines = {
     night = { "how long is left", "where is everyone", "is it still out there",
               "did anything get through", "is the lamp still on" },
   },
+  -- Rebuilt. Five of its ten lines used to contain *stop* or *hold*, which is
+  -- a synonym list and not a grammar -- the exact failure the six-trait
+  -- redesign exists to escape. Stubbornness has kinds: refusing help, refusing
+  -- shelter, claiming ground, staying latest. "i am the last one out here" and
+  -- "nobody else needs to come out here" are stubbornness expressed as
+  -- logistics, which is what a machine has instead of pride.
   stayer = {
-    day = { "this row is mine", "i am not stopping yet",
-            "i will finish before dark", "i can do the whole slope",
-            "i have not stopped today" },
-    night = { "i can hold", "i will hold this line", "i do not want to stop",
-              "do not carry me. i can walk.", "i am not going in" },
+    day = { "this row is mine", "i will finish before dark",
+            "i can do the whole slope", "give me the far side",
+            "nobody else needs to come out here" },
+    night = { "i will hold this line", "i do not want to stop",
+              "i am not going in", "i am the last one out here",
+              "somebody has to be on this side" },
   },
 }
+
+---------------------------------------------------------------- story overlay
+-- A bot draws its idle line from the world's PHASE, in bot.lua's update loop,
+-- because the phase is all a machine standing in a field knows. Two things
+-- that change what it should be saying are not phases, so they are raised here
+-- by story.lua and by nothing else.
+--
+--   extraction  The rig is on the island. bot.lua maps anything that is not
+--               night to `day`, so the `boss` pool -- written for exactly this
+--               -- was only ever heard from the two or three `boss:phase`
+--               signals, while "good dirt here" played over the climax. Only
+--               the machines still in `work` get mood = "confused"; every one
+--               that has rebelled falls back through here.
+--   lastNight   Cycle T.cycle.count's dusk and night. See `lastnight` above.
+N.extraction = false
+N.lastNight  = false
+
+-- One night line in three comes out of `lastnight` instead of the shared pool.
+-- Not more: the last night still has to sound like a night, and five lines at
+-- a third of a hundred and twenty draws is already about five readings each.
+local LASTNIGHT_SHARE = 0.34
 
 -- How often a bot with a private pool reaches for it. Low enough that the
 -- shared pool still carries the phase, high enough that a counter has said
@@ -254,6 +309,10 @@ function N.remember(name) N.lastLost = name end
 --- time, so what separates two bots is how they talk, not which fifteen of the
 --- same thirty sentences they happen to own.
 function N.line(phase, rng, count, trait)
+  -- Both overlays are applied to the pool NAME, before the trait lookup, so a
+  -- caller that already knows better ("boss" from bot.lua's confused mood, or a
+  -- fixed bot.lua) passes straight through unchanged.
+  if phase == "day" and N.extraction then phase = "boss" end
   local pool = N.chatter[phase] or N.chatter.day
   local s
   local own = trait and N.traitLines[trait.id]
@@ -265,6 +324,16 @@ function N.line(phase, rng, count, trait)
     local roll
     if rng then roll = rng:chance(TRAIT_SHARE) else roll = math.random() < TRAIT_SHARE end
     if roll then s = rng and rng:pick(own) or own[math.random(#own)] end
+  end
+  -- ...and if the trait did not answer, the last night takes a third of what is
+  -- left. Deliberately after the trait draw and not before it: a stayer is
+  -- still a stayer on the seventh night, and the pool this displaces is the
+  -- shared one.
+  if not s and phase == "night" and N.lastNight then
+    local ln = N.chatter.lastnight
+    local roll
+    if rng then roll = rng:chance(LASTNIGHT_SHARE) else roll = math.random() < LASTNIGHT_SHARE end
+    if roll and ln and #ln > 0 then s = rng and rng:pick(ln) or ln[math.random(#ln)] end
   end
   s = s or (rng and rng:pick(pool) or pool[math.random(#pool)])
   if s:find("%%d") then

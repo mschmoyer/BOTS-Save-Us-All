@@ -29,6 +29,9 @@ local Opt      = require("src.core.optional")
 local Script   = require("src.game.script")
 local Names    = require("src.game.names")
 local Dialogue = require("src.game.dialogue")
+-- Only for T.cycle.count: "the last night" is a game constant and the ambient
+-- overlay below must not hard-code a 7 that tuning.lua is free to move.
+local TU       = require("src.game.tuning")
 
 local Draw = Opt.require("src.engine.draw")
 local Text = Opt.require("src.engine.text")
@@ -250,9 +253,20 @@ local BEATS = {
     id = "question", pri = 2, guard = "calm", delay = 4.0, patience = 420,
     prep = function(world, ctx)
       local p = world.player
-      local b = pickBot(world, p and p.x, p and p.y, nil,
-                        function(bb) return bb.type == "planter" end)
-             or pickBot(world, p and p.x, p and p.y)
+      -- The one the player heard boot and say "oh", if it is still standing.
+      -- It used to pick the nearest planter, so at cycle 6 a machine the player
+      -- had never met said "i asked what the trees are for" -- a line whose
+      -- entire meaning is "i am the one who asked". `firstBot` binds
+      -- Story.theFirstOne on cycle 1 and this beat is queued from cycle 3, so
+      -- it is set unless that beat was dropped on its patience or the machine
+      -- is gone; both fall through to the old pick. Same test the `radio` and
+      -- `answer` preps already use.
+      local b = Story.theFirstOne
+      if not (b and b.alive and b.state ~= "dead" and b.state ~= "down") then
+        b = pickBot(world, p and p.x, p and p.y, nil,
+                    function(bb) return bb.type == "planter" end)
+         or pickBot(world, p and p.x, p and p.y)
+      end
       if not b then return false end
       ctx.bot = b
       bind("botA", b)
@@ -323,7 +337,8 @@ local BEATS = {
     prep = function(world, ctx)
       -- botB, not botA: botA is the machine that died, and the survivor
       -- standing over it is somebody else. ctx.lostX/lostY stay put -- the
-      -- camera step reads them, and there is no body to follow.
+      -- camera step reads them, and a husk is now left at exactly those
+      -- coordinates, so the funeral has a body in it rather than empty grass.
       local b = pickBot(world, ctx.lostX, ctx.lostY)
       if not b then return false end
       ctx.bot = b
@@ -580,12 +595,23 @@ local function reactFrom(bot, phase)
 end
 Story.reactFrom = reactFrom
 
---- Which of the two long pools the world is in. Anything that can happen at
---- any hour has to ask: a hit taken at noon used to answer with the night pool,
---- so a bot would say "morning is not far" in broad daylight.
+--- Which long pool the world is in. Anything that can happen at any hour has
+--- to ask: a hit taken at noon used to answer with the night pool, so a bot
+--- would say "morning is not far" in broad daylight.
+---
+--- The extraction is not a daylight shift, and it used to be treated as one --
+--- everything that is not night mapped to `day`, so a hit taken with the
+--- Harvester Prime on screen and the sky draining answered "the ground is wet
+--- here". The `boss` pool exists for this and was only ever reached from the
+--- two or three `boss:phase` signals in the whole fight.
+---
+--- `ending` deliberately keeps falling through to `day`: the only two callers
+--- are a player hit and every fortieth tree, neither of which happens after
+--- the rig is down, and bot.lua silences ambient chatter outright in that phase.
 local function phasePool()
   local w = Story.world
   local ph = w and w.phase
+  if ph == "extraction" then return "boss" end
   return (ph == "night" or ph == "dusk") and "night" or "day"
 end
 
@@ -598,6 +624,11 @@ local function resetState()
   Story.cooldown = 0
   Story.reactT   = 0
   Story.dawnFlip = false
+  -- names.lua's two story overlays on the ambient pools -- see N.extraction and
+  -- N.lastNight there. Owned here, written nowhere else, and cleared with the
+  -- rest of the run state so a restart does not open on last-night dialogue.
+  Names.extraction = false
+  Names.lastNight  = false
   Story.hurtT    = 0
   Story.reinforceT = 0
   Story.time     = 0
@@ -608,6 +639,8 @@ local function resetState()
   -- player heard boot and speak; the second is the one that asked what the
   -- trees are for, so the beat that answers can be the same voice.
   Story.theFirstOne  = nil
+  -- "Good." is once a run. See the bot:revived handler.
+  Story.saidGood     = false
   Story.questionBot  = nil
   Story.epitaphs = {}
   Story.sacrificed = {}
@@ -734,10 +767,17 @@ local function subscribe()
     -- is only a ritual if somebody then does.
     Names.remember(bot.name)
     if not first then react("loss", bot.x, bot.y) end
+    -- The bot says the epitaph out loud, so it needs a subject -- but some
+    -- epitaphs already have one. "you carried it home once" prefixed with "it "
+    -- reads as a fault in the game, in the middle of the first funeral.
     local ep = bot.epitaph and bot:epitaph() or nil
+    local said = ep
+    if ep and ep:sub(1, 4) ~= "you " and ep:sub(1, 3) ~= "we " then
+      said = "it " .. ep
+    end
     queue("firstLoss", { lostName = bot.name, lostX = bot.x, lostY = bot.y,
                          lostType = bot.type,
-                         lostEpitaph = ep and ("it " .. ep) or nil })
+                         lostEpitaph = said })
     -- ...and if the one that just stopped is the one that said hello, it gets
     -- its own beat rather than a line in the toast feed. Only when it is not
     -- also the first loss: that body already has a scene standing over it.
@@ -778,10 +818,17 @@ local function subscribe()
   -- the readout instead of counting the crew -- the recurring half of that beat,
   -- and the only thing that speaks in cycles 4 through 7 on most runs. The
   -- number it reports has never changed and never will.
+  -- First light. There are only six or seven dawns in a run and each one is a
+  -- scheduled beat of its own, so this jumps the shared reaction gap the way
+  -- world:failed does -- measured, only two of six dawns were getting through
+  -- it, which is how a five-line pool can fire zero times in a campaign.
+  --
+  -- Alternating, not random: a coin flip can hand a whole run the counting pool
+  -- and the radio thread never appears. There are only three or four dawns left
+  -- after the beat fires and every one of them has to count -- that thread is
+  -- what "Or the radio." lands on at the end.
   Signal.on("phase:dawn",  function()
-    -- Alternating, not random: a coin flip can hand a whole run the counting
-    -- pool and the thread never appears. There are only three or four dawns
-    -- left after the beat fires and every one of them has to count.
+    Story.reactT = 0
     if Story.fired.radio then
       Story.dawnFlip = not Story.dawnFlip
       react(Story.dawnFlip and "radio" or "dawn")
@@ -860,7 +907,21 @@ local function subscribe()
   -- two had a bystander saying "save the human" and "goodbye" twenty minutes
   -- before the scene that those belong to. It is the bot that just stood up
   -- that has something to say, and what it has to say is about standing up.
-  Signal.on("bot:revived", function(b) reactFrom(b, "saved") end, Story)
+  Signal.on("bot:revived", function(b)
+    reactFrom(b, "saved")
+    -- The one thing he ever says about a rescue, once a run, on the first
+    -- machine the PLAYER carried home. Bot:revive sets `savedBy` before it
+    -- emits, and it is "player" only on a carry -- a beacon picking one up on
+    -- its own is not a thing he watched anybody do. Not a beat: a letterbox and
+    -- a held silence for four characters would be the game stopping itself to
+    -- be pleased. A bubble over his head, with the game still running.
+    if Story.saidGood or not b or b.savedBy ~= "player" then return end
+    local w = Story.world
+    local p = w and w.player
+    if not (w and p and w.speak) or w.cutscene or Dialogue.isActive() then return end
+    Story.saidGood = true
+    w:speak(p, Script.bark.rescued)
+  end, Story)
 
   -- tutorial acknowledgements
   Signal.on("player:shove", function() Story.did.shove = true end, Story)
@@ -1022,6 +1083,16 @@ function Story.update(dt)
     end
     Story.lastX, Story.lastY = p.x, p.y
   end
+
+  -- The two ambient overlays, derived rather than signalled. A bot's idle line
+  -- is drawn in bot.lua from the world's phase alone; these are the two things
+  -- that change what it should be saying and are not phases. Read off the world
+  -- each frame on purpose -- `extraction` has no closing signal to clear it on,
+  -- and a flag that latches would have the crew saying "why" over the ending.
+  local ph = world.phase
+  Names.extraction = (ph == "extraction")
+  Names.lastNight  = (ph == "dusk" or ph == "night")
+                     and (world.cycle or 1) >= TU.cycle.count
 
   refreshCast(world)
   pollFirstAttack(world)

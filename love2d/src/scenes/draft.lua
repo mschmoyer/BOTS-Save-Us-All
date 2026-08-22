@@ -293,10 +293,15 @@ function S:drawNames(x, y, w, a)
   local k0 = UI.stagger(t, 1, SEQ.names - 0.16, 0, 0.4)
   if k0 <= 0.002 then return end
 
+  -- One slot, one caption, every dawn: the memorial in the credits is built
+  -- the same way -- WHO DID NOT COME BACK, and NONE under it -- and a player
+  -- who has learned where to look does not have to read a new sentence to find
+  -- out it was a good night. It said "EVERY BOT CAME BACK" over "ALL ACCOUNTED
+  -- FOR", which is one fact phrased twice.
   if n == 0 then
-    UI.caption("EVERY BOT CAME BACK", x + w, y, UI.ts.micro,
+    UI.caption("DID NOT COME BACK", x + w, y, UI.ts.micro,
                UI.c(P.accent, 0.9 * a * k0), "right")
-    UI.text("ALL ACCOUNTED FOR", x + w, y + 18, UI.ts.h3, UI.c(P.accent, a * k0),
+    UI.text("NONE", x + w, y + 18, UI.ts.h3, UI.c(P.accent, a * k0),
             "right", a * k0, 0.08)
     return
   end

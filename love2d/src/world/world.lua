@@ -99,6 +99,10 @@ function World:init(seed, opts)
   self.stats       = { planted = 0, lost = 0, botsLost = 0, botsBuilt = 0, killed = 0,
                        cobaltMined = 0, rescued = 0 }
   self.allLostNames = {}       -- never cleared: the ending reads the whole run
+  -- The largest crew of each type this run has fielded. It, and not the crew
+  -- standing right now, is what the price of the next one is read off; see
+  -- World:botCost for why.
+  self.peakBots    = {}
   self.dawnReport  = nil
 
   if Tree.prewarm and not opts.noPrewarm then pcall(Tree.prewarm) end
@@ -635,6 +639,20 @@ function World:restore(d)
   -- an island that was mined out still gets its refills
   if #self.cobalts == 0 then self:seedCobalt() end
 
+  -- What the crew used to be, which is what the next one costs. Without this a
+  -- resumed run forgives every loss the saved run took, so closing the tab
+  -- after a bad night would be the cheapest way to undo it. Written in
+  -- TU.bots.order, one number per type; absent (an older file, or a type added
+  -- since) falls back to the crew that came back, which forgives nothing that
+  -- is still standing and nothing the file can prove.
+  local pk = d.peakBots or {}
+  for i = 1, #TU.bots.order do
+    local kind = TU.bots.order[i]
+    local v = tonumber(pk[i]) or 0
+    local owned = self:countBots(kind)
+    self.peakBots[kind] = (v > owned) and v or owned
+  end
+
   self.cycle  = math.max(1, math.floor(d.cycle or 1))
   self.cobalt = math.max(0, math.floor(d.cobalt or 0))
   self.time   = d.time or 0
@@ -711,13 +729,85 @@ function World:countBots(botType)
   return n
 end
 
+--- The largest crew of this type the run has fielded. Raised here as well as
+--- inside botCost, so the memory is a fact about the run rather than a fact
+--- about who last happened to ask the price.
+function World:notePeak(botType)
+  local owned = self:countBots(botType)
+  local p = self.peakBots
+  if owned > (p[botType] or 0) then p[botType] = owned end
+  return owned
+end
+
+--- The remembered crew fades back toward the crew actually standing.
+---
+--- Without this the peak is a wall. Lose twenty Planters on a bad cycle 3 and
+--- every replacement is priced as the twenty-first for the rest of the run,
+--- which turns one bad night into a dead run -- punished rather than bereaved,
+--- and a worse game than the one that rewarded attrition. With it the loss is
+--- expensive exactly while you are rebuilding from it, and a cycle or so later
+--- it is forgotten. `TU.bots.costMemory` is the half-life; 0 disables the fade.
+---
+--- Half a second of cadence and one pass over the crew: countBots per type
+--- every frame is six passes over the same array for nothing.
+function World:updatePeakBots(dt)
+  local hl = TU.bots.costMemory or 0
+  if hl <= 0 then return end
+  self.peakT = (self.peakT or 0) + dt
+  if self.peakT < 0.5 then return end
+  local elapsed = self.peakT
+  self.peakT = 0
+  local order = TU.bots.order
+  local live = self.peakLive
+  if not live then live = {} self.peakLive = live end
+  for i = 1, #order do live[order[i]] = 0 end
+  for i = 1, #self.bots do
+    local b = self.bots[i]
+    if b.alive and b.state ~= "dead" and live[b.type] then
+      live[b.type] = live[b.type] + 1
+    end
+  end
+  local keep = 0.5 ^ (elapsed / hl)
+  local p = self.peakBots
+  for i = 1, #order do
+    local k = order[i]
+    local pk, owned = p[k], live[k]
+    if pk then
+      if pk <= owned then p[k] = owned
+      else
+        local gap = (pk - owned) * keep
+        -- snap the last twentieth of a machine away, so the price of a crew
+        -- that has been whole for a while is an integer's worth again
+        p[k] = (gap < 0.05) and owned or (owned + gap)
+      end
+    end
+  end
+end
+
 --- The price of the next bot of this type, with escalation and chips applied.
+---
+--- The escalation is priced off the PEAK crew of this type, not the standing
+--- one. Off the standing one a death made the replacement CHEAPER: the only
+--- material consequence of losing a machine had the wrong sign, and a run that
+--- lost half its Planters was handed a discount on rebuilding them. Off the
+--- peak, the machine you lost is a machine you have to buy twice.
+---
+--- `TU.bots.costForgiveness` writes off part of the gap at once and
+--- `TU.bots.costMemory` fades the rest; at costForgiveness = 1 this is exactly
+--- the old behaviour, which is the one-line way back.
 function World:botCost(botType)
   local def = TU.bots[botType]
   if not def then return 0 end
   local owned = self:countBots(botType)
+  local peak = self.peakBots[botType] or 0
+  if owned > peak then peak = owned self.peakBots[botType] = owned end
+  -- Forgiveness is how much of the (peak - standing) gap is WRITTEN OFF, so it
+  -- subtracts. This read `* costForgiveness` and shipped with the value 0,
+  -- which collapsed the basis back to the standing count -- i.e. the whole
+  -- change was inert and a death still discounted its own replacement.
+  local basis = owned + (peak - owned) * (1 - (TU.bots.costForgiveness or 0))
   local growth = def.costGrowth or TU.bots.costGrowth
-  local mul = math.min(1 + owned * growth, TU.bots.costGrowthMax)
+  local mul = math.min(1 + basis * growth, TU.bots.costGrowthMax)
   return math.ceil(def.cost * mul * self.chips:get("botCost", 1))
 end
 
@@ -767,7 +857,10 @@ function World:spawnBot(x, y, botType, free, offRoster)
   -- second" is a bug however true each one is. See Bot:epitaph.
   b.offRoster = offRoster or nil
   self:addEntity(self.bots, self.hBot, b)
-  if not offRoster then self.stats.botsBuilt = self.stats.botsBuilt + 1 end
+  if not offRoster then
+    self.stats.botsBuilt = self.stats.botsBuilt + 1
+    self:notePeak(botType)
+  end
   if self.phase == "extraction" and self.boss and self.boss.alive and self.botsRebelled then
     b:rebel(self.boss)
   end
@@ -955,9 +1048,18 @@ function World:speak(who, line)
     table.remove(self.speeches, worst)
   end
   self.speeches[#self.speeches + 1] = { who = who, line = line, t = 0, dur = 3.2 }
-  -- a stable variant per bot, so each one keeps its own voice all run
-  Audio.play("bot_chatter", { volume = 0.35, pitch = 0.9 + (who.serial % 7) * 0.04,
-                              variation = who.serial, x = who.x, y = who.y })
+  -- a stable variant per bot, so each one keeps its own voice all run.
+  -- The mechanic gets a bubble too now (his one acknowledgement of a rescue),
+  -- and he has no serial: `who.serial % 7` on the player was an arithmetic-on-
+  -- nil crash waiting for the first machine anyone carried home. He is also not
+  -- a bot, so he does not get the bot voice. The rest of this path is clean for
+  -- a non-bot speaker: `drawSpeech` wants `alive` (Entity sets it) and `radius`
+  -- (Player has it), and the furthest-speaker eviction above can never drop him
+  -- because he is the one at distance zero from himself.
+  local serial = who.serial or 0
+  Audio.play(who.kind == "player" and "ui_move" or "bot_chatter",
+             { volume = 0.35, pitch = who.serial and (0.9 + (serial % 7) * 0.04) or 1,
+               variation = serial, x = who.x, y = who.y })
 end
 
 --------------------------------------------------------------------- the clock
@@ -1324,6 +1426,27 @@ function World:update(dt, realDt)
   if self.player then self.player:update(dt, self.camera) end
   sweep(self.trees, self.hTree, dt)
   self:refreshVisibleTrees()
+  -- THE X-RAY IS A CAMERA EFFECT, NOT A SIMULATION ONE, and this is the whole
+  -- of the "the cutscene subject is under a tree" bug.
+  --
+  -- game.lua passes `dt = 0` to this function while anybody is talking, so that
+  -- the Blight cannot eat the crew behind a page of dialogue. Every tree's
+  -- `updateXray` damps by that zero, which means the canopy is frozen in
+  -- whatever state it held at the instant the scene opened -- and a scene opens
+  -- by panning the camera somewhere NEW. The hole over the speaker never got a
+  -- frame to open in. Adding a focus for the subject (see `World:draw`) does
+  -- nothing at all until this runs.
+  --
+  -- So when the simulation is stopped, tick the x-ray on the real clock. Only
+  -- the visible slice, only while frozen, and `updateXray`'s own early-outs
+  -- still take almost every tree out in a couple of instructions.
+  if dt == 0 and realDt > 0 then
+    local vis = self.visTrees
+    for i = 1, #vis do
+      local t = vis[i]
+      if t.updateXray then t:updateXray(realDt) end
+    end
+  end
   sweep(self.bots, self.hBot, dt)
   sweep(self.enemies, self.hEnemy, dt)
   sweep(self.cobalts, self.hCobalt, dt)
@@ -1339,6 +1462,7 @@ function World:update(dt, realDt)
   end
 
   self:updateSpread(dt)
+  self:updatePeakBots(dt)
 
   -- speech bubbles
   for i = #self.speeches, 1, -1 do
@@ -1559,6 +1683,20 @@ function World:draw(camera)
         Tree.addFocus(b.x, b.y, BP.xrayRadius)
         opened = opened + 1
       end
+    end
+    -- ...and a soft one on whatever a cutscene is framing. A captured `radio`
+    -- beat put the camera exactly on the speaking bot and the bot was under a
+    -- closed canopy for the whole scene: the shot was correct and the subject
+    -- was not in it. `Camera:focus()` is where the camera is actually looking,
+    -- offsets folded in, which during a beat is the entity Dialogue is panning
+    -- to -- so this needs nothing from the dialogue runtime and cannot
+    -- disagree with the framing. It is damped by the pan on the way in and by
+    -- `xrayRate` on the way out, so it cannot flicker, and a frame with no
+    -- cutscene running does not execute any of it.
+    if self.cutscene then
+      local CS = TU.cutscene
+      local fx, fy = camera:focus()
+      Tree.addFocus(fx, fy, CS.radius, CS.focus)
     end
   end
   if VFX.setViewport then
@@ -1845,6 +1983,29 @@ end
 Signal.on("bot:downed", crewMourns)
 Signal.on("bot:lost", function(bot, peaceful)
   if not peaceful then crewMourns(bot) end
+end)
+
+--- NEW: and the body stays.
+---
+--- A loss used to leave nothing on the ground. The corpse is swept the frame it
+--- dies, so both of the script's funeral beats -- whose delay and patience are
+--- measured in minutes -- were playing over empty grass with a bot saying "yes"
+--- at a patch of meadow; story.lua's own comment admits it for one of the two.
+--- `Relic.addHusk` leaves a permanent, non-interactive, unlit husk at the spot:
+--- see the husk note at the top of src/entities/relic.lua for why that is worth
+--- more than a decal, and the `husk` block in tuning for what it costs.
+---
+--- Not on a peaceful shutdown. A machine that powered down at the extraction
+--- walked onto the ship; only the ones that were killed are left behind.
+Signal.on("bot:lost", function(bot, peaceful)
+  if peaceful or not Relic.addHusk then return end
+  local w = bot.world
+  if not w then return end
+  -- Nothing is left behind after the rig is down: the finale gathers the crew,
+  -- the camera is on the boss, and a body appearing under the ending's own
+  -- cutscene is a prop arriving during a curtain call.
+  if w.phase == "ending" then return end
+  Relic.addHusk(w, bot.x, bot.y, bot.type)
 end)
 
 -- Old Growth applies to what you plant next, not to the wood you already have:

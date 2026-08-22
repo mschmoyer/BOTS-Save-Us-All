@@ -19,6 +19,7 @@
 -- out of the same RNG. Oxygen is recomputed from the forest. The island is
 -- rebuilt from the world seed.
 local Opt   = require("src.core.optional")
+local TU    = require("src.game.tuning")
 local Story = Opt.require("src.game.story")
 
 local Save = {}
@@ -27,7 +28,12 @@ Save.FILE    = "run.lua"
 -- 2: the crew carry their own tallies, the fallen are records again rather
 -- than tostring'd table addresses, and the story's memory of the run is in
 -- here too. A version the reader does not know is simply not offered.
-Save.VERSION = 3
+-- 4: `peakBots` -- the largest crew of each type the run has fielded, which is
+-- what the next one costs (World:botCost). It is not derivable from the crew
+-- that came back, and without it a resumed run forgives every loss the saved
+-- run took: closing the tab after a bad night would be the cheapest way to
+-- undo it.
+Save.VERSION = 4
 
 -- Everything wide is a flat numeric array read at a fixed stride, so adding a
 -- fact means appending to the row, bumping the stride here, and bumping
@@ -47,6 +53,10 @@ Save.TREE_STRIDE = 5
 Save.BOT_STRIDE  = 13
 Save.NODE_STRIDE = 3
 Save.LOST_STRIDE = 10
+-- `peakBots` is the one flat array that is not strided: it is exactly one
+-- number per bot type, in TU.bots.order, so its index IS the type. A type
+-- added to that order later lands past the end of an older row and the reader
+-- falls back to the crew that came back, which is the safe direction.
 
 --- Compile with no access to globals at all: the chunk can only build a table.
 local function loadLiteral(src)
@@ -179,6 +189,16 @@ function Save.snapshot(world)
   local list = w.chips and w.chips.list or {}
   for i = 1, #list do chips[i] = list[i].id end
 
+  -- What the crew used to be. Prices are read off this, not off the crew that
+  -- came back, so it has to survive the file or a resume forgives every loss.
+  -- It fades in play (World:updatePeakBots), hence the fractions.
+  local peakBots = {}
+  local pk = w.peakBots or {}
+  for i = 1, #TU.bots.order do
+    local kind = TU.bots.order[i]
+    peakBots[i] = pk[kind] or 0
+  end
+
   local st = w.stats or {}
   return {
     version  = Save.VERSION,
@@ -194,6 +214,7 @@ function Save.snapshot(world)
     botTraits = botTraits,
     nodes    = nodes,
     chips    = chips,
+    peakBots = peakBots,
     lostNames  = lostNames,
     lostTypes  = lostTypes,
     lostTraits = lostTraits,
@@ -301,6 +322,7 @@ local function serialize(d)
     "  o2 = " .. num(d.o2) .. ",",
     "  stats = " .. flat(d.stats) .. ",",
     "  chips = " .. strs(d.chips) .. ",",
+    "  peakBots = " .. flat(d.peakBots) .. ",",
     "  lostNames = " .. strs(d.lostNames) .. ",",
     "  lostTypes = " .. strs(d.lostTypes) .. ",",
     "  lostTraits = " .. strs(d.lostTraits) .. ",",

@@ -101,6 +101,15 @@ local T = {
   memDim    = 0.30,      -- over the whole frame
   memBand   = 0.62,      -- ...and again down the column
   memFeather= 190,       -- how far the column takes to fade out sideways
+  -- ...but NOT YET. The column exists so that 13px caption type survives over a
+  -- sunlit canopy, and the first thing it lands on is the title card -- which
+  -- is 46px display type with its own shadow, needs none of it, and is sitting
+  -- directly over the tableau the scene has spent forty seconds staging. At
+  -- full strength the ring the player has just been shown is a grey smudge
+  -- behind the game's name. The column comes up later and slower than the
+  -- overall dim, and is at full strength by the time the first name arrives.
+  memBandFrom = 3.0,
+  memBandRise = 8.0,
   -- Where the last line comes to rest, as a fraction of screen height, and how
   -- long it is held there. The last thing the game says should be read, not
   -- watched sliding off the top edge.
@@ -120,11 +129,29 @@ local T = {
   -- and the lines would go unread. So the camera lifts instead, by half the
   -- panel, for exactly as long as the panel is up.
   panelPad  = 46,        -- world px of chassis-and-nameplate above and below
-  -- The crowd introduces itself properly for this one scene. Every survivor is
-  -- standing on the ring, two hundred pixels out, which is halfway down the
-  -- plate's own distance ramp -- so in the shot the whole game is for, thirty
-  -- names were rendering at half alpha over a sunlit clearing.
-  plateGain = 1.55,
+  -- THE TURN IS SHOT ALONE.
+  --
+  -- "Just me." / "All alone." / "Forever." -- and the helmet on the ground with
+  -- the air hose still attached -- were played at the framing the whole ring
+  -- settled on, which is a man 35 pixels tall and a helmet four pixels wide.
+  -- The wide shot is the right image for the silence before it, where the point
+  -- is how many of them are standing there; it is the wrong image for three
+  -- lines about being alone. So the ending is two shots. The panel coming back
+  -- up after the silence is the cut, and it pushes in to a portrait on him.
+  -- Derived from the ring, like every other framing in this scene: push until
+  -- the nearest machine on the circle is outside the frame, then stop. Fixed
+  -- numbers do not survive a crew of six or a crew of forty.
+  turnClear = 0.90,      -- of the half-frame the ring must be beyond
+  turnMin   = 2.6,
+  turnMax   = 3.6,
+  turnHush  = 2.0,       -- panel down this long and the silence has started
+  turnSay   = 5.2,       -- ...and this far into it, one machine answers him
+  -- The crowd does not introduce itself over the last shot of the game.
+  -- Individuality is ONE name, not thirty-three: see `Bot.plateOnly`. The two
+  -- machines the scene is written around keep their plates the whole way
+  -- through, and because the guest list bypasses the distance ramp this no
+  -- longer has to fight it.
+  plateGain = 1.0,
   -- Dawn's fog is 0.50, which is right for a sky and wrong for the one shot
   -- the whole run is for: at full strength a pale peach veil sat over the ring
   -- of survivors for the first forty seconds of the ending and everything in
@@ -246,13 +273,15 @@ local GENERIC = { ["was here"] = true }
 --- only be reported as the cycle, not as a count of nights survived.
 local function fromRecord(rec)
   if type(rec) ~= "table" then return nil end
+  -- the memorial's one number rule, which these rows are on the same page as
+  local count = (Bot and Bot.count) or tostring
   local n = rec.planted or 0
   if n > 0 then
-    return n == 1 and "planted one tree" or ("planted " .. n .. " trees")
+    return "planted " .. count(n) .. (n == 1 and " tree" or " trees")
   end
   n = rec.built or 0
   if n > 0 then
-    return "built " .. n .. (n == 1 and " planter" or " planters")
+    return "built " .. count(n) .. (n == 1 and " planter" or " planters")
   end
   local never = NEVER[rec.type]
   if never then return never end
@@ -270,11 +299,15 @@ end
 
 local function fallenRecords(world)
   local out, seen = {}, {}
+  local mem = world.memorial            -- Bot:epitaph left the whole ledger here
   local function push(rec)
     local name = (type(rec) == "table") and rec.name or rec
     if not name or seen[name] then return end
     seen[name] = true
-    out[#out + 1] = { name = name, epitaph = epitaphFor(name, rec) or "was here" }
+    out[#out + 1] = { name = name,
+                      clauses = mem and mem[name] or nil,
+                      line = epitaphFor(name, rec) or "was here",
+                      epitaph = epitaphFor(name, rec) or "was here" }
   end
   if world.allLostNames then
     for i = 1, #world.allLostNames do push(world.allLostNames[i]) end
@@ -287,6 +320,138 @@ local function fallenRecords(world)
     for i = 1, #Story.sacrificed do push(Story.sacrificed[i]) end
   end
   return out
+end
+
+--------------------------------------------------------------- the memorial
+--- THE PAGE COMPOSES THE ROW; THE MACHINE DOES NOT COMPOSE ITS OWN LINE.
+---
+--- Forty-two names and, on a real seven-cycle run, eight surviving sentences
+--- between them, twenty-four of them beginning "planted". Ranking each row on
+--- its own merits is what produced that: every Planter's rarest true fact is
+--- that it planted, so every Planter says so and the page reads as a table
+--- however good any single row is. A second clause per row does not fix it by
+--- itself either -- forty rows independently picking their own next-best fact
+--- puts "it stood through four nights." on fifteen of them and moves the
+--- problem one clause to the right.
+---
+--- So the second clause is chosen HERE, where the whole list is in hand. The
+--- page keeps a tally of every kind of clause it has already printed and a
+--- candidate pays `T.bots.memorial.spread` ranks for each previous printing, so
+--- a machine tends to be described by whatever is rarest about it on this
+--- particular page rather than by whatever is rarest about it in the abstract.
+--- Two runs with the same crew get different memorials, which is correct: the
+--- page is about this run.
+---
+--- Three rules it will not break.
+---
+---   * The head clause is the machine's own ranked fact and the tally does not
+---     get to move it. The work leads; that is the whole point of the ranking,
+---     and a page that reshuffled headlines for variety would be describing
+---     machines by what its neighbours had not said yet.
+---   * No row ever repeats the row above it word for word. Two identical
+---     sentences in a row is the one thing a memorial cannot survive. A second
+---     clause is tried first, then a demotion of the head.
+---   * If the ledger cannot honestly support a second clause, the row prints
+---     one. A memorial that pads is worse than a memorial that repeats.
+---
+--- Rows restored from a save have no clause list -- the ledger only exists on
+--- the machine, and it went with it -- so those print the frozen line and take
+--- no part in the tally.
+local SECOND = {         -- clauses that can be a row's second sentence
+  planted = true, built = true, lit = true, shots = true, mined = true,
+  carried = true, saves = true, never = true, walked = true, nights = true,
+  came = true, born = true,
+  -- "first" is a headline and nothing else; "lasted" is what the page says
+  -- when there is nothing to say, and it is never worth saying twice.
+}
+
+--- Which wording of a clause to use, and the tally slot it belongs to. Only one
+--- clause -- the tree count, which lands on two thirds of a long page -- has
+--- more than one wording; the page takes whichever of the two it has used less.
+--- Counted per WORDING and not per finished phrase, because every tree count is
+--- a different phrase and a per-phrase tally would only ever alternate when two
+--- machines happened to plant the same number.
+local function phrase(c, worded)
+  if not c.alt then return c.text, c.key end
+  local a, b = c.key .. "|a", c.key .. "|b"
+  if (worded[a] or 0) <= (worded[b] or 0) then return c.text, a end
+  return c.alt, b
+end
+
+--- A clause as a sentence of its own. Most are bare predicates about the
+--- machine and take "it"; the two the crew says about themselves keep theirs.
+local function sentence(c, ph)
+  return (c.subject and ph or ("it " .. ph)) .. "."
+end
+
+local function rowWidth(str, size)
+  if Text.bodyMeasure then return (Text.bodyMeasure(str, size)) end
+  return #str * size * 0.5
+end
+
+--- One row. `used` counts kinds of fact, `said` counts finished sentences,
+--- `prev` is the line above this one.
+local function composeRow(list, used, said, worded, prev, maxW, size)
+  local MEM = TU.bots.memorial
+  local cand = {}
+  local function claim(c, ph, vk)
+    used[c.key] = (used[c.key] or 0) + 1
+    said[ph] = (said[ph] or 0) + 1
+    worded[vk] = (worded[vk] or 0) + 1
+  end
+  -- Two attempts: the machine's headline, and -- only if that collides with the
+  -- row above and nothing else will separate them -- the fact under it.
+  for h = 1, math.min(#list, 2) do
+    local head = list[h]
+    local hp, hv = phrase(head, worded)
+    local n = 0
+    for i = 1, #list do
+      local c = list[i]
+      if i ~= h and SECOND[c.key] and c.key ~= head.key then
+        n = n + 1
+        cand[n] = c
+        c._ph, c._vk = phrase(c, worded)
+        c._say = sentence(c, c._ph)
+        c._score = i + MEM.spread * min(used[c.key] or 0, MEM.spreadCap)
+                     + MEM.exact * (said[c._ph] or 0)
+      end
+    end
+    for i = n + 1, #cand do cand[i] = nil end
+    table.sort(cand, function(a, b) return a._score < b._score end)
+    for i = 1, n do
+      local line = hp .. ". " .. cand[i]._say
+      if line ~= prev and rowWidth(line, size) <= maxW then
+        claim(head, hp, hv)
+        claim(cand[i], cand[i]._ph, cand[i]._vk)
+        return line
+      end
+    end
+    local line = hp .. "."
+    if line ~= prev then
+      claim(head, hp, hv)
+      return line
+    end
+  end
+  return (phrase(list[1], worded)) .. "."
+end
+
+--- Write every row's finished sentence. Called from `layoutCredits`, so a
+--- resize re-fits the second clauses to the new column instead of overflowing.
+function S:composeMemorial(colW, size)
+  local rows = self.fallen
+  if not rows then return end
+  local maxW = colW * TU.bots.memorial.rowWidth
+  local used, said, worded, prev = {}, {}, {}, nil
+  for i = 1, #rows do
+    local r = rows[i]
+    local list = r.clauses
+    if list and #list > 0 then
+      r.epitaph = composeRow(list, used, said, worded, prev, maxW, size)
+    else
+      r.epitaph = (r.line or "was here") .. "."
+    end
+    prev = r.epitaph
+  end
 end
 
 ------------------------------------------------------------------------- enter
@@ -353,13 +518,23 @@ function S:enter(world)
     -- says "you can take it off now" has to be the bot the scene has been
     -- staged around since it opened.
     self.ctx = Story.prepare("ending", world)
+    -- ...and the two machines that keep a name. `ctx.bot` is the one that says
+    -- "you can take it off now", which is the one the player heard boot and
+    -- speak if it is still standing; `ctx.bot2` is whoever is next to him.
+    local only = {}
+    if self.ctx.bot then only[self.ctx.bot] = true end
+    if self.ctx.bot2 then only[self.ctx.bot2] = true end
+    self.plateOnly = next(only) and only or nil
   else
     self.bots, self.fallen = {}, {}
     self.stats = { trees = 0, lost = 0, planted = 0, o2 = 0, cycles = 0,
                    built = 0, rescued = 0, theirs = 0 }
   end
 
-  if Bot then Bot.plateGain = 1 end
+  if Bot then
+    Bot.plateGain = T.plateGain
+    Bot.plateOnly = self.plateOnly
+  end
   if Music.setState then Music.setState("ending") end
   if Music.setIntensity then Music.setIntensity(0) end
   -- the sun comes up across the whole ending, and is fully up by the credits
@@ -391,7 +566,7 @@ end
 
 function S:leave()
   if self.world then self.world.cutscene = false end
-  if Bot then Bot.plateGain = 1 end
+  if Bot then Bot.plateGain = 1 Bot.plateOnly = nil end
 end
 
 function S:resize(w, h)
@@ -402,6 +577,11 @@ function S:resize(w, h)
 end
 
 ---------------------------------------------------------------------- staging
+-- How hard the ring is allowed to work to find dry ground: turns of the arc,
+-- and how far it may close if turning alone will not do it.
+local RING_TURNS  = 24
+local RING_SCALES = { 1.0, 0.88, 0.76, 0.64 }
+
 --- Ring positions, assigned by angle so nobody crosses the circle to get home.
 function S:assignRing()
   local p = self.world and self.world.player
@@ -424,11 +604,52 @@ function S:assignRing()
 
   local r = U.clamp(n * T.ringGap / U.TAU, T.ringMin, T.ringMax)
   table.sort(ring, function(a, c) return a.a < c.a end)
+
+  -- PUT THE CIRCLE ON THE ISLAND. The ring is struck around wherever the player
+  -- happens to be standing when the rig falls, and on one traced seed that was
+  -- close enough to the shore that a third of the crew formed up in the sea for
+  -- the last shot of the game. The island's own shape decides where the circle
+  -- goes: turn the arc and, if turning is not enough, close it, keeping
+  -- whichever combination puts the most machines on land -- then any single
+  -- straggler still wet is walked in along its own radius until it is not.
+  local terr = self.world and self.world.terrain
+  local land = terr and terr.isLand and function(x, y) return terr:isLand(x, y) end or nil
+  local rot = 0
+  if land then
+    local best = -1
+    for si = 1, #RING_SCALES do
+      local sc = RING_SCALES[si]
+      for ti = 0, RING_TURNS - 1 do
+        local off = ti / RING_TURNS * U.TAU
+        local hits = 0
+        for i = 1, n do
+          local a = -math.pi * 0.5 + off + (i - 1) / n * U.TAU
+          if land(p.x + math.cos(a) * r * sc, p.y + math.sin(a) * r * sc * 0.78) then
+            hits = hits + 1
+          end
+        end
+        if hits > best then best, rot = hits, off self.ringScale = sc end
+        if best >= n then break end
+      end
+      if best >= n then break end
+    end
+    r = r * (self.ringScale or 1)
+  end
+
   for i = 1, n do
-    local a = -math.pi * 0.5 + (i - 1) / n * U.TAU
+    local a = -math.pi * 0.5 + rot + (i - 1) / n * U.TAU
     local b = ring[i].b
-    b.ringX = p.x + math.cos(a) * r
-    b.ringY = p.y + math.sin(a) * r * 0.78
+    local rr = r
+    if land and not land(p.x + math.cos(a) * rr, p.y + math.sin(a) * rr * 0.78) then
+      for k = 0.85, 0.05, -0.1 do
+        if land(p.x + math.cos(a) * r * k, p.y + math.sin(a) * r * k * 0.78) then
+          rr = r * k
+          break
+        end
+      end
+    end
+    b.ringX = p.x + math.cos(a) * rr
+    b.ringY = p.y + math.sin(a) * rr * 0.78
     b.ringA = a
     -- where it set off from, so the walk can be timed rather than paced: they
     -- all get there at the same moment, which is the only version of this
@@ -439,6 +660,9 @@ function S:assignRing()
   self.ringN = n
   -- frame the circle, whatever size it turned out to be
   self.ringZoom = U.clamp(T.ringFrame / (r * 0.78 + 96), T.zoomMin, T.zoomMax)
+  -- ...and the second shot: close enough that the circle is off the edges.
+  self.turnZoom = U.clamp(lg.getWidth() * 0.5 / max(1, r * T.turnClear),
+                          T.turnMin, T.turnMax)
 end
 
 --- Walk the bots to their places. Their own AI is not running; this is us.
@@ -516,6 +740,31 @@ function S:speak()
     replace = true,
     onDone = function() scene:advance("after") end,
   })
+end
+
+--- THE ONE LINE THAT ANSWERS HIM, and it has never once been said.
+---
+--- The script fires it from an `fn` step in the middle of the silence -- one
+--- machine saying "we are here" in the world, with no panel and no box, a few
+--- seconds before he says "All alone." It goes through `World:speak`, whose
+--- first rule is that nobody talks over a cutscene, and `hush` sets
+--- `world.cutscene` on the ending's first frame. So the guard has eaten the
+--- only line in the ending that can contradict him, in every finished run the
+--- game has ever had. The ending lifts it for exactly this sentence and puts it
+--- straight back: it is not a bot chattering over a cutscene, it is the scene.
+function S:hushLine()
+  if self.saidQuiet then return end
+  local world = self.world
+  local ctx = self.ctx
+  local b = ctx and (ctx.bot or ctx.bot2)
+  local line = Script.credits and Script.credits.quiet
+  if not (world and world.speak and line) then return end
+  if not (b and b.alive and b.state ~= "dead") then return end
+  self.saidQuiet = true
+  local was = world.cutscene
+  world.cutscene = false
+  world:speak(b, line)
+  world.cutscene = was
 end
 
 --- The world is not running, so the one line a bot says out loud during the
@@ -639,6 +888,27 @@ function S:update(dt, realDt)
     Bot.plateGain = T.plateGain * (1 - U.saturate(self.creditsT / T.memBack))
   end
 
+  -- THE CUT INTO THE TURN, detected rather than scripted. The script takes the
+  -- dialogue panel away for the silence in the middle of the ending and brings
+  -- it back for the last three lines; that returning edge is the only cut in
+  -- the scene and it is the one thing the camera has to know about. Read off
+  -- the panel rather than off a line of dialogue, so rewriting the script
+  -- cannot silently leave the camera in the wrong place -- and if a rewrite
+  -- ever removes the silence, the turn simply never fires and the ending keeps
+  -- the wide shot it has always had.
+  if stage == "words" then
+    local panel = Dialogue.bar or 0
+    if panel > 0.5 then
+      if self.panelSeen and self.hushed then self.turn = true end
+      self.panelSeen = true
+      self.hushT = 0
+    elseif panel < 0.05 and self.panelSeen then
+      self.hushT = (self.hushT or 0) + realDt
+      if self.hushT > T.turnHush then self.hushed = true end
+      if self.hushT > T.turnSay then self:hushLine() end
+    end
+  end
+
   local barWant = (stage == "credits") and 0 or 1
   self.bar = U.approach(self.bar, barWant, realDt * (barWant > 0 and 1.5 or 0.9))
 
@@ -673,12 +943,18 @@ function S:update(dt, realDt)
         local top = L and L.bar or (lg.getHeight() * T.barFrac)
         local bot = L and L.py or (lg.getHeight() * 0.64)
         local mid = (top + bot) * 0.5
-        -- ...and the ring has to fit inside it, which at the framing the ring
-        -- settled on it does not: 36 machines are 480 screen pixels tall and
-        -- the band is 480 pixels of screen. Give the whole ellipse the band.
-        local need = (self.ringR or T.ringMin) * 0.78 + T.panelPad
-        local fit  = U.clamp((bot - top) * 0.5 / need, T.zoomMin, zoom)
-        zoom = U.lerp(zoom, fit, panel)
+        if self.turn then
+          -- The second shot. The ring is not fitted into the band -- it is not
+          -- meant to be in the frame at all. The line is about being alone.
+          zoom = U.lerp(zoom, self.turnZoom or T.turnMax, panel)
+        else
+          -- ...and the ring has to fit inside it, which at the framing the ring
+          -- settled on it does not: 36 machines are 480 screen pixels tall and
+          -- the band is 480 pixels of screen. Give the whole ellipse the band.
+          local need = (self.ringR or T.ringMin) * 0.78 + T.panelPad
+          local fit  = U.clamp((bot - top) * 0.5 / need, T.zoomMin, zoom)
+          zoom = U.lerp(zoom, fit, panel)
+        end
         lift = panel * (10 + (lg.getHeight() * 0.5 - mid) / math.max(0.2, cam.zoom))
       end
     end
@@ -731,8 +1007,22 @@ end
 
 --------------------------------------------------------------------- credits
 -- Laid out once into a flat list of rows so the scroll is a single offset.
-local ROW = { gap = 34, head = 56, line = 30, big = 92 }
+local ROW = { gap = 34, head = 56, line = 30, big = 92,
+              -- The name and what it did. The epitaph was 13px inkDim under a
+              -- 19px ink name -- the serial number set larger and brighter than
+              -- the sentence, on a memorial whose entire premise is that the
+              -- sentence is the point. The sentence is 15px now and it is ink
+              -- rather than inkDim; the name stays the label it is.
+              name = 19, epi = 15, epiAlpha = 0.82,
+              sapGap = 18 }        -- sapling to the left of the name's own edge
+--- The memorial's column, which the layout pass and the draw pass have to agree
+--- on: one is where the second clauses are fitted, the other is where they land.
+local function memColumn(w)
+  return min(520, w - 120)
+end
 local SHADOW = { dx = 0, dy = 2, alpha = 0.65 }
+local NAME_M = { tracking = 0.1 }      -- must match the name's own tracking
+local EPI = {}
 local CRED = {}
 local function credOpts()
   for k in pairs(CRED) do CRED[k] = nil end
@@ -743,6 +1033,7 @@ end
 function S:layoutCredits()
   local rows = {}
   local C = Script.credits
+  self:composeMemorial(memColumn(lg.getWidth()), ROW.epi)
   local function push(kind, text, value, size)
     rows[#rows + 1] = { kind = kind, text = text, value = value, size = size,
                         h = size or ROW.line }
@@ -780,6 +1071,10 @@ function S:layoutCredits()
       -- name over epitaph, not name beside number: a two-line block reads as a
       -- headstone, a label-and-value row reads as a table of results
       push("name", r.name, r.epitaph, ROW.line + 30)
+      -- measured once, here: the sapling hangs off the left edge of a centred
+      -- name, and measuring display type per row per frame is not free
+      rows[#rows].nameW = (Text.measure and Text.measure(r.name, ROW.name, NAME_M))
+                          or (#r.name * ROW.name * 0.6)
     end
   end
 
@@ -823,7 +1118,7 @@ function S:drawCredits()
   if not rows then return end
   local w, h = lg.getDimensions()
   local cx = floor(w * 0.5)
-  local colW = min(520, w - 120)
+  local colW = memColumn(w)
   local lx = cx - colW * 0.5
   local rx = cx + colW * 0.5
   local top = h - self.scrollY
@@ -840,11 +1135,12 @@ function S:drawCredits()
   -- wider and deeper now, and the world behind it has been graded back in
   -- S:draw, so the contrast is guaranteed rather than hoped for.
   local k = U.saturate(self.creditsT / 5)
+  local bk = U.saturate((self.creditsT - T.memBandFrom) / T.memBandRise)
   Draw.setColor(P.black, T.memDim * k)
   lg.rectangle("fill", 0, 0, w, h)
   local bandW = colW + 150
   local bx = floor(cx - bandW * 0.5)
-  local band = T.memBand * k
+  local band = T.memBand * bk
   local feather = T.memFeather
   Draw.setColor(P.black, band)
   lg.rectangle("fill", bx, 0, bandW, h)
@@ -853,7 +1149,7 @@ function S:drawCredits()
   Draw.linearGradient(bx + bandW, 0, feather, h,
                       P.alpha(P.black, band), P.alpha(P.black, 0), 0)
   Draw.radialGradient(cx, h * 0.5, colW * 1.35,
-                      P.alpha(P.black, 0.22 * k), P.alpha(P.black, 0), h * 0.72)
+                      P.alpha(P.black, 0.22 * bk), P.alpha(P.black, 0), h * 0.72)
 
   for i = 1, #rows do
     local r = rows[i]
@@ -874,14 +1170,21 @@ function S:drawCredits()
           UI.text(r.text, lx, y + 3, 13, P.inkDim, "left", a * 0.95, 0.2, credOpts())
           UI.text(r.value, rx, y - 2, 20, P.ink, "right", a, 0.04, credOpts())
         elseif kind == "name" then
+          -- ON THE PAGE'S OWN AXIS. Both headers are centred and the names were
+          -- left-aligned a quarter of the way across, with four hundred pixels
+          -- of dead column to their right: under centred headers that reads as
+          -- broken layout, on the last screen of the game. The pair is centred
+          -- and the sapling hangs off the left edge of the name, so the
+          -- memorial has one axis instead of two.
           local grow = U.saturate((h * 0.80 - y) / 220)
-          sapling(lx + 12, y + 20, grow, a)
-          UI.text(r.text, lx + 42, y, 19, P.ink, "left", a * 0.95, 0.1, credOpts())
+          local nw = r.nameW or 0
+          sapling(cx - nw * 0.5 - ROW.sapGap, y + 20, grow, a)
+          UI.text(r.text, cx, y, ROW.name, P.ink, "center", a * 0.95, 0.1, credOpts())
           if r.value then
             -- what it did, in the voice it said it in: lowercase, body face,
             -- the same type its speech bubbles were set in
-            Text.body(r.value, lx + 42, y + 24, 14,
-                      { color = P.inkDim, alpha = a * 0.8 })
+            EPI.color, EPI.alpha, EPI.align = P.ink, a * ROW.epiAlpha, "center"
+            Text.body(r.value, cx, y + 24, ROW.epi, EPI)
           end
         elseif kind == "none" then
           UI.text(r.text, cx, y, 13, P.accent, "center", a, 0.26, credOpts())

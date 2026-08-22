@@ -132,8 +132,13 @@ end
 --- planted, all night long, and a Repulsor said one as it burned out. Dusk
 --- counts as night here for the same reason it does over there -- the light has
 --- gone and "more sun today" has not been true for a while.
+--- And a third time: `extraction` is not night, so it fell through to the
+--- daylight pool and the crew said "the ground is wet here" with the Harvester
+--- Prime standing on the forest. `Bot:update` only redirected machines still in
+--- `work` and still `confused`, which a rebelling one is not.
 function Bot:phasePool()
   local ph = self.world and self.world.phase
+  if ph == "extraction" then return "boss" end
   return (ph == "night" or ph == "dusk") and "night" or "day"
 end
 
@@ -361,7 +366,21 @@ function Bot:update_builder(dt)
   -- player's own escalating price never touched it -- which made it the way
   -- around the only brake on the size of the workforce. It walks the same
   -- curve now, in carry rather than cobalt.
-  local crew = (self.world and self.world.countBots and self.world:countBots(want)) or 0
+  --
+  -- ...off the PEAK crew of that type, for the same reason `World:botCost`
+  -- does: read off the standing crew, a death made the next machine of that
+  -- type CHEAPER, and the one brake on the size of the workforce loosened
+  -- exactly when the workforce was being wiped out. `world.peakBots` is the
+  -- remembered crew and it fades back toward the standing one on its own
+  -- (World:updatePeakBots), so this forgets a bad night on the same clock the
+  -- player's own prices do. It does not apply `costForgiveness`: this is an
+  -- integer step at 24 and again at 48 against a cap of 48, so it is two
+  -- values, and blending a fraction into it would buy nothing but a second
+  -- copy of a rule that lives in world.lua.
+  local w = self.world
+  local crew = (w and w.countBots and w:countBots(want)) or 0
+  local peak = w and w.peakBots and w.peakBots[want]
+  if peak and peak > crew then crew = peak end
   local buildCost = (self.def.buildCost or 2)
                     * math.max(1, math.ceil(wantDef.cost / T.planter.cost))
                     * (1 + math.floor(crew / 24))
@@ -625,136 +644,242 @@ function Bot:expire(peaceful)
   Signal.emit("bot:lost", self, peaceful)
 end
 
---- Small numbers, spelled. The memorial sets these at fourteen pixels under a
---- name, and "stood through 5 nights" reads like a receipt where "stood through
---- five nights" reads like a sentence. Counts that are the POINT of the line --
---- trees, darts, cobalt -- stay in digits, which is the convention this
---- function already had ("planted one tree", "planted 3 trees").
+--- THE MEMORIAL'S ONE NUMBER RULE: words under twenty, digits at twenty and up.
+---
+--- What was here before was a rule nobody could see. Small counts were spelled,
+--- but counts that were "the POINT of the line" -- trees, darts, cobalt -- were
+--- left in digits, so one screen of the memorial read `built 1 planter` /
+--- `fired one dart` / `fired 34 darts` / `stood through seven nights` and what
+--- a reader perceived was not a convention, it was a game that could not decide.
+--- One threshold, every branch, no exceptions: `built one planter` is the row
+--- this fixes, and `carried 350 cobalt home` is why the threshold is low.
 local ONES = { "one", "two", "three", "four", "five", "six", "seven", "eight",
                "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
                "fifteen", "sixteen", "seventeen", "eighteen", "nineteen" }
-local TENS = { [2] = "twenty", [3] = "thirty", [4] = "forty", [5] = "fifty",
-               [6] = "sixty", [7] = "seventy", [8] = "eighty", [9] = "ninety" }
-local function spell(n)
+local function num(n)
   n = math.floor(n)
   if n <= 0 then return "no" end
   if n < 20 then return ONES[n] end
-  if n > 99 then return tostring(n) end
-  local t, o = math.floor(n / 10), n % 10
-  return o == 0 and TENS[t] or (TENS[t] .. "-" .. ONES[o])
+  return tostring(n)
 end
+
+--- ...and the same rule, for anything outside this file that prints a count
+--- into the same page. scenes/ending.lua needs it for the rows it has to
+--- rebuild from a save, where the machine and its ledger are both gone.
+Bot.count = num
 
 local function times(n)
   if n == 1 then return "once" end
   if n == 2 then return "twice" end
-  return spell(n) .. " times"
+  return num(n) .. " times"
+end
+
+-- Cycles are days, and the run is seven of them.
+local ORD = { "first", "second", "third", "fourth", "fifth", "sixth", "seventh",
+              "eighth", "ninth", "tenth" }
+
+--- The one machine the player has a relationship with: the one they heard boot
+--- and speak, which the director keeps a reference to. Read out of the loaded
+--- module rather than required, so a bot does not take a dependency on the
+--- director for the sake of one line -- and so a demo scene with no director
+--- simply gets `false`. `self.isFirstBot` wins if anything ever sets it.
+local function isTheFirstOne(self)
+  if self.isFirstBot then return true end
+  local Story = package.loaded["src.game.story"]
+  return (Story ~= nil and Story.theFirstOne == self) or false
+end
+
+--- EVERY TRUE THING THIS MACHINE'S LEDGER CAN SAY, RANKED.
+---
+--- `Bot:epitaph` used to be a ladder of `return`s: the first true fact won and
+--- the rest of the ledger was thrown away. That is why the memorial read as a
+--- table -- forty-two machines, six or seven surviving sentences, and the
+--- commonest of them on more than half the page. The ladder is now a LIST. The
+--- head of it is still the one fact this machine is described by, and
+--- `Bot:epitaph` still returns exactly that; what is new is that the rest of
+--- the list survives the call, so scenes/ending.lua can give a row a second
+--- clause and can choose that clause against the whole page instead of against
+--- this one machine. See `S:composeMemorial`.
+---
+--- Each entry is `{ key, text, subject }`:
+---   `text`    the clause, no full stop, lowercase, third person unless it says
+---             otherwise. It is printed bare as the head of a row.
+---   `subject` the clause supplies its own subject ("you went out and got it").
+---             Without it the clause is a bare predicate and takes "it" when it
+---             is used as a row's second sentence.
+---   `key`     what KIND of fact it is. Two rows carrying the same key read as
+---             the same sentence however different their numbers are, which is
+---             the thing the page composer is counting.
+---
+--- The order is the ranking, and it is: what it made, then what it cost you,
+--- then what it endured, then what it was. Three notes on it.
+---
+--- THE WORK LEADS. It led before and it still does; a work count is a large
+--- varying integer and is nearly always unique on the page, where age is only
+--- distinguishing for a machine that did nothing else.
+---
+--- `saves` IS DEMOTED BELOW THE WORK. Beacon revives are free, constant and
+--- automatic, so `saves` inflates to six and eight on anything that lived a
+--- while, and while it outranked the work a Planter that put thirty trees in
+--- the ground was described by how often the lamp restarted it. It is a
+--- hit-points readout in the shape of a rescue. It is worth saying; it is not
+--- worth saying first, and it is no longer said with the number as its subject.
+---
+--- "never went down" IS ABOUT `downs`, NOT `saves`, AND IT IS NOT FREE.
+--- `onDeath` counts the fall that killed it, so `downs == 0` can only be true
+--- of a machine that died without ever hitting the ground -- in practice one
+--- that walked into the rig during the rebellion. Gated on nights as well,
+--- because a machine built ninety seconds before the end also never went down
+--- and there is nothing in that worth printing.
+function Bot:epitaphClauses()
+  local L = self.log
+  local out = {}
+  local function add(key, text, subject, alt)
+    out[#out + 1] = { key = key, text = text, subject = subject or nil, alt = alt or nil }
+  end
+  if not L then
+    -- a bot from before the ledger, or a stub in a demo scene
+    local n = self.planted or 0
+    if n > 0 then add("planted", "planted " .. num(n) .. (n == 1 and " tree" or " trees")) end
+    if #out == 0 then
+      local s = math.max(1, math.floor(self.age or 0))
+      add("lasted", "lasted " .. num(s) .. (s == 1 and " second" or " seconds"))
+    end
+    return out
+  end
+  local E = T.epitaph
+  local cycle = (self.world and self.world.cycle) or 1
+
+  -- 0. The only individual in the game. It has its own cutscene when it is
+  --    built and its own cutscene when it goes, and the memorial used to
+  --    describe it exactly the way it describes the thirtieth Planter.
+  if isTheFirstOne(self) then add("first", "was the first one to say anything") end
+
+  -- 1. What it made. The one thing on this list that is entirely its own.
+  if L.planted > 0 then
+    -- TWO WORDINGS OF THE ONE FACT, and only this fact has them. Most of a crew
+    -- are Planters and most of a memorial is therefore Planters: on a traced
+    -- run thirty-four of fifty-two rows opened with the same word, and a column
+    -- of "planted" down the middle of the page is the last thing left of the
+    -- mail merge even when no two rows say the same thing. The page alternates
+    -- between these by whichever it has printed less (see `phrase`). It is not
+    -- padding -- both are the same count of the same trees, said the way the
+    -- crew would say it -- and it is the difference between a list and a page.
+    local n = num(L.planted)
+    add("planted", "planted " .. n .. (L.planted == 1 and " tree" or " trees"),
+        nil, "put " .. n .. (L.planted == 1 and " tree" or " trees") .. " in the ground")
+  end
+  if L.built > 0 then
+    add("built", "built " .. num(L.built) .. (L.built == 1 and " planter" or " planters"))
+  end
+  if (L.lit or 0) > 0 then
+    add("lit", "brought " .. num(L.lit) .. " of them back")
+  end
+  if L.shots > 0 then
+    if self.type == "repulsor" then add("shots", "held the line " .. times(L.shots))
+    else add("shots", "fired " .. num(L.shots) .. (L.shots == 1 and " dart" or " darts")) end
+  end
+  if L.mined >= E.mined then
+    add("mined", "carried " .. num(L.mined) .. " cobalt home")
+  end
+
+  -- 2. Something the PLAYER did with their hands, and the only clause here
+  --    that exists because of them. It describes the decision rather than the
+  --    freight -- four rows of "you carried it home once" were four printings
+  --    of one string, and the count was never the interesting half anyway.
+  if (L.carried or 0) == 1 then
+    add("carried", "you went out and got it", true)
+  elseif (L.carried or 0) > 1 then
+    add("carried", "you went out for it " .. times(L.carried), true)
+  end
+
+  -- 3. What it took, and kept going. Counted NET OF THE PLAYER'S OWN RESCUES,
+  --    because reviving it by hand increments both counters and the clause
+  --    above has already said so: "you went out and got it. it went down once
+  --    and got back up." is one event printed twice. What is left is what the
+  --    crew did for it while you were somewhere else, which is a different
+  --    fact and worth its own sentence.
+  local others = L.saves - (L.carried or 0)
+  if others >= 4 then
+    add("saves", "we kept picking it up", true)
+  elseif others >= 2 then
+    add("saves", "got up " .. times(others))
+  elseif others == 1 then
+    add("saves", "went down once and got back up")
+  end
+  if (L.downs or 0) == 0 and L.nights >= 2 then add("never", "never went down") end
+  if L.walked >= E.walked then add("walked", "walked the whole island") end
+  if L.nights >= 1 then
+    add("nights", "stood through " .. num(L.nights) .. (L.nights == 1 and " night" or " nights"))
+  end
+
+  -- 4. What it was. The reinforcements walk in off the treeline once the rig
+  --    has landed and are dead inside ten seconds, so the only fact their
+  --    ledger holds is their age -- and that is the more interesting one
+  --    anyway, and one the player may not know.
+  if self.offRoster then add("came", "came in off the treeline") end
+  -- WHICH NIGHT'S CREW THIS WAS. Every machine has one and no other clause
+  -- carries it, which is what the bottom of a long page needs: by the time the
+  -- rebellion's twenty are being listed, most of them have the same three true
+  -- things and this is the one that still has a number in it. The first day
+  -- gets its own wording because being there at the start is not the same fact
+  -- as being built on a Tuesday.
+  local born = L.bornCycle or 1
+  if born == 1 then
+    if cycle > 1 then add("born", "was here on the first day") end
+  else
+    -- "came online" and not "was built": the row above it is quite often
+    -- `built one planter`, and `built one planter. it was built on the third
+    -- day.` is one word doing two jobs in eleven. ONLINE is the interface's own
+    -- word for this exact event -- it is what the feed says when a machine is
+    -- finished -- so the memorial is not inventing vocabulary to dodge a clash.
+    add("born", "came online on the " .. (ORD[born] or tostring(born)) .. " day")
+  end
+
+  -- 5. It did nothing, because it did not get the time. Say how much it had.
+  --    Never a second clause: it is what the page says when there is nothing
+  --    else, and it takes no position.
+  if #out == 0 then
+    local age = self.age or 0
+    if age >= 100 then
+      local m = math.floor(age / 60 + 0.5)
+      add("lasted", "lasted " .. num(m) .. (m == 1 and " minute" or " minutes"))
+    else
+      local s = math.max(1, math.floor(age))
+      add("lasted", "lasted " .. num(s) .. (s == 1 and " second" or " seconds"))
+    end
+  end
+  return out
 end
 
 --- ONE LINE ABOUT WHAT THIS MACHINE ACTUALLY DID.
 ---
---- It is the last thing the game ever says about it, it is read on a memorial,
---- and it is printed under its name in the loss feed the moment it happens.
----
---- What this used to be was a mail merge: a real fact for a Planter that
---- planted and a Builder that built, and a role constant for everybody else, so
---- every Sentry in the run said "stood watch" and a forty-bot crew produced
---- about six sentences. The fix is not more strings, it is the LEDGER -- every
---- one of the six now keeps a number nobody else can have -- and a priority
---- list that says the RAREST true fact first. A machine that was carried home
---- is described by that and not by its job.
+--- The head of `epitaphClauses`, and the last thing the game ever says about
+--- this machine anywhere except the memorial: it is what the loss feed prints
+--- under its name the moment it happens, and what the bot standing over it says
+--- out loud in the first-loss beat. One clause, no full stop -- both of those
+--- readings want a fragment, and the memorial adds its own punctuation.
 ---
 --- The voice: terse, literal, third person, lowercase. It is what the bot
 --- standing next to it would say. Nothing wry, nothing that reaches for pathos,
 --- nothing that tells the player how to feel.
 ---
---- And there is no "was here" any more. That is what a machine got when it did
---- nothing, which is the commonest outcome for one built ninety seconds before
---- it died -- so the fallback is the one number the game has always had for
---- free: how long it lasted. It takes no position and it is never a form letter.
+--- THE REST OF THE LIST IS LEFT ON THE WORLD, keyed by name, because the
+--- memorial cannot rebuild it. Half of the names on that page died in the
+--- rebellion, which does not go through `bot:lost` at all, so the only record
+--- of their ledger anybody keeps is the string this function returned -- and a
+--- page that could give a second clause to the machines that died in the field
+--- and not to the ones that charged the rig would break in half down the
+--- middle. This is called on every one of them, from `bot:lost` and from
+--- `bot:sacrificed`, at the one moment the ledger is complete.
 function Bot:epitaph()
-  local L = self.log
-  if not L then
-    -- a bot from before the ledger, or a stub in a demo scene
-    if (self.planted or 0) > 0 then
-      return self.planted == 1 and "planted one tree" or ("planted " .. self.planted .. " trees")
-    end
-    return "lasted " .. spell(self.age or 0) .. " seconds"
+  local list = self:epitaphClauses()
+  local w = self.world
+  if w and self.name then
+    w.memorial = w.memorial or {}
+    w.memorial[self.name] = list
   end
-  local E = T.epitaph
-
-  -- 1. Something the PLAYER did with their hands. The rarest thing in the run
-  --    and the only line here that exists because of them.
-  if (L.carried or 0) > 0 then
-    return "you carried it home " .. times(L.carried)
-  end
-  -- 2. It hit the ground more than once and came back every time.
-  --
-  --    Driven by `saves` and NOT by `downs`, which was the first draft and was
-  --    simply false: `onDeath` counts the fall that killed it too, so every
-  --    machine that died the ordinary way carried downs >= 1 and a third of the
-  --    memorial read "went down once and got back up" under the name of
-  --    something that did not. A rescue is a thing that happened; a fall is
-  --    just how it ended.
-  if L.saves >= 2 then
-    return "went down " .. times(L.saves) .. " and got back up"
-  end
-  -- 3. THE WORK, and it is above age deliberately.
-  --
-  --    The first draft of this list ranked nights survived above everything a
-  --    machine did, on the reasoning that age is the rarer fact. Measured on a
-  --    real seven-cycle run it is the opposite: everything that lives to the
-  --    extraction dies at the rig in the same three minutes, so two thirds of
-  --    the memorial came back "stood through seven nights" and the mail merge
-  --    was rebuilt with a different sentence in it. A work count is a large
-  --    varying integer and is nearly always unique on the page; age is only
-  --    distinguishing for a machine that did nothing else, which is exactly
-  --    where it sits now.
-  if L.planted > 0 then
-    return L.planted == 1 and "planted one tree" or ("planted " .. L.planted .. " trees")
-  end
-  if L.built > 0 then
-    return "built " .. L.built .. (L.built == 1 and " planter" or " planters")
-  end
-  if (L.lit or 0) > 0 then
-    return "brought " .. spell(L.lit) .. " of them back"
-  end
-  if L.shots > 0 then
-    if self.type == "repulsor" then return "held the line " .. times(L.shots) end
-    return L.shots == 1 and "fired one dart" or ("fired " .. L.shots .. " darts")
-  end
-  if L.mined >= E.mined then
-    return "carried " .. L.mined .. " cobalt home"
-  end
-  -- 4. Somebody picked it up once, and it never got back to work after.
-  if L.saves > 0 then
-    return "went down once and got back up"
-  end
-  -- 5. It only ever walked, or it only ever stood there.
-  if L.walked >= E.walked then return "walked the whole island" end
-  if L.nights >= E.nights then
-    return "stood through " .. spell(L.nights) .. " nights"
-  end
-  if L.nights >= 1 then
-    return L.nights == 1 and "stood through one night"
-                          or ("stood through " .. spell(L.nights) .. " nights")
-  end
-  -- It was never yours. The reinforcements walk in off the treeline once the
-  -- rig has landed and are dead inside ten seconds, so the only fact their
-  -- ledger holds is their age -- and a dozen rows reading "lasted one second"
-  -- is a bug however true each one is. What they are is the more interesting
-  -- fact anyway, and it is one the player may not know.
-  if self.offRoster then return "came in off the treeline" end
-  if L.bornCycle == 1 and (self.world and (self.world.cycle or 1) or 1) > 1 then
-    return "was one of the first"
-  end
-  -- 6. It did nothing, because it did not get the time. Say how much it had.
-  local age = self.age or 0
-  if age >= 100 then
-    local m = math.floor(age / 60 + 0.5)
-    return "lasted " .. spell(m) .. (m == 1 and " minute" or " minutes")
-  end
-  local s = math.max(1, math.floor(age))
-  return "lasted " .. spell(s) .. (s == 1 and " second" or " seconds")
+  return (list[1] and list[1].text) or "was here"
 end
 
 ------------------------------------------------------------------------- render
@@ -1079,12 +1204,37 @@ local plateBox  = {}   -- x0,y0,x1,y1 per placed plate, flat, likewise
 --- the dead is a HUD laid on a monument. Nothing else in the game touches it.
 Bot.plateGain = 1
 
+--- ...and a guest list. When this is set, the machines in it are the only ones
+--- with a name over them, and they keep it whatever the distance ramp says.
+---
+--- It exists for the last shot of the game. A man takes his helmet off in a
+--- ring of thirty machines that are looking at him, and every one of them was
+--- introducing itself by serial number over the top of it: thirty-three plates,
+--- de-collided into neat stacked rows, which is a spreadsheet laid over the one
+--- image the whole run is for. The plates were doing the opposite of what the
+--- comment above says -- individuality is ONE name, not thirty-three. The
+--- ending hands the plate to the two machines the scene is actually about and
+--- leaves the crowd anonymous, which is what a crowd is.
+Bot.plateOnly = nil
+
 --- Alpha this bot's plate wants, 0 for "no plate".
 function Bot:plateAlpha()
   local gain = Bot.plateGain or 1
   if gain <= 0 then return 0 end
+  local only = Bot.plateOnly
+  if only and not only[self] then return 0 end
   if self.state == "boot" or self.state == "dead" then return 0 end
   if (self.speakT or 0) > 0 then return 0 end
+  -- ...and a bubble owns that space however it got there. `Bot:say` sets
+  -- `speakT`, but a line pushed straight into the world's speech queue -- which
+  -- is how the ending's one spoken line arrives -- does not, and the plate was
+  -- drawn straight through the middle of it.
+  local sp = self.world and self.world.speeches
+  if sp then
+    for i = 1, #sp do if sp[i].who == self then return 0 end end
+  end
+  -- named on purpose: the distance ramp is not allowed to fade these out
+  if only then return U.saturate(0.95 * gain) end
   if self.state == "down" then return U.saturate(0.95 * gain) end
   local p = self.world and self.world.player
   if not p then return 0 end

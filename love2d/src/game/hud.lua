@@ -482,6 +482,10 @@ function HUD.init(world)
   -- Chatter. A Builder finishes a Planter every fourteen seconds and there can
   -- be a dozen Builders, so this rank exists to be folded into one line.
   Signal.on("bot:built", function(b)
+    -- The extraction's reinforcements walk in every few seconds and each one
+    -- fires this, so a stream of ONLINE toasts ran through the finale. world.lua
+    -- says in so many words that they are not the roster.
+    if b and b.offRoster then return end
     HUD.toast(b.name, P.accent, "ONLINE", nil, RANK_CHATTER)
   end)
   -- A loss is the one moment this game is built to make land, and it used to
@@ -546,8 +550,12 @@ function HUD.init(world)
     local w = HUD.world
     if not w then return end
     local n = w.treeCount
+    -- No subtitle. "THE FOREST REMEMBERS" stood here, which is sentiment, is
+    -- not true of anything in the simulation, and glosses a line that needs no
+    -- gloss. The toast takes nil (see blight:cleared) and 400 TREES STANDING
+    -- is the whole announcement.
     if n == 10 or n == 25 or n == 50 or n == 100 or n == 200 or n == 400 then
-      HUD.toast(itos(n) .. " TREES STANDING", P.accent, "THE FOREST REMEMBERS", 5)
+      HUD.toast(itos(n) .. " TREES STANDING", P.accent, nil, 5)
       Audio.play("o2_milestone", { volume = 0.6 })
     end
   end)
@@ -1030,7 +1038,11 @@ local function drawCycleDial(w, a)
   -- and the run does not need arithmetic at the point where it needs a name.
   local cyc
   if extracting then
-    cyc = "THE SKY THEY HAVE TAKEN"
+    -- What the dial actually reads: the numeral in the middle is w.o2 and the
+    -- sweep is o2/target, so both of them are the air that is LEFT. The caption
+    -- here used to say "THE SKY THEY HAVE TAKEN", which is the other quantity,
+    -- in a register this instrument does not speak.
+    cyc = "AIR REMAINING"
   elseif (w.cycle or 1) >= TU.cycle.count then
     cyc = STR.lastNight
   else

@@ -22,7 +22,12 @@ local STR = require("src.game.script").dawn
 --- The readout is set in the bot nameplate's type, because it is the same kind
 --- of object: a machine, near you, saying what it is. Shared and mutated in
 --- place like bot.lua's -- read, do not keep.
-local PLATE_OPTS = { align = "center", tracking = 0.05 }
+---
+--- Two of them, because the readout is an INSTRUMENT now rather than a caption:
+--- the label runs left and the number is right-aligned against the far end of
+--- the chip, the way a gauge is read. See `Rig:drawRadioPlate`.
+local LABEL_OPTS = { align = "left",  tracking = 0.05 }
+local NUM_OPTS   = { align = "right", tracking = 0.05 }
 
 -- Light options, hoisted. `Lighting.addLight` reads the table and copies what
 -- it needs into its parallel arrays -- it never keeps a reference -- so a
@@ -42,7 +47,8 @@ function Rig:init(x, y, world)
   -- the rig stops with it.
   self.radio  = true
   self.radioT = 0
-  self.plate  = STR.signals .. "  " .. tostring(TU.radio.signals)
+  self.plateLabel = STR.signals
+  self.plateNum   = tostring(TU.radio.signals)
   self.rng    = U.rng(math.floor(x * 5 + y * 11))
   -- a handful of static struts, generated once so the wreck is never symmetrical
   self.struts = {}
@@ -169,6 +175,25 @@ end
 --- The wording never changes either, which is the same rule the dawn screen's
 --- radio row runs under and for the same reason: it has to be furniture long
 --- enough that the player stops reading it.
+---
+--- WHERE IT WAS AND WHY IT MOVED. It used to float two radii above the hull,
+--- centred, in mid-grey world text with a 0.45 backing. Three things were wrong
+--- with that and all three were the same mistake -- it was drawn as a *label
+--- for* the rig rather than as a *marking on* it:
+---
+---   * two radii up is exactly the height a bot's nameplate floats at, so the
+---     first thing the game wants the player to read was landing on SEED-01;
+---   * centred put it to the left of the mast rather than on anything, so it
+---     read as a caption hanging in the air beside the machine;
+---   * `P.inkDim` on a 0.45 chip over a bright meadow is not legible type.
+---
+--- It is a plate bolted to the hull face now, between the deck bar and the
+--- deposit ring, with the label left and the number right-aligned against the
+--- far edge -- an instrument, read the way an instrument is read. The chip is
+--- `PLATE.box`, the same 0.56 black the nameplates use, and the number is at
+--- full `P.ink` because the number is the point.
+local PLATE_BOX = 0.56          -- bot.lua's PLATE.box; the same chip, deliberately
+
 function Rig:drawRadioPlate()
   local p = self.world and self.world.player
   if not p then return end
@@ -178,14 +203,24 @@ function Rig:drawRadioPlate()
   if a < 0.03 then return end
 
   local size = R.plateSize
-  local y = self.y - self.radius * 2.05 - size
-  local tw = Text.width(self.plate, size, PLATE_OPTS)
-  Draw.setColor(P.black, 0.45 * a)
-  Draw.roundRect("fill", self.x - tw * 0.5 - 3.5, y - 2.5, tw + 7,
-                 size + 5.5, (size + 5.5) * 0.5)
-  PLATE_OPTS.color = P.inkDim
-  PLATE_OPTS.alpha = a
-  Text.display(self.plate, self.x, y, size, PLATE_OPTS)
+  local lw = Text.width(self.plateLabel, size, LABEL_OPTS)
+  local nw = Text.width(self.plateNum, size, NUM_OPTS)
+  local padX, gap = 4.5, 9
+  local w = lw + gap + nw + padX * 2
+  local h = size + 5.5
+  -- On the hull. The shell is about 1.56 radii across and the plate is wider
+  -- than that at this type size, so it overhangs a little at both ends, which
+  -- is what a plate riveted across a curved face does. Vertically it sits under
+  -- the deck bar (-0.62..-0.32 r) and above the deposit ring.
+  local x = self.x - w * 0.5
+  local y = self.y - self.radius * 0.30 - h * 0.5
+
+  Draw.setColor(P.black, PLATE_BOX * a)
+  Draw.roundRect("fill", x, y, w, h, h * 0.5)
+  LABEL_OPTS.color, LABEL_OPTS.alpha = P.inkDim, a
+  Text.display(self.plateLabel, x + padX, y + 2.5, size, LABEL_OPTS)
+  NUM_OPTS.color, NUM_OPTS.alpha = P.ink, a
+  Text.display(self.plateNum, x + w - padX, y + 2.5, size, NUM_OPTS)
 end
 
 function Rig:emitLight(Lighting)

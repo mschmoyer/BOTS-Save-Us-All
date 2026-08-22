@@ -41,12 +41,49 @@ function S:enter()
   local rng = U.rng(self.seed)
   local hx, hy = self.terrain:randomLandPoint(rng, { minSoil = 0.4, centerBias = 0.75 })
 
+  -- BOTS_HUSKS=30 lays down a full cap of husks before anything is planted,
+  -- measured or drawn. Husks arrive from deaths rather than from generation, so
+  -- this is the only way to price the exclusion they add, to look at the six
+  -- bodies side by side, and -- in `forest` mode, where it runs BEFORE the wood
+  -- goes in -- to see whether the trees really do close around them.
+  --
+  -- The scatter is not where a run would put them. A run clusters them on
+  -- whatever perimeter kept failing, and clustered discs overlap, so a run
+  -- costs LESS ground than this even spread: the RELICAREA figure below is a
+  -- pessimistic bound.
+  local huskWant = envN("BOTS_HUSKS", 0)
+  self.huskLine = nil
+  local function layHusks()
+    if huskWant <= 0 then return end
+    local hrng = U.rng(self.seed * 31 + 7)
+    local kinds = { "planter", "builder", "repulsor", "sentry", "harvester", "beacon" }
+    -- the six outlines in a row, one per type, so they can be compared
+    local lx, ly = self.world.homeX - 250, self.world.homeY + 300
+    for i = 1, math.min(6, huskWant) do
+      Relic.addHusk(self.world, lx + (i - 1) * 100, ly, kinds[i])
+    end
+    self.huskLine = { lx + 250, ly }
+    local placed = math.min(6, huskWant)
+    for _ = 1, huskWant * 40 do
+      if placed >= huskWant then break end
+      local px, py = self.terrain:randomLandPoint(hrng, {})
+      if px and U.dist(px, py, self.world.homeX, self.world.homeY) < 1100 then
+        if Relic.addHusk(self.world, px, py, kinds[hrng:int(1, #kinds)]) then
+          placed = placed + 1
+        end
+      end
+    end
+    print(string.format("RELICHUSK,seed=%d,placed=%d", self.seed, placed))
+  end
+
   if self.mode == "forest" then
     -- The real thing: a real World on this seed, filled with a mature forest
     -- through the same `plantTree` the game uses, so the relic exclusion is
     -- being exercised rather than described. This is the only honest answer to
     -- "are they still there at the ending".
     self.game = World.new(self.seed, { terrain = self.terrain, noPrewarm = false })
+    self.world = self.game
+    layHusks()
     local want = envN("BOTS_TREES", 900)
     for _ = 1, want * 6 do
       if self.game.treeCount >= want then break end
@@ -65,15 +102,15 @@ function S:enter()
     -- an unrealistically high target is the island saturating, not the relics.
     print(string.format("RELICFILL,seed=%d,target=%d,planted=%d",
                         self.seed, want, self.game.treeCount))
-    self.world = self.game
   else
     self.world = { seed = self.seed, terrain = self.terrain,
                    homeX = hx, homeY = hy, relics = {} }
     Relic.populate(self.world)
+    layHusks()
   end
 
   -- one panel per kind, on the first instance found of it
-  local order = { "suit", "wreck", "pallet", "pad", "mast", "hauler", "road" }
+  local order = { "suit", "husk", "wreck", "pallet", "mast", "hauler", "road" }
   self.panels = {}
   for _, kind in ipairs(order) do
     for i = 1, #self.world.relics do
@@ -89,7 +126,11 @@ function S:enter()
   for i = 1, #self.world.relics do
     if self.world.relics[i].what == "road" then first = self.world.relics[i] break end
   end
-  if first then
+  if self.huskLine then
+    -- the six bodies side by side, at the zoom the game ships at
+    self.panels[#self.panels + 1] = { "husk line", self.huskLine[1], self.huskLine[2],
+                                      TU.camera.zoom * 0.62 * self.zmul }
+  elseif first then
     self.panels[#self.panels + 1] = { "road run", first.x, first.y, 0.45 }
   end
 

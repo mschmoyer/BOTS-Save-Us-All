@@ -6,26 +6,27 @@
 -- build is trying to avoid: a world that says nothing and a character who says
 -- everything. So the claim goes in the ground instead.
 --
--- Seven kinds of object, placed once at world generation and never touched
--- again:
+-- Six kinds of object, placed once at world generation and never touched
+-- again, plus one -- the husk -- that the run itself lays down:
 --
 --   wreck   a second Home Rig, burnt out, mast snapped, lamp dead. The strongest
 --           single object here: it is unmistakably the same machine the player
 --           lives in, and it says somebody else tried this.
 --   road    a buried road running past the rig, in overlapping segments. Two
 --           wheel ruts under a meadow. Where the wood closes over it, it is gone.
---   suit    an empty pressure suit sitting against a boulder. Up to four,
---           fewer on a small island, and never two in one view.
---   pallet  a strapped pallet of atmosphere canisters nobody ever opened. They
---           are painted in `P.o2` -- the colour the HUD has spent the whole run
---           teaching the player means air -- which is the only reason this reads
---           without a word on it.
---   pad     a landing pad wearing the same hazard yellow as the Harvester Prime.
---           That says who built the rig that came for the air, and says it in
---           paint.
+--   suit    an empty pressure suit sitting against a boulder. Seven of them, and
+--           one of the seven has its helmet off, lying a metre from the body.
+--   pallet  a pallet of atmosphere canisters with the strapping cut and two
+--           canisters gone. They are painted in `P.o2` -- the colour the HUD has
+--           spent the whole run teaching the player means air -- which is the
+--           only reason this reads without a word on it. The deck carries the
+--           Harvester Prime's own hazard yellow, which is who brought it.
 --   mast    a relay mast on its face with its dish in the dirt. The radio on the
 --           player's own rig has never been answered; this is the other end.
 --   hauler  a flatbed on its side, half-buried in beach sand.
+--   husk    one of your own machines, where it died. Not placed at generation:
+--           spawned on `bot:lost` and permanent after that, so the island
+--           accumulates the run's own history and the forest grows around it.
 --
 -- THE RULES, and they are the design rather than a style note:
 --
@@ -45,14 +46,40 @@
 --
 -- The empty suits are the load-bearing item and the easiest thing here to ruin.
 -- They are not posed pathetically, not arranged in a tableau and never grouped
--- with anything else -- `T.relic.sameKind` is nearly a screen and a half, so two
--- of them cannot share a frame, and `separation` keeps everything else away.
--- One suit, sitting against a rock, doing nothing, in the middle of a field the
--- player is planting. If it ever reads as set dressing placed to be found, it
--- has failed, and the fix is to place fewer rather than to explain more.
+-- with anything else. One suit, sitting against a rock, doing nothing, in the
+-- middle of a field the player is planting. If it ever reads as set dressing
+-- placed to be found, it has failed, and the fix is to place fewer rather than
+-- to explain more.
+--
+-- THREE THINGS ABOUT THE SUITS CHANGED, on evidence from four played runs:
+--
+--   * There are seven, not four, and `T.relic.sameKindBy.suit` lets two of them
+--     stand within a screen and a half of each other. The old rule -- never two
+--     in one view -- was written to stop the object reading as a spawner, and it
+--     bought that at the price of the count. Two bodies in one field is not a
+--     diorama; it is a fact, and it is the fact the whole set is for.
+--   * The one in the near band, the suit a player who never explores is
+--     guaranteed to meet, is drawn HALF AGAIN AS BIG (`T.relic.suitNear.scale`).
+--     At 5x magnification this object is the best thing in the game -- helmet,
+--     black void where a visor should be, legs stretched, back against the
+--     stone -- and at play zoom it was a grey lump you walked past four times
+--     without registering. One of the seven survives the zoom.
+--   * One suit, exactly one per island, has its helmet OFF and lying a metre
+--     from the body (pose 4). It is the only image in the set that says he took
+--     it off, and it only works once.
 --
 -- WHAT WAS CUT, because the reasons are the design too:
 --
+--   * THE LANDING PAD. A poured apron with a blast scar in the middle, and it
+--     was the loudest object in the set. It also said the exact opposite of the
+--     thing this file exists to say: a blast scar in the middle of an apron
+--     says a thing TOOK OFF from here, which is evacuation, and the premise is
+--     extinction. Its one true sentence -- who built the rig that came for the
+--     air -- is paint, so the paint moved to the pallet's deck, where it sits
+--     under a load somebody was rationing rather than under a departure.
+--   * ONE OF THE TWO PALLETS, and the other one is open now. Two untouched
+--     pallets of air said they had plenty and did not need it. Strapping cut,
+--     two canisters gone: somebody was counting them out.
 --   * A tally scratched into the player's own hull, stopping at eleven. Cut
 --     because homerig.lua is not this file's to edit, and because the agent who
 --     does own it put a personal trace there anyway -- a radio mast with a
@@ -60,10 +87,32 @@
 --   * Graves. A row of cairns is the most on-the-nose object this set could
 --     have, it is the one most likely to read as an arranged tableau, and it
 --     makes a claim the script never makes: nothing in the writing says he
---     buried anybody.
+--     buried anybody. The husks are not this: nobody arranged them, the player
+--     watched each one happen, and none of them is a human being.
 --   * A poured foundation with anchor bolts and nothing built on it. At this
---     camera it is a grey rectangle with no silhouette; the landing pad already
---     says "concrete somebody laid" and says it with paint on it.
+--     camera it is a grey rectangle with no silhouette.
+--
+-- THE HUSKS ARE THE ONE THING HERE THE RUN WRITES, and they are the reason the
+-- exclusion rule is worth its cost. Every other object in this file was placed
+-- before the player arrived; a husk is placed by something the player watched
+-- happen, at the spot they watched it happen, and it never goes away. Four
+-- things fall out of that and all four are the point:
+--
+--   1. Both of the script's funeral beats now have a body to point a camera at.
+--      They were playing over empty grass -- the corpse despawns in seconds and
+--      the beat's delay and patience are measured in minutes -- and story.lua's
+--      own comment admits it for one of the two.
+--   2. The island accumulates its own history. By cycle six there is a line of
+--      them along whatever perimeter kept failing.
+--   3. The memorial at the end reads names the player has physically walked
+--      past.
+--   4. A Planter refuses to plant inside `T.relic.noPlant.husk` of one, so the
+--      forest grows AROUND the dead. That is the whole game in one system.
+--
+-- What keeps (4) from eating the island: the husk's exclusion is 34 units
+-- against the wreck's 112 -- a body is small and does not need protecting from
+-- occlusion the way a hundred-unit machine does -- and there are never more
+-- than `T.relic.husk.cap` of them. Measured cost is in that tuning block.
 --
 -- PERFORMANCE. Every one of these is static geometry, so each kind's picture is
 -- recorded once through `Draw.bake` and replayed from its point lists for the
@@ -146,9 +195,25 @@ local C = {
   roadBed  = P.mix(R.soil[1], R.derelict[1], 0.30),
   roadRut  = P.mix(R.soil[1], P.black, 0.36),
 
-  conDeep  = R.concrete[1],
-  conBody  = R.concrete[2],
-  conLit   = R.concrete[3],
+  -- The husk. Cut from `P.ramp.metal` -- the ramp every working machine in the
+  -- crew is drawn from -- and dragged toward `derelict` and toward black, which
+  -- is the same trick, and the same argument, as the empty suit two blocks up:
+  -- it has to be unmistakably one of YOURS and unmistakably switched off. What
+  -- separates it from a live bot is subtraction. No eye, no antenna bead, no
+  -- load pips, no nameplate, no light.
+--
+  -- The values are pulled a long way down on purpose. A first pass at this
+  -- mixed only halfway to `derelict` and the result read as a working machine
+  -- that happened to be lying down -- pale blue-grey chassis, bright top face,
+  -- the whole thing looking like it was about to get up. Dark is most of what
+  -- says dead here; the one hard rim is what stops dark becoming a smudge.
+  huskDeep = P.mix(P.shade(P.ramp.metal, 1.2), P.black, 0.56),
+  huskBody = P.mix(P.shade(P.ramp.metal, 1.9), R.derelict[1], 0.64),
+  huskLit  = P.mix(P.shade(P.ramp.metal, 2.6), R.derelict[2], 0.58),
+  huskRim  = P.alpha(P.mix(P.shade(P.ramp.metal, 3.4), R.derelict[3], 0.42), 0.55),
+  -- the ground it went down on, under the shadow: a scuff, not a crater. The
+  -- death already dropped a `scorch` decal here.
+  scuff    = P.alpha(P.mix(R.soil[1], P.black, 0.30), 0.40),
 
   sandLo   = P.alpha(P.shade(R.sand, 1.4), 0.42),
   sandHi   = P.alpha(P.shade(R.sand, 1.9), 0.48),
@@ -389,10 +454,18 @@ end
 -- because the half-second of "is that me?" is the entire effect and every
 -- bright mark that would resolve it -- the accent bars, the cyan visor, the
 -- lamp -- has been removed rather than recoloured.
+--
+-- Pose 4 is the exception and it is the only one in the set that makes a claim:
+-- the helmet is OFF, sitting in the grass a metre from the body, and the collar
+-- ring is open and dark. Every other object in this file is evidence of a thing
+-- that happened to somebody. This is the one that says he did it himself, and
+-- because it says something it is rationed hard -- `Relic.populate` places
+-- exactly one per island, deliberately, rather than rolling for it.
 local SUIT_POSE = {
   { lean = 0.16, tip = 0.10, knee = 0.00, armOut = false },
   { lean = 0.10, tip = 0.18, knee = 0.62, armOut = false },
   { lean = 0.30, tip = 0.26, knee = 0.22, armOut = true  },
+  { lean = 0.22, tip = 0.34, knee = 0.44, armOut = true, helmetOff = true },
 }
 
 MODEL.suit = function(r, v)
@@ -470,34 +543,76 @@ MODEL.suit = function(r, v)
   -- neck and helmet, tipped forward off the shoulders
   Draw.setColor(C.suitDeep)
   Draw.capsule("fill", sx, sy, kx, ky + r * 0.14, r * 0.115)
-  Draw.setColor(C.suitLit)
-  lg.circle("fill", kx, ky, r * 0.37)
-  Draw.setColor(C.suitMid)
-  lg.circle("fill", kx - r * 0.04, ky + r * 0.03, r * 0.32)
-  -- The visor. A hole. There is nothing behind it and it does not glow, and
-  -- that -- an unlit version of the one bright mark the player is read by -- is
-  -- the only sentence this object says.
-  Draw.setColor(C.void)
-  Draw.blob(kx - r * 0.07, ky + r * 0.04, r * 0.24, 9, 12, 0.08, 0.76)
-  Draw.setColor(C.rim)
-  rimArc(kx, ky, r * 0.37, 3.35, 4.45, r * 0.038, 4)
+  if pose.helmetOff then
+    -- The collar ring, open, with the neck of the suit gone slack into it. A
+    -- head-shaped hole where a head goes is worth more than any amount of
+    -- weathering, and it is what makes the helmet on the ground read as HIS.
+    Draw.setColor(C.suitMid)
+    lg.circle("fill", kx, ky + r * 0.10, r * 0.26)
+    Draw.setColor(C.void)
+    Draw.blob(kx, ky + r * 0.11, r * 0.19, 9, 44, 0.10, 0.62)
+    -- and the helmet itself, set down in the grass beside the near hip. Not
+    -- dropped, not thrown, not rolled away: put down.
+    local gx, gy = hx + r * 1.20, hy + r * 0.62
+    Draw.setColor(C.suitDeep)
+    Draw.blob(gx, gy + r * 0.10, r * 0.36, 9, 51, 0.16, 0.42)
+    Draw.setColor(C.suitLit)
+    lg.circle("fill", gx, gy, r * 0.33)
+    Draw.setColor(C.suitMid)
+    lg.circle("fill", gx - r * 0.04, gy + r * 0.03, r * 0.28)
+    Draw.setColor(C.void)
+    Draw.blob(gx - r * 0.05, gy + r * 0.05, r * 0.21, 9, 12, 0.08, 0.76)
+    Draw.setColor(C.rim)
+    rimArc(gx, gy, r * 0.33, 3.35, 4.45, r * 0.034, 4)
+  else
+    Draw.setColor(C.suitLit)
+    lg.circle("fill", kx, ky, r * 0.37)
+    Draw.setColor(C.suitMid)
+    lg.circle("fill", kx - r * 0.04, ky + r * 0.03, r * 0.32)
+    -- The visor. A hole. There is nothing behind it and it does not glow, and
+    -- that -- an unlit version of the one bright mark the player is read by --
+    -- is the only sentence this object says.
+    Draw.setColor(C.void)
+    Draw.blob(kx - r * 0.07, ky + r * 0.04, r * 0.24, 9, 12, 0.08, 0.76)
+    Draw.setColor(C.rim)
+    rimArc(kx, ky, r * 0.37, 3.35, 4.45, r * 0.038, 4)
+  end
 end
 
 ------------------------------------------------------------------ pallet
--- Six canisters, strapped, on a wooden pallet, never opened.
+-- A pallet of atmosphere canisters, opened. Strapping cut, two of the six
+-- gone, one of the two lying on its side in the grass beside it.
 --
 -- The bands are `P.o2` -- the colour the oxygen bar has been the whole run --
 -- and that is the entire caption. A player who has watched that needle for
--- fifteen minutes knows what is in these without being told, and knows that
--- whoever put them here did not come back for them.
+-- fifteen minutes knows what is in these without being told.
+--
+-- WHAT THE OPENING IS FOR. Strapped and untouched, this said they had air and
+-- did not need it, which is a sentence about a supply run that got interrupted.
+-- Cut open with two missing says somebody was counting them out one at a time,
+-- which is a sentence about rationing, and rationing is a sentence about the
+-- end of something. Same object, four primitives moved.
+--
+-- The hazard stripes on the deck came off the landing pad when that was cut.
+-- `P.warn` at 0.62 is the exact paint boss.lua puts on the Harvester Prime's
+-- deck and ankles, and it is the only thing in the game that says who built the
+-- machine that came for the air. It says it on a crate somebody was rationing
+-- out of instead of on an apron somebody took off from, which is the same
+-- sentence pointed the right way. Nothing anywhere remarks on it.
 MODEL.pallet = function(r)
   -- pallet: deck and three bearers
   Draw.setColor(C.wood)
   Draw.roundRect("fill", -r * 0.98, -r * 0.06, r * 1.96, r * 0.20, r * 0.05)
   Draw.setColor(P.mix(C.wood, P.black, 0.4))
   for i = 0, 2 do
-    Draw.roundRect("fill", -r * 0.94 + i * r * 0.84, r * 0.10, r * 0.24, r * 0.16, r * 0.04)
+    Draw.roundRect("fill", -r * 0.94 + i * r * 0.84, r * 0.24, r * 0.24, r * 0.16, r * 0.04)
   end
+  -- The hazard stencil on the front edge of the deck. HALF the deck's width,
+  -- not all of it: run edge to edge it was the brightest thing on the object
+  -- and the pallet became a sign, which is the failure the landing pad was cut
+  -- for. A worn patch of it under one end of the load is a stencil somebody
+  -- painted on a crate.
+  hazardBand(-r * 0.86, r * 0.06, r * 0.98, r * 0.15, r * 0.11, C.hazard, C.hazDark)
   Draw.setColor(C.woodLit)
   Draw.roundRect("fill", -r * 0.98, -r * 0.08, r * 1.96, r * 0.06, r * 0.03)
 
@@ -522,103 +637,49 @@ MODEL.pallet = function(r)
     Draw.capsule("fill", cx - w * 0.66, base - h * 0.88, cx - w * 0.66, base - h * 0.22,
                  w * 0.13)
   end
-  for i = -1, 1 do can(i * r * 0.50 - r * 0.08, -r * 0.18, r * 0.94, r * 0.19) end
-  for i = -1, 1 do can(i * r * 0.54 + r * 0.06, -r * 0.04, r * 1.04, r * 0.21) end
+  -- Four of six. The back row keeps its middle and right bottles; the front
+  -- row is missing the one on the left, so the gap is on the near side where
+  -- the silhouette actually shows it.
+  for i = 0, 1 do can(i * r * 0.50 - r * 0.08, -r * 0.18, r * 0.94, r * 0.19) end
+  for i = 0, 1 do can(i * r * 0.54 + r * 0.06, -r * 0.04, r * 1.04, r * 0.21) end
 
-  -- two straps over the whole load, still tight
+  -- ONE OF THE TWO THAT LEFT, lying on its side in the grass at the near
+  -- corner, empty. It reads as a bottle rather than as a pipe because the
+  -- collar and the o2 band are still on it and both are across its length.
+  do
+    local bx, by, w = -r * 0.66, r * 0.46, r * 0.20
+    Draw.setColor(C.deep)
+    Draw.capsule("fill", bx - r * 0.34, by, bx + r * 0.34, by - r * 0.05, w)
+    Draw.setColor(C.body)
+    Draw.capsule("fill", bx - r * 0.30, by - r * 0.07, bx + r * 0.26, by - r * 0.11, w * 0.44)
+    Draw.setColor(C.airDim)
+    Draw.capsule("fill", bx + r * 0.02, by - r * 0.17, bx + r * 0.04, by + r * 0.15, w * 0.22)
+    Draw.setColor(C.lit)
+    Draw.capsule("fill", bx + r * 0.38, by - r * 0.06, bx + r * 0.50, by - r * 0.07, w * 0.52)
+  end
+
+  -- THE STRAPS ARE CUT. Both ran the whole width and both are in two pieces
+  -- now, the loose ends fallen away down the face of the load. This is the
+  -- object: a strap that has been cut is a decision somebody made.
+  -- The gap has to be wide. Cut with the ends left touching, this read as an
+  -- intact strap with a seam in it at play zoom; the loose ends falling down
+  -- the face of the load are what make it read as cut rather than as worn.
   Draw.setColor(C.chalk)
-  Draw.capsule("fill", -r * 0.92, -r * 0.62, r * 0.92, -r * 0.58, r * 0.045)
-  Draw.capsule("fill", -r * 0.90, -r * 0.26, r * 0.90, -r * 0.22, r * 0.045)
+  Draw.capsule("fill", -r * 0.92, -r * 0.62, -r * 0.34, -r * 0.60, r * 0.045)
+  Draw.capsule("fill", r * 0.40, -r * 0.58, r * 0.92, -r * 0.56, r * 0.045)
+  Draw.setColor(C.chalkDim)
+  Draw.capsule("fill", -r * 0.34, -r * 0.60, -r * 0.20, -r * 0.16, r * 0.038)
+  Draw.capsule("fill", r * 0.40, -r * 0.58, r * 0.30, -r * 0.10, r * 0.038)
+  Draw.setColor(C.chalk)
+  Draw.capsule("fill", -r * 0.90, -r * 0.26, r * 0.10, -r * 0.23, r * 0.045)
+  Draw.setColor(C.chalkDim)
+  Draw.capsule("fill", r * 0.10, -r * 0.23, r * 0.30, r * 0.18, r * 0.038)
+  -- ...and one end of it on the ground, off the near corner of the deck
+  Draw.capsule("fill", r * 0.44, r * 0.40, r * 0.84, r * 0.30, r * 0.034)
 
   -- eleven days of drift piled against the windward side
   Draw.setColor(C.sandLo)
   Draw.blob(-r * 0.72, r * 0.16, r * 0.46, 10, 77, 0.28, 0.40)
-end
-
------------------------------------------------------------------- pad
--- A landing apron: a poured slab with hazard paint down two edges.
---
--- The first version of this was a circle with a hazard ring and a marking at
--- the centre. It read, instantly and unmistakably, as a capture point out of a
--- shooter -- a bright regular disc on grass is a thing a game wants you to
--- stand in, and no amount of weathering was going to argue with the shape. It
--- is a rectangle now, because concrete is poured in rectangles, and it is a
--- pale warm grey rather than dark metal, because it is concrete.
---
--- The yellow is `P.warn` at 0.62, which is the same paint boss.lua puts on the
--- Harvester Prime. That is the whole point of the object and nothing anywhere
--- remarks on it.
-MODEL.pad = function(r)
-  local w, h = r * 1.94, r * 1.58
-  local x0, y0 = -w * 0.5, -h * 0.5
-
-  -- the slab, and the bay it is broken into. A single flat rectangle reads as
-  -- a sprite; six poured bays with joints between them read as concrete.
-  Draw.setColor(C.conDeep)
-  Draw.roundRect("fill", x0 - r * 0.02, y0 - r * 0.02, w + r * 0.04, h + r * 0.04, r * 0.05)
-  Draw.setColor(C.conBody)
-  Draw.roundRect("fill", x0, y0, w, h, r * 0.04)
-  Draw.setColor(C.conLit)
-  for iy = 0, 1 do
-    for ix = 0, 2 do
-      Draw.roundRect("fill", x0 + r * 0.05 + ix * (w - r * 0.10) / 3,
-                     y0 + r * 0.05 + iy * (h - r * 0.10) / 2,
-                     (w - r * 0.10) / 3 - r * 0.045, (h - r * 0.10) / 2 - r * 0.045,
-                     r * 0.02)
-    end
-  end
-
-  -- hazard paint down the two long edges, worn
-  hazardBand(x0, y0, w, r * 0.17, r * 0.13, C.hazard, C.hazDark)
-  hazardBand(x0, y0 + h - r * 0.17, w, r * 0.17, r * 0.13, C.hazard, C.hazDark)
-
-  -- what came down on it, more than once, off centre
-  Draw.setColor(C.ash)
-  Draw.blob(-r * 0.10, r * 0.06, r * 0.44, 13, 91, 0.30, 0.86)
-  Draw.setColor(P.alpha(C.void, 0.45))
-  Draw.blob(-r * 0.04, r * 0.02, r * 0.19, 11, 93, 0.34, 0.88)
-  Draw.setColor(C.ash)
-  Draw.blob(r * 0.44, -r * 0.24, r * 0.20, 11, 97, 0.34, 0.88)
-  Draw.setColor(P.alpha(C.ash, 0.5))
-  Draw.blob(-r * 0.52, -r * 0.10, r * 0.22, 11, 99, 0.34, 0.88)
-
-  -- cracks, running off the joints the way they actually do
-  Draw.setColor(C.conDeep)
-  for i = 1, 5 do
-    local ax = x0 + hash(i, 101) * w
-    local ay = y0 + hash(i, 103) * h
-    Draw.capsule("fill", ax, ay, ax + (hash(i, 107) - 0.5) * r * 0.7,
-                 ay + (hash(i, 109) - 0.5) * r * 0.6, r * 0.011)
-  end
-
-  -- four tie-downs, sunk flush
-  Draw.setColor(C.deep)
-  for i = 0, 3 do
-    local sx = (i % 2 == 0) and -1 or 1
-    local sy = (i < 2) and -1 or 1
-    Draw.roundRect("fill", sx * w * 0.34 - r * 0.055, sy * h * 0.27 - r * 0.045,
-                   r * 0.11, r * 0.09, r * 0.025)
-  end
-
-  -- One broken corner, and the verge coming in over the whole northern edge.
-  -- A slab whose outline is still four straight lines is a slab somebody is
-  -- still sweeping.
-  Draw.setColor(C.encroach)
-  for i = 1, 14 do
-    local t = hash(i, 111)
-    local ex, ey
-    if i % 3 == 0 then ex, ey = x0 + t * w, y0
-    elseif i % 3 == 1 then ex, ey = x0 + t * w, y0 + h
-    else ex, ey = (hash(i, 117) < 0.5 and x0 or x0 + w), y0 + t * h end
-    Draw.blob(ex, ey, r * (0.09 + hash(i, 113) * 0.13), 9, i * 5, 0.34, 0.70)
-  end
-  Draw.setColor(C.encroachHi)
-  Draw.blob(x0 + w * 0.04, y0 + h * 0.04, r * 0.30, 11, 131, 0.32, 0.72)
-  for i = 1, 6 do
-    local t = hash(i, 121)
-    Draw.blob(x0 + t * w, (hash(i, 123) < 0.5 and y0 or y0 + h),
-              r * (0.06 + hash(i, 127) * 0.08), 8, i * 9, 0.30, 0.68)
-  end
 end
 
 ------------------------------------------------------------------ mast
@@ -754,6 +815,163 @@ MODEL.hauler = function(r)
   Draw.blob(-r * 0.56, r * 0.28, r * 0.34, 13, 187, 0.28, 0.38)
 end
 
+------------------------------------------------------------------ husk
+-- One of your own machines, lying where it stopped.
+--
+-- It reads from above, lying down, long axis along +x, and it takes any heading
+-- (`spin`), because a body on the ground can point anywhere and the top-down
+-- camera has no opinion about it. That is the mast's and the hauler's rule, not
+-- the suit's -- a thing standing up in screen space is a thing that is still
+-- standing up.
+--
+-- The discipline is bot.lua's own, run backwards. Six silhouettes, one per type,
+-- because you can name any of the six from its outline and that has to survive
+-- the machine falling over: treads, a jib, three feet, a diamond head, two
+-- wheels, a mast. Everything that made it a working machine is subtracted --
+-- the eye is a hole, the antenna is snapped off and lying beside it, there are
+-- no load pips, no charge pips, no lamp, no glow and no nameplate. A husk is
+-- the only object in this file the player has a memory of, so it does not need
+-- any of that; it needs to be recognisable as SEED-04 and obviously off.
+--
+-- Do not put a light on this one either. The dead bead on the wreck's mast is
+-- the whole of that object; the dead eye is the whole of this one.
+local HUSK_CUE = {}
+
+MODEL.husk = function(r, v)
+  local s = v * 613
+
+  -- the scuff it slid to a stop in. Small: the death already dropped a scorch
+  -- decal on this exact spot and `drawShadow` puts a soft contact under it.
+  Draw.setColor(C.scuff)
+  Draw.blob(-r * 0.06, r * 0.16, r * 0.92, 11, s + 3, 0.30, 0.40)
+
+  -- the type's own outline, under the chassis where it belongs
+  local cue = HUSK_CUE[v]
+  if cue then cue(r, "under") end
+
+  -- The chassis. Two capsules and a rim: a body seen from above lying on its
+  -- side is a long lozenge with one lit face up-sun, and any more shapes than
+  -- that at fourteen units is mud.
+  Draw.setColor(C.huskDeep)
+  Draw.capsule("fill", -r * 0.60, r * 0.06, r * 0.46, r * 0.02, r * 0.50)
+  Draw.setColor(C.huskBody)
+  Draw.capsule("fill", -r * 0.54, -r * 0.06, r * 0.40, -r * 0.10, r * 0.40)
+  Draw.setColor(C.huskLit)
+  Draw.capsule("fill", -r * 0.38, -r * 0.20, r * 0.14, -r * 0.23, r * 0.17)
+
+  -- a seam split down the side, and the oxide already coming out of it
+  Draw.setColor(C.huskDeep)
+  Draw.capsule("fill", -r * 0.30, r * 0.12, r * 0.30, r * 0.08, r * 0.045)
+  Draw.setColor(C.rust)
+  Draw.blob(r * 0.06, r * 0.24, r * 0.30, 9, s + 11, 0.30, 0.44)
+
+  if cue then cue(r, "over") end
+
+  -- THE EYE. The one bright mark every machine in the crew is read by, and it
+  -- is a hole. Same sentence as the suit's visor, same reason it is the only
+  -- one this object says.
+  Draw.setColor(C.huskRim)
+  lg.circle("fill", r * 0.50, -r * 0.14, r * 0.21)
+  Draw.setColor(C.huskDeep)
+  lg.circle("fill", r * 0.50, -r * 0.13, r * 0.165)
+  Draw.setColor(C.void)
+  Draw.blob(r * 0.51, -r * 0.12, r * 0.115, 9, s + 17, 0.10, 0.82)
+
+  -- the antenna, snapped at the root and lying where it fell
+  Draw.setColor(C.deep)
+  Draw.capsule("fill", -r * 0.52, -r * 0.22, -r * 0.98, -r * 0.44, r * 0.032)
+
+  -- one hard rim up-sun, so it is a solid on the grass and not a stain
+  Draw.setColor(C.huskRim)
+  Draw.capsule("fill", -r * 0.40, -r * 0.34, r * 0.18, -r * 0.38, r * 0.035)
+end
+
+-- The six outlines. `pass` is "under" (before the chassis is laid over it) or
+-- "over"; nothing needs both often, but the wheels and the jib do.
+HUSK_CUE[1] = function(r, pass)      -- planter: treads, and the sprout it dropped
+  if pass == "under" then
+    Draw.setColor(C.huskDeep)
+    Draw.capsule("fill", -r * 0.56, -r * 0.40, r * 0.40, -r * 0.44, r * 0.15)
+    Draw.capsule("fill", -r * 0.56, r * 0.40, r * 0.40, r * 0.36, r * 0.15)
+  else
+    -- the seedling it was carrying, out of the cradle and dead on the ground.
+    -- Drawn in the husk's own dead metal rather than in leaf green: a live
+    -- sprout beside a dead machine is a hopeful image and this is not one.
+    Draw.setColor(C.deep)
+    Draw.capsule("fill", r * 0.60, r * 0.34, r * 1.02, r * 0.50, r * 0.035)
+    Draw.setColor(C.huskDeep)
+    Draw.blob(r * 1.02, r * 0.46, r * 0.14, 7, 23, 0.22, 0.60)
+    Draw.blob(r * 0.86, r * 0.56, r * 0.12, 7, 29, 0.22, 0.60)
+  end
+end
+
+HUSK_CUE[2] = function(r, pass)      -- builder: the jib, out flat, block on the line
+  if pass ~= "over" then return end
+  Draw.setColor(C.huskDeep)
+  Draw.capsule("fill", -r * 0.20, -r * 0.12, -r * 1.34, -r * 0.44, r * 0.10)
+  Draw.setColor(C.huskBody)
+  Draw.capsule("fill", -r * 0.24, -r * 0.16, -r * 1.10, -r * 0.42, r * 0.055)
+  Draw.setColor(C.deep)
+  Draw.capsule("fill", -r * 1.34, -r * 0.44, -r * 1.52, -r * 0.10, r * 0.028)
+  Draw.setColor(C.huskLit)
+  Draw.blob(-r * 1.54, -r * 0.04, r * 0.13, 6, 31, 0.10, 0.86)
+end
+
+HUSK_CUE[3] = function(r, pass)      -- repulsor: three feet, and a dark emitter ring
+  if pass == "under" then
+    Draw.setColor(C.huskDeep)
+    for i = 0, 2 do
+      local a = i * TAU / 3 + 0.7
+      Draw.capsule("fill", -r * 0.30, 0, -r * 0.30 + cos(a) * r * 0.78,
+                   sin(a) * r * 0.52, r * 0.12)
+    end
+  else
+    -- the ring is the whole silhouette of a Repulsor and it is unlit here:
+    -- a dark annulus rather than the cyan hoop the player builds
+    Draw.setColor(C.huskBody)
+    lg.circle("fill", r * 0.86, -r * 0.02, r * 0.36)
+    Draw.setColor(C.void)
+    lg.circle("fill", r * 0.86, -r * 0.02, r * 0.24)
+  end
+end
+
+HUSK_CUE[4] = function(r, pass)      -- sentry: the diamond head, and the barrel
+  if pass ~= "over" then return end
+  Draw.setColor(C.huskBody)
+  Draw.diamond(r * 0.72, -r * 0.16, r * 0.36, r * 0.30, "fill")
+  Draw.setColor(C.huskDeep)
+  Draw.capsule("fill", r * 0.86, -r * 0.20, r * 1.44, -r * 0.34, r * 0.10)
+  Draw.setColor(C.void)
+  lg.circle("fill", r * 1.46, -r * 0.35, r * 0.062)
+end
+
+HUSK_CUE[5] = function(r, pass)      -- harvester: wheels, one of them off the axle
+  if pass == "under" then
+    Draw.setColor(C.huskDeep)
+    lg.circle("fill", -r * 0.34, -r * 0.44, r * 0.28)
+    Draw.setColor(C.tyre)
+    lg.circle("fill", -r * 0.34, -r * 0.44, r * 0.18)
+  else
+    Draw.setColor(C.huskDeep)
+    lg.circle("fill", r * 0.94, r * 0.44, r * 0.28)
+    Draw.setColor(C.tyre)
+    lg.circle("fill", r * 0.94, r * 0.44, r * 0.18)
+    -- the scoop, bent back under it
+    Draw.setColor(C.huskBody)
+    Draw.capsule("fill", -r * 0.62, r * 0.30, r * 0.24, r * 0.36, r * 0.09)
+  end
+end
+
+HUSK_CUE[6] = function(r, pass)      -- beacon: the mast down, the lantern dark
+  if pass ~= "over" then return end
+  Draw.setColor(C.huskDeep)
+  Draw.capsule("fill", -r * 0.30, -r * 0.10, -r * 1.30, -r * 0.30, r * 0.09)
+  Draw.setColor(C.huskBody)
+  Draw.roundRect("fill", -r * 1.62, -r * 0.52, r * 0.42, r * 0.42, r * 0.12)
+  Draw.setColor(C.void)
+  Draw.roundRect("fill", -r * 1.56, -r * 0.46, r * 0.30, r * 0.30, r * 0.10)
+end
+
 ---------------------------------------------------------------------- kinds
 -- `ground` means the thing has no height: it is painted in the ground pass with
 -- the shadows, under every entity and every tree, instead of being sorted into
@@ -764,11 +982,12 @@ local KIND = {
   wreck  = { radius = 46, variants = 1, shadow = { 1.20, 0.50, 0.42 } },
   road   = { radius = 78, variants = 3, ground = true, spin = true,
              halfLen = function() return TU.relic.road.segLen * 0.5 + TU.relic.road.overlap end },
-  suit   = { radius = 30, variants = 3, shadow = { 1.15, 0.36, 0.32 } },
+  suit   = { radius = 30, variants = 4, shadow = { 1.15, 0.36, 0.32 } },
   pallet = { radius = 38, variants = 1, shadow = { 0.92, 0.28, 0.34 } },
-  pad    = { radius = 78, variants = 1, ground = true, spin = true },
   mast   = { radius = 76, variants = 1, spin = true, shadow = { 0.80, 0.20, 0.26 } },
   hauler = { radius = 46, variants = 1, spin = true, shadow = { 1.05, 0.40, 0.30 } },
+  -- One variant per bot type, and it lies flat, so it spins like the mast.
+  husk   = { radius = 20, variants = 6, spin = true, shadow = { 1.05, 0.44, 0.34 } },
 }
 Relic.KIND = KIND
 
@@ -776,17 +995,26 @@ Relic.KIND = KIND
 local baked = {}
 
 --------------------------------------------------------------------- entity
-function Relic:init(x, y, what, variant, angle, flip)
+function Relic:init(x, y, what, variant, angle, flip, scale)
   Relic.super.init(self, x, y)
   local k = KIND[what]
   self.kind    = "relic"
   self.what    = what
   self.variant = variant or 1
-  self.radius  = k.radius
+  -- Per-instance size, and there is exactly one caller: the near-band suit,
+  -- which is drawn half again as big so that one of the seven is legible at
+  -- play zoom rather than only at 5x in the gallery. The bake is per kind and
+  -- variant and knows nothing about it -- `Draw.replay` takes a scale, so the
+  -- shared point list is replayed larger. The shadow and the planting exclusion
+  -- scale with it, because both are properties of how big the thing looks.
+  self.scale   = scale or 1
+  self.radius  = k.radius * self.scale
   self.angle   = k.spin and (angle or 0) or 0
   self.flip    = flip and true or false
   self.ground  = k.ground or false
-  self.noPlant = TU.relic.noPlant[what] or k.radius
+  -- 1 unless something retires it; only husks ever set it. See `Relic.addHusk`.
+  self.alpha   = 1
+  self.noPlant = (TU.relic.noPlant[what] or k.radius) * self.scale
   -- Half-length along the object's own heading. A relic with one of these is
   -- excluded from planting as a CAPSULE rather than as a disc: a road segment
   -- is a hundred and fifty units long, and a disc at its centre left trees
@@ -819,6 +1047,20 @@ function Relic:shape()
   return s
 end
 
+--- `Draw.replay` sets each primitive's own recorded colour and has no alpha
+--- multiplier, which is right for everything in this file except a husk being
+--- retired. A baked shape is a list of `{r, g, b, a, points}` (see `Draw.bake`),
+--- so replaying one at a weight is five lines here rather than a new parameter
+--- on the function the entire game draws through. Only reached when a husk is
+--- actually faded; everything else takes `Draw.replay` unchanged.
+local function replayFaded(shape, a)
+  for i = 1, #shape do
+    local p = shape[i]
+    lg.setColor(p[1], p[2], p[3], p[4] * a)
+    lg.polygon("fill", p[5])
+  end
+end
+
 function Relic:paint()
   local s = self._shape
   if not s then return end
@@ -826,7 +1068,8 @@ function Relic:paint()
   lg.translate(self.x, self.y)
   if self.angle ~= 0 then lg.rotate(self.angle) end
   if self.flip then lg.scale(-1, 1) end
-  Draw.replay(s)
+  if self.scale ~= 1 then lg.scale(self.scale) end
+  if self.alpha < 1 then replayFaded(s, self.alpha) else Draw.replay(s) end
   lg.pop()
 end
 
@@ -847,7 +1090,7 @@ function Relic:drawShadow()
   local sh = self.shadow
   if not sh then return end
   Draw.softShadow(self.x, self.y + self.radius * 0.10,
-                  self.radius * sh[1], self.radius * sh[2], sh[3])
+                  self.radius * sh[1], self.radius * sh[2], sh[3] * self.alpha)
 end
 
 function Relic:draw()
@@ -874,7 +1117,11 @@ local function clearOfOthers(list, x, y, what)
   local T = TU.relic
   for i = 1, #list do
     local o = list[i]
-    local sep = (o.what == what) and T.sameKind or T.separation
+    -- `sameKindBy` is the per-kind exception to `sameKind`, and there is one
+    -- entry in it. See the tuning note: two suits in a field is a fact, and the
+    -- blanket rule that stopped it was costing more than it bought.
+    local sep = (o.what == what) and (T.sameKindBy[what] or T.sameKind)
+                or T.separation
     if o.what == "road" or what == "road" then sep = T.roadClear end
     if what == "road" and o.what == "road" then sep = 0 end
     if sep > 0 then
@@ -983,9 +1230,9 @@ local function pickBest(w, list, rng, what, score, minFromHome)
   return bx, by
 end
 
-local function add(w, list, what, x, y, variant, angle, flip)
+local function add(w, list, what, x, y, variant, angle, flip, scale)
   if not x then return nil end
-  local rel = Relic.new(x, y, what, variant, angle, flip)
+  local rel = Relic.new(x, y, what, variant, angle, flip, scale)
   list[#list + 1] = rel
   return rel
 end
@@ -1056,22 +1303,18 @@ function Relic.populate(w)
                   function(px, py) return d2(px, py, hx, hy) end, T.wreckMin)
   add(w, list, "wreck", x, y, 1, 0, rng:chance(0.5))
 
-  -- One suit and one pallet inside the valley, so a player who never explores
-  -- still walks past two of these without going looking.
+  -- ONE SUIT INSIDE THE VALLEY, and it is the big one. A player who never goes
+  -- looking is guaranteed to meet this object, so it is the one that has to
+  -- survive play zoom: `T.relic.suitNear.scale` draws it half again as large.
+  -- Poses 1-3 only -- the helmet-off pose is placed once, further down, and it
+  -- would be wasted on the suit the player is most likely to see first.
   x, y = pickNear(w, list, rng, "suit", T.near.suit[1], T.near.suit[2],
                   bearing + third, third, poorGround(w))
-  add(w, list, "suit", x, y, rng:int(1, KIND.suit.variants), 0, rng:chance(0.5))
+  add(w, list, "suit", x, y, rng:int(1, 3), 0, rng:chance(0.5), T.suitNear.scale)
 
   x, y = pickNear(w, list, rng, "pallet", T.near.pallet[1], T.near.pallet[2],
                   bearing + third * 2, third, poorGround(w))
   add(w, list, "pallet", x, y, 1, 0, rng:chance(0.5))
-
-  -- The pad, out where the ground is flat and open, so it is not painted up the
-  -- side of a hill.
-  x, y = pickBest(w, list, rng, "pad", function(px, py)
-    return -((t and t.slopeAt) and t:slopeAt(px, py) or 0)
-  end, T.far.pad[1])
-  add(w, list, "pad", x, y, 1, rng:angle(), false)
 
   -- The mast, on the highest ground that will take it, because that is where a
   -- relay goes.
@@ -1090,11 +1333,19 @@ function Relic.populate(w)
   end, T.scatterMin)
   add(w, list, "hauler", x, y, 1, rng:angle(), rng:chance(0.5))
 
-  -- The rest of the suits and the second pallet, scattered. Nothing steers
-  -- these toward anything: they are wherever the island had room.
-  for _ = 2, T.count.suit do
+  -- The rest of the suits, scattered. Nothing steers these toward anything:
+  -- they are wherever the island had room.
+  --
+  -- EXACTLY ONE of them takes the helmet-off pose, chosen by index rather than
+  -- rolled for. It is the only object in the set that makes a claim about what
+  -- somebody did, so a random one-in-four that sometimes lands twice and
+  -- sometimes never lands at all is the wrong instrument: two of them on one
+  -- island turns a statement into a motif.
+  local offPose = T.suitHelmetOff
+  for i = 2, T.count.suit do
     x, y = pickBest(w, list, rng, "suit", poorGround(w), T.scatterMin)
-    add(w, list, "suit", x, y, rng:int(1, KIND.suit.variants), 0, rng:chance(0.5))
+    local v = (i == offPose) and 4 or rng:int(1, 3)
+    add(w, list, "suit", x, y, v, 0, rng:chance(0.5))
   end
   for _ = 2, T.count.pallet do
     x, y = pickBest(w, list, rng, "pallet", poorGround(w), T.scatterMin)
@@ -1102,6 +1353,87 @@ function Relic.populate(w)
   end
 
   return list
+end
+
+------------------------------------------------------------------------ husks
+-- Variant per bot type. A type this table does not know draws as a Planter,
+-- which is the plainest of the six and the right thing to be wrong as.
+local HUSK_V = { planter = 1, builder = 2, repulsor = 3, sentry = 4,
+                 harvester = 5, beacon = 6 }
+
+--- Recompute every husk's alpha from its place in the queue.
+---
+--- `w.husks` is the husks in the order they died, oldest first. A husk is
+--- retired when `cap` newer ones have arrived on top of it, and it spends its
+--- last `fade` deaths going out, so the island never pops a body away in front
+--- of somebody. Nothing fades while there is headroom: with a cap of 30 and a
+--- fade of 8, a run that loses a dozen machines has twelve husks at full
+--- strength and no arithmetic anybody can see.
+---
+--- Runs once per death over at most `cap` entries.
+local function refreshHusks(w)
+  local list = w.husks
+  if not list then return end
+  local H, k = TU.relic.husk, #list
+  for i = 1, k do
+    local remaining = i + (H.cap - k)      -- deaths left before this one goes
+    local t = remaining / H.fade
+    if t > 1 then t = 1 end
+    list[i].alpha = H.floor + (1 - H.floor) * t
+  end
+end
+
+--- Leave a body where a machine died. Called from world.lua's `bot:lost`
+--- handler, and it is the only thing in this file a run can add.
+---
+--- Deterministic pose: the heading and the mirror come out of the position
+--- rather than out of an RNG, so two runs of the same seed that lose the same
+--- machine in the same place lay it down the same way, and nothing here spends
+--- from a stream the balance traces depend on.
+function Relic.addHusk(w, x, y, botType)
+  if not (w and w.relics and x) then return nil end
+  local H = TU.relic.husk
+  if not H or H.cap <= 0 then return nil end
+  -- Same kill switch as the rest of the file: `BOTS_NO_RELICS=1` is how the
+  -- frame cost of all of this is measured against itself.
+  local cfg = _G.BOTS_CFG
+  if cfg and cfg("BOTS_NO_RELICS") then return nil end
+
+  local list = w.husks
+  if not list then list = {} w.husks = list end
+
+  -- ONE BODY PER PLACE. A perimeter that fails, fails repeatedly and in the
+  -- same spot: a traced run put eight husks inside twenty world units, two of
+  -- them on identical coordinates, and eight overlapping lozenges is not a
+  -- history, it is a heap with z-fighting in it. If somewhere is already
+  -- marked, it stays marked and this loss is recorded by the memorial instead,
+  -- which is the thing that keeps the ledger. The walk is over at most `cap`
+  -- entries and runs on a death.
+  local g = H.minGap
+  if g > 0 then
+    local g2 = g * g
+    for i = 1, #list do
+      if d2(x, y, list[i].x, list[i].y) < g2 then return nil end
+    end
+  end
+
+  local s = floor(x * 0.5) + floor(y * 0.5) * 977
+  local rel = Relic.new(x, y, "husk", HUSK_V[botType] or 1,
+                        hash(1, s) * TAU, hash(2, s) < 0.5)
+  w.relics[#w.relics + 1] = rel
+  list[#list + 1] = rel
+
+  -- Retirement. The oldest comes out of both lists; `w.relics` is a couple of
+  -- dozen entries and this runs on a death, so a linear find is cheaper than
+  -- any index that would have to be kept.
+  while #list > H.cap do
+    local old = table.remove(list, 1)
+    for i = 1, #w.relics do
+      if w.relics[i] == old then table.remove(w.relics, i) break end
+    end
+  end
+  refreshHusks(w)
+  return rel
 end
 
 --- Would a sapling here be standing inside a relic? `World:plantTree` asks this

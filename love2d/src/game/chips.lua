@@ -531,11 +531,24 @@ function Chips:init(world)
   -- Rules that need a frame need it on *world* time: Timer.global runs on the
   -- wall clock, which a fast headless capture leaves eight times behind. One
   -- wrapper per world, and it dies with the world.
+  --
+  -- IT MUST FORWARD `realDt` AS WELL, and for a while it did not. `World:update`
+  -- takes `(dt, realDt)` and the split is load-bearing: game.lua passes dt = 0
+  -- while anybody is talking so the Blight cannot eat the crew behind a page of
+  -- dialogue, and passes the real clock alongside it so wind, weather, decals,
+  -- particles and the canopy x-ray keep running -- World:update's own comment
+  -- calls the alternative "a photograph... which reads as a hang rather than as
+  -- a pause". This wrapper dropped the second argument, so `realDt = realDt or
+  -- dt` fell back to zero and every one of those froze solid for the length of
+  -- every cutscene. It is also why a beat could pan onto a bot under a closed
+  -- canopy and the x-ray never opened: it had no time to open in.
   if world and type(world.update) == "function" and rawget(world, "update") == nil then
     local base = world.update
-    world.update = function(w, dt)
-      base(w, dt)
+    world.update = function(w, dt, realDt)
+      base(w, dt, realDt)
       local ch = w.chips
+      -- ...but the chips themselves stay on world time. A rule that ticks while
+      -- the simulation is stopped is a rule that fires during a cutscene.
       if ch and ch.tick then ch:tick(dt) end
     end
   end

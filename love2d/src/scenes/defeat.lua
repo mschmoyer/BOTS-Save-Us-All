@@ -196,8 +196,9 @@ function S:draw()
   local colW = min(560, w - x0 * 2)
   -- The whole composition is one block, centred vertically: at 0.22h it sat in
   -- the top third with four hundred pixels of nothing under it, which reads as
-  -- unfinished rather than as quiet.
-  local y = floor(max(UI.pad * 3, (h * 0.82 - 340) * 0.5) / UI.u) * UI.u
+  -- unfinished rather than as quiet. 300 is that block's height, and it came
+  -- down from 340 when the closing line was cut from the bottom of it.
+  local y = floor(max(UI.pad * 3, (h * 0.82 - 300) * 0.5) / UI.u) * UI.u
 
   -- headline
   local hk = UI.stagger(t, 1, SEQ.head, 0, 0.9, U.ease.outExpo)
@@ -214,7 +215,11 @@ function S:draw()
     Draw.setColor(UI.c(P.accent, 0.55 * sk))
     lg.setLineWidth(2)
     lg.line(x0, y + UI.ts.h1 + 22, x0 + colW * sk, y + UI.ts.h1 + 22)
-    UI.body("They took what you grew.", x0, y + UI.ts.h1 + 36, UI.bs.lead,
+    -- Not "They took what you grew." -- second person, and it credits the
+    -- growing to the player, who did not do it. The bots did, and the run just
+    -- spent seventeen minutes establishing that. This closes the prologue's
+    -- "They took the air and left." at the other end.
+    UI.body("They took it back.", x0, y + UI.ts.h1 + 36, UI.bs.lead,
             UI.c(P.inkDim, 0.9 * sk))
   end
 
@@ -284,15 +289,14 @@ function S:draw()
     end
   end
 
-  -- the one line that is not a statistic
-  local fk = UI.stagger(t, 1, SEQ.foot - 0.6, 0, 1.0)
-  if fk > 0.002 then
-    UI.text("THE ISLAND IS STILL THERE", x0, ky + 116, UI.ts.h4,
-            UI.c(P.accent, 0.85 * fk), "left", fk, 0.18)
-  end
+  -- There is no closing line, and there was one: "THE ISLAND IS STILL THERE",
+  -- flagged in this file's own comment as "the one line that is not a
+  -- statistic". It is the writer consoling the player over a list of the dead,
+  -- which is the fault that got "THE AIR IS YOURS" deleted from the ending.
+  -- The screen ends on the names now, the way the ending does.
   local pk = UI.stagger(t, 1, SEQ.foot, 0, 0.8)
   if pk > 0.002 then
-    UI.promptRow(x0, ky + 158, PROMPTS, UI.ts.micro, P.inkDim,
+    UI.promptRow(x0, ky + 116, PROMPTS, UI.ts.micro, P.inkDim,
                  (0.7 + 0.3 * math.sin(t * 2.2)) * pk, "left")
   end
 

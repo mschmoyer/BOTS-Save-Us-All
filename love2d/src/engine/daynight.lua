@@ -246,7 +246,28 @@ end
 --- The game scene calls this every frame, on top of the DN.set() the same
 --- function already does, so the unchanged case skips the second recompute
 --- rather than doing the whole grade twice for the same reading.
+---
+--- `BOTS_O2=14` PINS THE READING for a whole session, and it is a measurement
+--- hook rather than a cheat: the dead-air grade in `recompute` is a pure
+--- function of this one number, so the only honest way to A/B the recovery
+--- curve is the same island photographed at three fixed readings, and a live
+--- run cannot hold a reading still for even one frame. It pins the GRADE only
+--- -- the meter, the win condition and the HUD go on reading the forest -- so a
+--- pinned capture shows a real world under a chosen sky. Unset, it is nil and
+--- nothing below it runs.
+local o2Pin, o2PinRead = nil, false
+
 function DN.o2Influence(pct)
+  -- Resolved on the first call rather than at load: this file is required
+  -- before main.lua has published `BOTS_CFG`, which is also where the browser
+  -- build's `?dev=` query string arrives, so `os.getenv` alone would miss it.
+  if not o2PinRead then
+    o2PinRead = true
+    local c = _G.BOTS_CFG
+    local v = c and c("BOTS_O2")
+    o2Pin = v and tonumber(v) or nil
+  end
+  if o2Pin then pct = o2Pin end
   local o2 = U.saturate((pct or 0) / 100)
   if o2 == DN.o2 then return o2 end
   DN.o2 = o2

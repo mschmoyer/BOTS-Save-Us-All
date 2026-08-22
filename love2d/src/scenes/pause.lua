@@ -240,14 +240,15 @@ function S:draw()
   local hk = UI.stagger(t, 1, 0.02, 0, 0.4, U.ease.outExpo)
   UI.text("PAUSED", x0 + (1 - hk) * -14, headY, UI.ts.h1, UI.c(P.ink, a * hk),
           "left", a * hk, U.lerp(0.30, 0.08, hk))
-  UI.caption("THE ISLAND IS HOLDING ITS BREATH", x0, headY + 66, UI.ts.micro,
-             UI.c(P.inkFaint, 0.8 * a * hk), "left")
+  -- No subtitle. "THE ISLAND IS HOLDING ITS BREATH" stood under the heading:
+  -- a metaphor on a pause screen, where nothing is at stake and the player is
+  -- looking for the volume slider. The rule and the menu close up behind it.
   Draw.setColor(UI.c(P.warn, 0.9 * a * hk))
   lg.setLineWidth(2)
-  lg.line(x0, headY + 90, x0 + colW * hk, headY + 90)
+  lg.line(x0, headY + 66, x0 + colW * hk, headY + 66)
 
   -- menu
-  local menuY = headY + 120
+  local menuY = headY + 96
   local rowH = 60
   for i = 1, #MENU do
     local m = MENU[i]

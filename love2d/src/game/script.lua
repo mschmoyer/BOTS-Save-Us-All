@@ -65,18 +65,20 @@ S.ctxName = ctxName
 -- The loneliness is planted here and not spent here: he says what the radio is
 -- doing, not what it means. The ending says it.
 --
--- "They left what was not worth the trip." is the only setup the Harvester
+-- "What they left was not worth the trip." is the only setup the Harvester
 -- Prime gets, and it is the whole of it. It is a fact when you hear it and a
--- horror when you hear it again.
+-- horror when you hear it again. It is phrased away from "They took / They
+-- left", because three sentences opening on the same word is a figure, and a
+-- man being terse is not performing one.
 --
 -- No line here announces the plan. He says what he is, once, and the game
 -- shows the rest.
 S.prologue = {
   steps = {
-    camera({ entity = function(_, w) return w and w.player end, zoom = 1.16, dur = 1.0 }),
+    camera({ entity = function(_, w) return w and w.player end, zoom = 1.9, dur = 1.0 }),
     line("human", "The sky has been that colour for eleven days.", "tired"),
     line("human", "They took the air and left.", "flat"),
-    line("human", "They left what was not worth the trip.", "flat"),
+    line("human", "What they left was not worth the trip.", "flat"),
     wait(0.8),
     line("human", "The radio has been on the whole time. Nothing on it.", "flat"),
     wait(1.1),
@@ -99,7 +101,7 @@ S.prologue = {
 -- cannot. That is the first thing it ever asks for itself.
 S.firstBot = {
   steps = {
-    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.22, dur = 0.8 }),
+    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.8, dur = 0.8 }),
     sound("bot_boot", { pitch = 0.94 }),
     fx({ effect = "bot_boot", entity = function(ctx) return ctx.bot end, dur = 0.7 }),
     look("botA", 1.2, "small"),
@@ -126,7 +128,7 @@ S.firstBot = {
 -- tree rather than after itself.
 S.firstAttack = {
   steps = {
-    camera({ entity = function(ctx) return ctx.enemy end, zoom = 1.14, dur = 0.9 }),
+    camera({ entity = function(ctx) return ctx.enemy end, zoom = 1.6, dur = 0.9 }),
     line("botA", "there is something on the little one", "urgent"),
     line("human", "Get behind me.", "urgent"),
     fx({ shake = 0.35, dur = 0.35 }),
@@ -154,7 +156,7 @@ S.firstAttack = {
 S.firstLoss = {
   steps = {
     camera({ x = function(ctx) return ctx.lostX end,
-             y = function(ctx) return ctx.lostY end, zoom = 1.2, dur = 1.1 }),
+             y = function(ctx) return ctx.lostY end, zoom = 1.7, dur = 1.1 }),
     look("botB", 1.1, "small"),
     line("botB", "it stopped", "small"),
     line("human", ctxName("lostName", "SEED-01"), "sad"),
@@ -183,7 +185,7 @@ S.firstLoss = {
 -- and putting the decision here spends that beat before it exists.
 S.question = {
   steps = {
-    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.2, dur = 0.8 }),
+    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.8, dur = 0.8 }),
     wait(1.0),
     line("botA", "what are the trees for", "flat"),
     wait(1.2),
@@ -198,35 +200,26 @@ S.question = {
 ------------------------------------------------------- 6. THE RADIO  (cycle 4)
 -- The one beat between "for who" and "i do not use air", and the only thing
 -- standing in a measured four-to-six minute silence. It is on the rig's radio,
--- and it is deliberately NOT on the empty pressure suits.
+-- and deliberately NOT on the empty pressure suits: relic.lua's rule for those
+-- is "no toast, no tooltip, no codex entry, no achievement and no bot line",
+-- and the four of them work for exactly as long as nothing points at one. A
+-- scene over an empty suit is also a funeral, three minutes after one funeral
+-- and three minutes before another.
 --
--- Why not the suits. entities/relic.lua's own rule for them is "no toast, no
--- tooltip, no codex entry, no achievement and no bot line", and the four suits
--- work for exactly as long as nothing in the game points at one. Point at one
--- in a cutscene and the other three stop being true and start being the thing
--- the game did a scene about. They are also nowhere in particular: a beat that
--- needs one on screen either starves or teleports the camera to a field the
--- player has never walked, which turns a discovery into an aside. And a scene
--- over an empty suit is a funeral, three minutes after one funeral and three
--- minutes before another.
+-- The radio is a fixture -- it is on the rig, the lamp sweeps all run -- so
+-- this beat has no geography and cannot starve. It is the prologue's plant
+-- touched once in the middle, so that the ending's "Or the radio." has a
+-- history rather than being a callback fifteen minutes cold.
 --
--- Why the radio. It is a fixture -- it is on the rig, the lamp sweeps all run,
--- and the readout has said SIGNALS RECEIVED  0 since the first frame -- so this
--- beat has no geography and cannot starve. It is the prologue's plant ("The
--- radio has been on the whole time. Nothing on it.") touched once in the middle
--- so that the ending's "Or the radio." is a thing with a history rather than a
--- callback fifteen minutes cold. And it is the right SHAPE for this stretch:
--- the question beat is a machine asking, the answer beat is a machine reading
--- its own log back, and what has to happen in between is the machine going and
--- reading an instrument. It learns to do that from him. Nothing says so.
+-- Nobody says what the number counts. The plate on the hull says SIGNALS
+-- RECEIVED, the dawn card says NO ANSWER, and the prologue said it in words;
+-- a fourth telling is the writer making sure the player got it. He names the
+-- part and stops, which is the whole of what he will admit to.
 --
--- The bot never says it went looking. It turns up with a reading. That is the
--- whole of its diligence and it costs four words.
---
--- "it was zero yesterday" is the line the beat exists for. It arrives one
--- second after he has told it what the number counts, it is offered helpfully,
--- and the bot has no idea what it has just said. He does not answer it. What he
--- says instead is a maintenance habit, and the player can count the mornings.
+-- "it was zero yesterday" is the line the beat exists for. It is offered
+-- helpfully, by a machine that does not know what it is reporting, to the one
+-- man who does. He does not answer it. What he says instead is a maintenance
+-- habit, and the player can count the mornings.
 --
 -- It ends on him giving it a frequency. A machine cannot offer him company, so
 -- it offers him labour; he cannot accept the first and cannot refuse the
@@ -236,12 +229,10 @@ S.question = {
 -- what makes the rebellion inevitable rather than sudden.
 S.radio = {
   steps = {
-    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.2, dur = 0.8 }),
-    line("botA", "there is a number on the rig", "flat"),
-    line("human", "The radio.", "flat"),
-    line("botA", "it says zero", "flat"),
-    wait(1.4),
-    line("human", "That is how many have answered.", "flat"),
+    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.8, dur = 0.8 }),
+    line("botA", "the number on the rig is zero", "flat"),
+    wait(1.6),
+    line("human", "That is the radio.", "flat"),
     wait(2.4),
     line("botA", "it was zero yesterday", "flat"),
     wait(3.0),
@@ -271,7 +262,7 @@ S.radio = {
 -- are not disobeying an order, they are keeping a decision they already made.
 S.answer = {
   steps = {
-    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.2, dur = 0.8 }),
+    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.8, dur = 0.8 }),
     line("botA", "i asked what the trees are for", "flat"),
     wait(1.0),
     line("botA", "you said the air", "flat"),
@@ -290,17 +281,25 @@ S.answer = {
 -- every other one, and the only long relationship in the game ends as a line
 -- of scrolling text.
 --
+-- "that was the first one you made" and not "that was the first one": by this
+-- point the player has watched thirty machines stop, and the short form parses
+-- as the first of tonight's. Five words, and it is a bot stating a fact about
+-- the man, which is how these machines look at him everywhere else.
+--
 -- "Go on. Back to work." is verbatim from the first loss, where it is trimmed
 -- to its second half. The repetition is the beat: the second time it is all he
 -- has, and the player hears that there is nothing else. He gets no new line
--- here, and must not be given one.
+-- here, and must not be given one. The two silences around it are the length
+-- of the beat -- it is the only long relationship in the game ending, and four
+-- seconds of screen time was not enough to be one.
 S.firstBotLost = {
   steps = {
     camera({ x = function(ctx) return ctx.lostX end,
-             y = function(ctx) return ctx.lostY end, zoom = 1.2, dur = 1.1 }),
-    line("botB", "that was the first one", "small"),
-    wait(2.6),
+             y = function(ctx) return ctx.lostY end, zoom = 1.7, dur = 1.1 }),
+    line("botB", "that was the first one you made", "small"),
+    wait(2.8),
     line("human", "Go on. Back to work.", "tired"),
+    wait(1.6),
     camera({ release = true, dur = 0.5 }),
   },
 }
@@ -313,6 +312,10 @@ S.firstBotLost = {
 -- category it has, and the other applies the rule he taught it in beat 3 to a
 -- thing the rule does not fit. "I know." is a man agreeing that his own rule
 -- has run out.
+--
+-- "is it one of ours" is answered with what the thing is DOING and not with a
+-- "No.", which is a better answer and leaves the word belonging to one beat in
+-- the game -- the one two minutes earlier where it carried a whole scene.
 S.extraction = {
   steps = {
     camera({ entity = function(ctx) return ctx.boss end, zoom = 0.86, dur = 1.2 }),
@@ -322,7 +325,6 @@ S.extraction = {
     line("human", "Get away from it. All of you.", "urgent"),
     wait(0.5),
     line("botA", "is it one of ours", "small"),
-    line("human", "No.", "flat"),
     wait(0.6),
     line("human", "It is taking the air back.", "flat"),
     line("botB", "we cannot move that one", "small"),
@@ -347,7 +349,7 @@ S.extraction = {
 -- that is said in the world, in speech bubbles, by bots on their way past.
 S.rebellion = {
   steps = {
-    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.18, dur = 0.9 }),
+    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.6, dur = 0.9 }),
     music("boss"),
     line("human", "Get behind me.", "urgent"),
     wait(0.6),
@@ -429,6 +431,25 @@ S.ending = {
   },
 }
 
+------------------------------------------------------------------------ barks
+-- Said in the world, in a speech bubble, not in a panel. There is one, and it
+-- is the only thing he ever says about a rescue.
+--
+-- The player carries a downed machine to a beacon and it stands up: the game
+-- answers that with a toast reading BACK ON ITS FEET, and nothing else. This
+-- is the word he gave the first bot in beat 2 for saying hello. He does not
+-- have another one, and by now the player knows that.
+--
+-- Once a run, on the first machine the PLAYER carried -- `bot.savedBy` is
+-- "player" only then; a beacon reviving one on its own is not a thing he
+-- watched anybody do. Not a beat: a letterbox, a portrait and a held silence
+-- for four characters would be the game stopping itself to be pleased, which
+-- is the opposite of the line. See S.credits.quiet, which is spoken the same
+-- way.
+S.bark = {
+  rescued = "Good.",
+}
+
 -------------------------------------------------------------------------- hud
 -- Words the interface says for itself. There is only one of them, because
 -- there is only one standing offer in the game: the dawn. It is written here
@@ -508,7 +529,7 @@ S.tutorial = {
   { id = "pulse",     label = "TOO MANY OF THEM",  action = "pulse",
     hint = "HOLD IT, THEN LET GO" },
   { id = "handplant", label = "PUT ONE HERE",      action = "plant",
-    hint = "FREE. THE FOREST GROWS FROM ITS EDGE." },
+    hint = "FREE. ONLY THE OUTER TREES SEED." },
   { id = "harvester", label = "SEND IT MINING",    action = "build5",
     hint = "IT BRINGS COBALT HOME WHILE YOU FIGHT" },
   { id = "builder",   label = "IT PLANTS PLANTERS", action = "build2",
@@ -547,7 +568,10 @@ S.credits = {
     { key = "rescued", label = "CARRIED HOME" },
     -- The last line of the tally is the one the game is about: the rig came
     -- down mostly because they walked into it, and the number says how much.
-    { key = "theirs",  label = "THEY BROUGHT DOWN", suffix = "%" },
+    -- Named in full, because it sits under OXYGEN RESTORED 84% and "THEY
+    -- BROUGHT DOWN 91%" is the one row where the reader has to guess what the
+    -- second percentage is a percentage of.
+    { key = "theirs",  label = "THEY BROUGHT THE RIG DOWN", suffix = "%" },
   },
 }
 

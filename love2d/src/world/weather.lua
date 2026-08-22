@@ -32,11 +32,21 @@ local STATES = {
 }
 W.states = STATES
 
+-- Iterated instead of `pairs(STATES)`. LuaJIT randomises its string hash seed
+-- per process, so `pairs` over a string-keyed table walks in a different order
+-- in every run -- and this loop builds a weighted pool that `rng:pick` then
+-- indexes, so the same seed drew different weather in different processes.
+-- That was the first divergence in any traced run, at about t=45s, every time,
+-- and it is most of why BOTS_SEED has never reproduced a campaign.
+local ORDER = { "clear", "breezy", "overcast", "rain", "storm" }
+
 --- Weather is not purely random: it is weighted by the phase, so nights are
 --- more likely to be foul and the day you need to rebuild is more likely clear.
 local function pick(rng, phase, cycle)
   local pool = {}
-  for name, def in pairs(STATES) do
+  for oi = 1, #ORDER do
+    local name = ORDER[oi]
+    local def = STATES[name]
     local w = def.weight
     if phase == "night" then
       if name == "storm" then w = w + 1 + cycle * 0.3 end

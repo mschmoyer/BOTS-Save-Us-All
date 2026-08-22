@@ -26,6 +26,21 @@ local TU    = require("src.game.tuning")
 
 local Director = Class("Director")
 
+-- Every enemy type in TU.enemy, in a fixed order.
+--
+-- Both loops below used `pairs(TU.enemy)`, and LuaJIT randomises its string
+-- hash seed per process, so a string-keyed table walks in a different order in
+-- every run. One of those loops builds the weighted pool the night's wave is
+-- drawn from and the other breaks the escort's cheapest-cost tie, so the same
+-- seed composed different nights in different processes. With this and the
+-- matching fix in world/weather.lua, three same-seed runs produce byte-identical
+-- traces -- which is the difference between a balance measurement and a guess.
+local ENEMY_ORDER = {}
+for name, def in pairs(TU.enemy) do
+  if type(def) == "table" and def.from then ENEMY_ORDER[#ENEMY_ORDER + 1] = name end
+end
+table.sort(ENEMY_ORDER)
+
 function Director:init(world)
   self.world = world
   -- Seeded from the world, not a constant: otherwise every playthrough on every
@@ -224,8 +239,10 @@ end
 --- Which enemy types are unlocked and affordable right now.
 function Director:pickCard(left)
   local opts, total = {}, 0
-  for name, def in pairs(TU.enemy) do
-    if type(def) == "table" and def.from and def.from <= self.cycle and def.cost <= left then
+  for oi = 1, #ENEMY_ORDER do
+    local name = ENEMY_ORDER[oi]
+    local def = TU.enemy[name]
+    if def.from <= self.cycle and def.cost <= left then
       local ok = true
       -- One Maw at a time, and never in the opening of a night: it is a
       -- mid-night complication, not an opening move. Dormant ones from previous
@@ -332,8 +349,10 @@ end
 --- an escorted card costs the Blight bodies elsewhere rather than being free.
 function Director:spawnEscort(x, y, purse)
   local best, bestCost
-  for name, def in pairs(TU.enemy) do
-    if type(def) == "table" and def.from and def.from <= self.cycle
+  for oi = 1, #ENEMY_ORDER do
+    local name = ENEMY_ORDER[oi]
+    local def = TU.enemy[name]
+    if def.from <= self.cycle
        and self:weightOf(name, def) > 0 and name ~= "maw" and name ~= "warden" then
       if not bestCost or def.cost < bestCost then best, bestCost = name, def.cost end
     end
