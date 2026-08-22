@@ -1615,8 +1615,25 @@ function World:applyOxygen(dt)
 
   -- Filling the sky is the win condition, not surviving a fixed number of
   -- nights: the moment the air is breathable, they come to take it.
+  --
+  -- ...EXCEPT DURING THE LAST DAY, where "the moment" costs the game a scene.
+  -- On a fast run the air fills during cycle 7's DAY, the extraction starts
+  -- there, and cycle 7 never reaches a dusk -- so `S.lastNight`, which is
+  -- queued from the one `phase:dusk` handler in story.lua, is never queued at
+  -- all. Measured across ten seeds: 777 and 314 have no cycle-7 dusk sample in
+  -- the trace, the beat never plays, and the script runs from "i will plant
+  -- more" straight to "what is that" -- 198 and 213 seconds of silence, which
+  -- is the exact gap that beat was written to fill. The better the run, the
+  -- likelier it was lost, because filling the sky early is what deleted it.
+  --
+  -- The same day also carries the `lastnight` chatter pool and the dial's
+  -- THE LAST NIGHT state, so a cycle 7 without a night drops all of it. Holding
+  -- the rig until that dusk costs at most one day -- and the rig arriving at
+  -- nightfall is when everything else in this game arrives.
+  local lastDay = (self.cycle or 1) >= TU.cycle.count
+                  and (self.phase == "day" or self.phase == "dawn")
   if self.o2 >= TU.o2.target - 0.3 and self.phase ~= "extraction"
-     and self.phase ~= "ending" then
+     and self.phase ~= "ending" and not lastDay then
     self:beginExtraction()
   end
 

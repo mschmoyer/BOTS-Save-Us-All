@@ -835,7 +835,22 @@ function Bot:epitaphClauses()
   elseif others == 1 then
     add("saves", "went down once and got back up")
   end
-  if (L.downs or 0) == 0 and L.nights >= 2 then add("never", "never went down") end
+  -- ...AND NOT IF IT WENT AT THE RIG. `downs == 0` is true of a machine that
+  -- died without ever hitting the ground, and the commonest way to do that is
+  -- to walk into the Harvester Prime -- so "never went down" was the page's way
+  -- of describing the manner of the charge while never mentioning the charge.
+  -- Adding the `went` clause did not fix that, it only gave it a rival:
+  -- whenever `went` lost the placement contest the false sentence printed
+  -- anyway, and one row managed both at once --
+  -- `LAMP-01  went at the rig. it never went down.` -- which contradicts itself
+  -- in eleven words. Captured on seed 99; two to four rows a page on every seed
+  -- tested. Removing it costs nothing measurable: contradictions went 2/3/3 to
+  -- 0/0/0 across seeds 4242/99/777 and the number of rows carrying "went at the
+  -- rig" did not change, because the machines simply close on the next true
+  -- thing instead.
+  if (L.downs or 0) == 0 and L.nights >= 2 and not L.went then
+    add("never", "never went down")
+  end
   if L.walked >= E.walked then add("walked", "walked the whole island") end
   if L.nights >= 1 then
     add("nights", "stood through " .. num(L.nights) .. (L.nights == 1 and " night" or " nights"))
