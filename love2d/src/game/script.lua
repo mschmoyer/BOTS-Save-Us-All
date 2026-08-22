@@ -197,6 +197,39 @@ S.question = {
   },
 }
 
+--------------------------------------------- 6b. THE LAST DUSK  (cycle 7)
+-- The emptiest place in the run, measured: the gap between "i do not use air"
+-- and the rig landing is 210-245 seconds across seeds, and it is the climb to
+-- the climax. Nothing was written for cycle 7 at all -- the two scheduled beats
+-- stop at 6.
+--
+-- Twelve words, and the human does not answer the last one. That is the point
+-- of it: he has spent the whole game not being answered, and here he is the one
+-- who does not answer. Nothing says so.
+--
+-- IT DOES NOT MENTION THE SKY. There is a light up there on this dusk --
+-- world/weather.lua puts one on each of the last two -- and the rule that makes
+-- it work is that nothing ever remarks on it, so that the Harvester Prime
+-- coming down is the fourth light the player has seen and not the first.
+--
+-- "i will be here in the morning" is a promise the game is free to break, and
+-- the ledger will quote the machine's own number back at it: a Planter that
+-- says this and does not come back gets "stood through six nights" on the
+-- memorial, in the crew's own words, with nobody pointing at it.
+S.lastNight = {
+  steps = {
+    camera({ entity = function(ctx) return ctx.bot end, zoom = 1.8, dur = 0.8 }),
+    wait(0.9),
+    line("human", "Seventh night.", "flat"),
+    wait(1.2),
+    line("botA", "the last one", "flat"),
+    wait(1.8),
+    line("botA", "i will be here in the morning", "flat"),
+    wait(2.6),
+    camera({ release = true, dur = 0.5 }),
+  },
+}
+
 ------------------------------------------------------- 6. THE RADIO  (cycle 4)
 -- The one beat between "for who" and "i do not use air", and the only thing
 -- standing in a measured four-to-six minute silence. It is on the rig's radio,

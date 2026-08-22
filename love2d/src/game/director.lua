@@ -252,6 +252,24 @@ function Director:pickCard(left)
       end
       if ok then
         local wt = self:weightOf(name, def)
+        -- ...PER BODY, not per card. A card is a clutch, and the clutch is a
+        -- budget rather than a count -- `clutchBudget / cost` -- so drawing a
+        -- chomper puts four or five bodies on the island and drawing a bulwark
+        -- puts one. The table read as a card table, so the weights the file's
+        -- own header describes ("about a tenth of night seven" for the chomper)
+        -- were not what the night was made of: measured, the chomper's ~11%
+        -- card weight came out as 53% / 33% / 53% of night-seven spawns across
+        -- three seeds, and the Maw -- a whole enemy with its own model and rule
+        -- set, unlocked at cycle 5 -- spawned 0, 1 and 1 times in three
+        -- complete runs, never once in the cycle it unlocks. Dividing by the
+        -- clutch makes the weight mean what it says. The night's total spend is
+        -- unchanged: budget is charged per body, so this changes what the dark
+        -- is made of and not how much of it there is.
+        if wt > 0 then
+          local bodies = (name == "maw") and 1
+            or U.clamp(TU.cycle.clutchBudget / math.max(1, def.cost), 1, 5)
+          wt = wt / bodies
+        end
         if wt > 0 then
           total = total + wt
           opts[#opts + 1] = { name = name, w = wt }
@@ -348,14 +366,31 @@ end
 --- is a screen, not a wave: it is bought out of the night's existing budget, so
 --- an escorted card costs the Blight bodies elsewhere rather than being free.
 function Director:spawnEscort(x, y, purse)
-  local best, bestCost
+  -- A WEIGHTED DRAW, not the cheapest thing on the shelf. Taking the minimum
+  -- cost picked the same type every time for the whole run -- always the
+  -- chomper, which is also the type the mix already over-supplied -- so every
+  -- Warden and every Maw in the game arrived behind an identical screen. The
+  -- purse still buys as many as it can afford, so a dearer escort is a smaller
+  -- one, which is the trade a screen should make.
+  local opts, total = {}, 0
   for oi = 1, #ENEMY_ORDER do
     local name = ENEMY_ORDER[oi]
     local def = TU.enemy[name]
-    if def.from <= self.cycle
-       and self:weightOf(name, def) > 0 and name ~= "maw" and name ~= "warden" then
-      if not bestCost or def.cost < bestCost then best, bestCost = name, def.cost end
+    if def.from <= self.cycle and def.cost <= purse
+       and name ~= "maw" and name ~= "warden" then
+      local wt = self:weightOf(name, def)
+      if wt > 0 then
+        total = total + wt
+        opts[#opts + 1] = { name = name, w = wt, cost = def.cost }
+      end
     end
+  end
+  if total <= 0 then return end
+  local best, bestCost = opts[#opts].name, opts[#opts].cost
+  local r = self.rng:range(0, total)
+  for i = 1, #opts do
+    r = r - opts[i].w
+    if r <= 0 then best, bestCost = opts[i].name, opts[i].cost break end
   end
   if not best then return end
   local n = math.min(4, math.floor(purse / bestCost))

@@ -472,6 +472,29 @@ local BEATS = {
     end,
   },
   {
+    -- THE LAST DUSK. Cycle 7 had nothing written for it: the scheduled beats
+    -- stop at 6, so the run's longest measured silence (210-245s across seeds)
+    -- sits exactly where it is climbing to the climax.
+    --
+    -- `guard = "now"` rather than "calm". Dusk is the quiet side of the night
+    -- and this beat has one dusk to happen on -- there is no cycle 8 to retry
+    -- from -- so a guard that can starve is a guard that deletes it. The short
+    -- patience is the honest version of that: if the last dusk is somehow a
+    -- firefight, the beat is dropped rather than played over one.
+    id = "lastNight", pri = 2, guard = "now", delay = 1.2, patience = 60,
+    prep = function(world, ctx)
+      local p = world.player
+      -- Deliberately NOT Story.theFirstOne. question, answer, rebellion and
+      -- ending all reserve that machine, and the promise here is better from
+      -- one of the ordinary ones: any of them, which is the whole point.
+      local a = pickBot(world, p and p.x, p and p.y)
+      if not a then return false end
+      ctx.bot = a
+      bind("botA", a)
+      return true
+    end,
+  },
+  {
     -- Never before the scene that introduced the thing they are charging.
     id = "rebellion", pri = 3, guard = "now", delay = 0.4,
     require = function() return Story.fired.extraction or not Story.armed.extraction end,
@@ -941,6 +964,10 @@ local function subscribe()
 
   Signal.on("bots:rebel", function()
     queue("rebellion", {})
+  end, Story)
+
+  Signal.on("phase:dusk", function(cycle)
+    if (cycle or 0) >= TU.cycle.count then queue("lastNight", {}) end
   end, Story)
 
   -- reactions: the bots noticing their own lives
