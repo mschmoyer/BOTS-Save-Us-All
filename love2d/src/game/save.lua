@@ -33,7 +33,14 @@ Save.FILE    = "run.lua"
 -- that came back, and without it a resumed run forgives every loss the saved
 -- run took: closing the tab after a bad night would be the cheapest way to
 -- undo it.
-Save.VERSION = 4
+-- 5: the husks. A machine that dies leaves a body on the ground, permanently,
+-- and a Planter will not plant within `T.relic.noPlant.husk` of one -- which is
+-- the whole of "the forest grows around the dead". None of it survived a save:
+-- a file written at cycle 6 of seed 4242 named eight machines in `lostNames`
+-- and stored zero graves, so a resumed run memorialised all eight at the end
+-- while the island had forgotten every one of them and the crew planted over
+-- the ground they died on.
+Save.VERSION = 5
 
 -- Everything wide is a flat numeric array read at a fixed stride, so adding a
 -- fact means appending to the row, bumping the stride here, and bumping
@@ -44,6 +51,7 @@ Save.VERSION = 4
 --   NODE  x, y, left
 --   LOST  cycle, planted, built,
 --         nights, downs, saves, carried, mined, shots, bornCycle
+--   HUSK  x, y, botType (an index into TU.bots.order, as peakBots uses)
 -- The per-bot ledger rides BOT and LOST at the same offsets on purpose, so a
 -- machine's facts read the same whether it came home or not. It is what the
 -- memorial is made of: "you carried it home twice" and "stood through five
@@ -53,6 +61,11 @@ Save.TREE_STRIDE = 5
 Save.BOT_STRIDE  = 13
 Save.NODE_STRIDE = 3
 Save.LOST_STRIDE = 10
+-- A husk is (x, y, what it was) and nothing else: `Relic.addHusk` hashes the
+-- angle and the flip out of the floored coordinates, so replaying these three
+-- numbers through it rebuilds the same body rather than a similar one. Written
+-- oldest-first, which is the order the cap retires them in.
+Save.HUSK_STRIDE = 3
 -- `peakBots` is the one flat array that is not strided: it is exactly one
 -- number per bot type, in TU.bots.order, so its index IS the type. A type
 -- added to that order later lands past the end of an older row and the reader
@@ -199,6 +212,25 @@ function Save.snapshot(world)
     peakBots[i] = pk[kind] or 0
   end
 
+  -- The graves. `w.husks` is already the oldest-first queue the cap retires
+  -- from, so writing it in order means a resumed run retires them in the same
+  -- order it would have. Types go out as an index into TU.bots.order, matching
+  -- peakBots; a husk whose type is not in that order comes back as a Planter,
+  -- which is what Relic.addHusk does with an unknown type anyway.
+  local husks, hn = {}, 0
+  local typeIndex = {}
+  for i = 1, #TU.bots.order do typeIndex[TU.bots.order[i]] = i end
+  local hl = w.husks or {}
+  for i = 1, #hl do
+    local r = hl[i]
+    if r and r.x and r.y then
+      husks[hn + 1] = r.x
+      husks[hn + 2] = r.y
+      husks[hn + 3] = typeIndex[r.botType] or 1
+      hn = hn + Save.HUSK_STRIDE
+    end
+  end
+
   local st = w.stats or {}
   return {
     version  = Save.VERSION,
@@ -215,6 +247,7 @@ function Save.snapshot(world)
     nodes    = nodes,
     chips    = chips,
     peakBots = peakBots,
+    husks    = husks,
     lostNames  = lostNames,
     lostTypes  = lostTypes,
     lostTraits = lostTraits,
@@ -323,6 +356,7 @@ local function serialize(d)
     "  stats = " .. flat(d.stats) .. ",",
     "  chips = " .. strs(d.chips) .. ",",
     "  peakBots = " .. flat(d.peakBots) .. ",",
+    "  husks = " .. flat(d.husks) .. ",",
     "  lostNames = " .. strs(d.lostNames) .. ",",
     "  lostTypes = " .. strs(d.lostTypes) .. ",",
     "  lostTraits = " .. strs(d.lostTraits) .. ",",

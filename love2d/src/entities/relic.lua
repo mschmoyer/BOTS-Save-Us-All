@@ -1420,6 +1420,11 @@ function Relic.addHusk(w, x, y, botType)
   local s = floor(x * 0.5) + floor(y * 0.5) * 977
   local rel = Relic.new(x, y, "husk", HUSK_V[botType] or 1,
                         hash(1, s) * TAU, hash(2, s) < 0.5)
+  -- Remembered so the save can write down what this was without reversing
+  -- HUSK_V. The angle and the flip are hashed off the floored coordinates
+  -- above, so (x, y, botType) is the whole husk: replaying those three numbers
+  -- on load rebuilds this exact one rather than a similar one.
+  rel.botType = botType
   w.relics[#w.relics + 1] = rel
   list[#list + 1] = rel
 

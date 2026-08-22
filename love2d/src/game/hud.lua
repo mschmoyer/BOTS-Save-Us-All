@@ -185,22 +185,31 @@ local toastSeq = 0
 
 --- Push an event onto the feed.
 ---
---- Repeat chatter with the same sub folds into the row that is already there
---- and bumps a counter, so a builder streak is one line rather than six. When
---- the pool is full the lowest-ranked, oldest row is the one that goes.
+--- A repeat folds into the row that is already there and bumps a counter, so a
+--- builder streak is one line rather than six. When the pool is full the
+--- lowest-ranked, oldest row is the one that goes.
+---
+--- The fold used to be gated on `rank <= RANK_CHATTER`, which left the loudest
+--- rank as the only one that could not fold -- and the blight scar notice
+--- (RANK_LOSS, with a fixed text and sub) is emitted once per rooting. Four
+--- rootings put four identical BLIGHT TOOK ROOT rows in a five-row feed, and
+--- the next machine to die hit `wr >= rank and rank >= RANK_LOSS` below and was
+--- DROPPED: the name and epitaph the whole crew system exists to earn, thrown
+--- away to keep a duplicate. Chatter still folds on `sub` alone, so a streak
+--- with a changing head line stays one row; anything louder has to match the
+--- whole line, so two machines dying are two rows and never one.
 function HUD.toast(text, color, sub, dur, rank)
   rank = rank or RANK_PROGRESS
-  if rank <= RANK_CHATTER then
-    for i = 1, TOAST_MAX do
-      local t = toasts[i]
-      if t.live and t.rank == rank and t.sub == sub then
-        t.text  = text
-        t.count = t.count + 1
-        t.t     = 0
-        toastSeq = toastSeq + 1
-        t.seq   = toastSeq
-        return t
-      end
+  for i = 1, TOAST_MAX do
+    local t = toasts[i]
+    if t.live and t.rank == rank and t.sub == sub
+       and (rank <= RANK_CHATTER or t.text == text) then
+      t.text  = text
+      t.count = t.count + 1
+      t.t     = 0
+      toastSeq = toastSeq + 1
+      t.seq   = toastSeq
+      return t
     end
   end
 
@@ -254,11 +263,20 @@ function HUD.clearSpeech() speechN = 0 end
 --- Called by the world (through the method this file installs on World) with a
 --- world-space anchor. Stored, not drawn: placement needs to know about every
 --- other bubble and about the whole HUD, and only the draw pass does.
-function HUD.queueSpeech(x, y, text, a)
+--- `name` is who is talking, and it is the only place their name can appear
+--- while they are talking: `Bot:plateAlpha` returns 0 for the whole time a bot
+--- holds a speech slot, so before this the plate and the voice were mutually
+--- exclusive and the player could never bind a sentence to a serial. The
+--- suppression is right -- a plate and a bubble on the same machine collide --
+--- so the name comes here instead of the plate coming back.
+--- Cleared explicitly: `speech` is a pooled table and a nil name left the
+--- previous speaker's name sitting over the next one's line.
+function HUD.queueSpeech(x, y, text, a, name)
   if speechN >= SPEECH_MAX or not text then return end
   speechN = speechN + 1
   local s = speech[speechN]
   s.x, s.y, s.text, s.a = x, y, text, a or 1
+  s.name = name
 end
 
 ------------------------------------------------------------------ hit targets
@@ -466,7 +484,9 @@ function HUD.init(world)
   local Wo = package.loaded["src.world.world"]
   if Wo and rawget(Wo, "_hudSpeech") == nil then
     Wo._hudSpeech = true
-    Wo.drawBubble = function(_, x, y, text, a) HUD.queueSpeech(x, y, text, a) end
+    Wo.drawBubble = function(_, x, y, text, a, name)
+      HUD.queueSpeech(x, y, text, a, name)
+    end
   end
 
   if bound then return end
@@ -1365,6 +1385,9 @@ end
 --------------------------------------------------------------------- speech
 --- One bubble, in screen space, already placed.
 local BSIZE = UI.bs.small
+-- The speaker's name, over their line. Deliberately small and quiet: it is a
+-- label on the sentence, not a second sentence.
+local NSIZE = UI.bs.micro
 local function drawBubble(s, alpha)
   local bx, by, bw, bh = s.bx, s.by, s.bw, s.bh
   Draw.softShadow(bx + bw * 0.5, by + bh * 0.75, bw * 0.6, bh * 0.8, 0.34 * alpha)
@@ -1378,7 +1401,12 @@ local function drawBubble(s, alpha)
   Draw.setColor(UI.c(P.ink, 0.18 * alpha))
   lg.setLineWidth(1)
   Draw.roundRect("line", bx + 0.5, by + 0.5, bw - 1, bh - 1, 6)
-  UI.body(s.text, bx + bw * 0.5, by + 5, BSIZE, UI.c(P.ink, 0.96 * alpha), nil, "center")
+  local ty = by + 5
+  if s.name then
+    UI.body(s.name, bx + bw * 0.5, by + 4, NSIZE, UI.c(P.ink, 0.40 * alpha), nil, "center")
+    ty = by + 4 + NSIZE + 2
+  end
+  UI.body(s.text, bx + bw * 0.5, ty, BSIZE, UI.c(P.ink, 0.96 * alpha), nil, "center")
 end
 
 local function overlaps(ax, ay, aw, ah, bx, by, bw, bh)
@@ -1401,7 +1429,9 @@ local function drawSpeech(w, cam, a)
     local alpha = a * s.a
     if alpha > 0.02 then
       local tw = Text.bodyMeasure(s.text, BSIZE)
-      local bw, bh = tw + 20, BSIZE + 14
+      local nw = s.name and Text.bodyMeasure(s.name, NSIZE) or 0
+      if nw > tw then tw = nw end
+      local bw, bh = tw + 20, BSIZE + 14 + (s.name and (NSIZE + 2) or 0)
       local sx, sy = cam:toScreen(s.x, s.y)
       s.ax = sx
       local bx = U.clamp(sx - bw * 0.5, 12, sw - bw - 12)
