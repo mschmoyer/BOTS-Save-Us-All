@@ -52,6 +52,9 @@ local TAU = U.TAU
 
 local HUD = {}
 
+-- Every word the interface says lives in game/script.lua.
+local STR = Script.hud
+
 --------------------------------------------------------------- the touch layer
 -- Reached lazily, never required: engine/touch.lua requires *this* file (for
 -- the bot silhouettes and the tappable readouts below) and a cycle between the
@@ -492,7 +495,11 @@ function HUD.init(world)
     local why
     if b.epitaph then
       local ok, line = pcall(b.epitaph, b)
-      if ok and type(line) == "string" then why = line:upper() end
+      -- Not uppercased. Everywhere else in this interface shouts, and the
+      -- credits print the same sentence in the bot's own lowercase. Shouting it
+      -- here contradicts the memorial at the exact moment the voice matters, so
+      -- the loss toast is the one lowercase thing in the HUD, on purpose.
+      if ok and type(line) == "string" then why = line end
     end
     HUD.toast(b.name, P.danger, why or "DID NOT COME BACK", nil, RANK_LOSS)
   end)
@@ -505,7 +512,10 @@ function HUD.init(world)
     HUD.toast(Script.hud.holdTaken, P.warn, Script.hud.holdAfter, 5)
   end)
   Signal.on("chip:added", function(c) HUD.toast(c.name, P.ramp.ember[4], c.f, 5.5) end)
-  Signal.on("director:dawn", function() HUD.toast("NIGHT SURVIVED", P.accent, nil, 5) end)
+  -- "NIGHT SURVIVED" used to fire here, about two seconds before the dawn
+  -- screen prints CYCLE n SURVIVED in the display face at heading size. Two
+  -- announcements of one fact in the same breath dilute each other, and the
+  -- one that stays is the one the player is about to be sat in front of.
   -- The day's opposition has to announce itself, or a Scar is only ever a dot
   -- on the minimap and the player never connects it to the night that then
   -- starts in the middle of their wood.
@@ -524,7 +534,10 @@ function HUD.init(world)
   -- The world detects milestones and plays the chime. The HUD only reacts.
   Signal.on("o2:milestone", function(m)
     HUD.o2Pulse = 1
-    HUD.toast("OXYGEN " .. itos(m) .. "%", P.o2, "ATMOSPHERE RISING", 5.5)
+    local sub = STR.o2Rising
+    if m >= 100 then sub = STR.o2Orbit
+    elseif m >= 75 then sub = STR.o2AtRange end
+    HUD.toast("OXYGEN " .. itos(m) .. "%", P.o2, sub, 5.5)
     J.flashScreen(0.05, P.o2[1], P.o2[2], P.o2[3])
   end)
 
@@ -1013,9 +1026,17 @@ local function drawCycleDial(w, a)
   local tx = cx - R - 16
   UI.text(PHASE_LABEL[phase] or "--", tx, cy - 17, UI.ts.h4,
           UI.mix(P.ink, pc, urgent and 0.8 or 0.15), "right", a, 0.14)
-  UI.caption(extracting and "THE SKY THEY HAVE TAKEN"
-             or ("CYCLE " .. itos(w.cycle or 1) .. " OF " .. itos(TU.cycle.count)),
-             tx, cy + 6, UI.ts.micro, UI.c(P.ink, 0.68 * a), "right", nil, 1)
+  -- On the last cycle the fraction is retired: "CYCLE 7 OF 7" is arithmetic,
+  -- and the run does not need arithmetic at the point where it needs a name.
+  local cyc
+  if extracting then
+    cyc = "THE SKY THEY HAVE TAKEN"
+  elseif (w.cycle or 1) >= TU.cycle.count then
+    cyc = STR.lastNight
+  else
+    cyc = "CYCLE " .. itos(w.cycle or 1) .. " OF " .. itos(TU.cycle.count)
+  end
+  UI.caption(cyc, tx, cy + 6, UI.ts.micro, UI.c(P.ink, 0.68 * a), "right", nil, 1)
   -- Urgency used to be said four ways at once here: the ring colour, the
   -- pulsing sweep, the punched numeral and a set of flashing corner brackets
   -- the size of the dial. The brackets were the loudest and carried the least,
@@ -1531,6 +1552,11 @@ local function drawBotPip(b, cam, a)
     return
   end
 
+  -- One you carried home is warm for as long as the loyalty holds. Same shape,
+  -- same size, one colour: in a crowd of forty cool marks the one you went and
+  -- got is findable at a glance, and it is following you, so you keep seeing it.
+  local mark = ((b.loyalT or 0) > 0) and P.love or P.eye
+
   -- The dark pass is a centred *outline*, not the player pip's dropped shadow.
   -- At eleven pixels an offset shadow is enough to lift the mark off anything;
   -- at seven it is not, and half of these sit over a sunlit crown the same
@@ -1540,7 +1566,7 @@ local function drawBotPip(b, cam, a)
     Draw.setColor(P.black, BP.haloA * aa)
     lg.setLineWidth(BP.halo)
     lg.circle("line", sx, sy, BP.ringR, 14)
-    Draw.setColor(P.eye, 0.95 * aa)
+    Draw.setColor(mark, 0.95 * aa)
     lg.setLineWidth(1.8)
     lg.circle("line", sx, sy, BP.ringR, 14)
   else
@@ -1549,7 +1575,7 @@ local function drawBotPip(b, cam, a)
     local bob = sin(HUD.time * BP.bob + b.bob) * 1.7
     Draw.setColor(P.black, BP.haloA * aa)
     Draw.chevron(sx, sy + bob, BP.size, pi * 0.5, BP.halo, 0.8)
-    Draw.setColor(P.eye, 0.95 * aa)
+    Draw.setColor(mark, 0.95 * aa)
     Draw.chevron(sx, sy + bob, BP.size, pi * 0.5, 2.2, 0.8)
   end
 end

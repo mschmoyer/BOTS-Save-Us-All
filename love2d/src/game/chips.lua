@@ -140,10 +140,28 @@ local function furrowFit(b)
   end
 end
 
---------------------------------------------------------------- DEAD RECKONING
+------------------------------------------------------- the rescue chips' rules
+-- How far a light has to be for the downed to have any chance of reaching it
+-- themselves. It used to be 1300, which is most of the island from the Home Rig
+-- and made DEAD RECKONING an "the downed rescue themselves" card rather than a
+-- Beacon-spacing card. It is a crawl speed times a rescue window now, so the
+-- number means what it says: if it is further than this, it is your legs.
+local CRAWL_SPEED = 22           -- pixels a second, dragged on their front
+local CRAWL_REACH = 420          -- ...which is 19 seconds of it
+
+-- MUTUAL AID drags rather than revives. Half a walking pace, and a fifth of a
+-- man carrying one (198 px/s at the carry penalty), so a crewmate shortens the
+-- walk and never removes it.
+local AID_SPEED   = 38
+-- How close the helper has to stay to keep hold. Measured, not guessed: a bot
+-- sent to a body parks a little way off it, so at 40 the grip almost never
+-- closes and the card goes inert -- three traced runs with both rescue chips
+-- forced lost 37, 44 and 46 machines at 40 against 4, 8 and 20 at 58.
+local AID_GRIP    = 58
+local AID_ARRIVE  = 26           -- ...and how close to the light counts as there
+
 --- The nearest thing that could put a downed bot back together: a lit Beacon,
 --- or the Home Rig, which always can.
-local CRAWL_REACH = 1300
 local function nearestLight(w, b)
   local bx, by = b.x, b.y
   local beacon = w.hBot:nearest(bx, by, CRAWL_REACH, function(o)
@@ -211,7 +229,7 @@ local C = {
     flag = true },
 
   { id = "mutualAid", f = F.BOTS, r = 1, name = "MUTUAL AID",
-    desc = "Bots go to their own. One standing over a downed friend brings it back.",
+    desc = "Bots go to their own. One will drag a downed friend to the nearest light.",
     -- The rescue decision, answered by the crew instead of by you -- but only
     -- where the crew is dense. A lone outpost still needs your legs.
     every = 0.25,
@@ -222,23 +240,32 @@ local C = {
       end)
       if helper then helper.wx, helper.wy = b.x, b.y end
     end },
+    -- It used to stand over the body for three seconds and switch it back on
+    -- where it lay, which answered the rescue decision by deleting it. It drags
+    -- now: the body goes toward the nearest light at a crawl, and it is only
+    -- alive again if the drag gets there before the clock does. A crewmate
+    -- shortens your walk; it does not do it for you.
     tick = function(chips, w, dt)
       local list = w.bots
       for i = 1, #list do
         local b = list[i]
         if b.alive and b.state == "down" and not b.carried then
-          local mate = w.hBot:nearest(b.x, b.y, 34, function(o)
+          local mate = w.hBot:nearest(b.x, b.y, AID_GRIP, function(o)
             return o.alive and o.state == "work" and not o.static
           end)
-          if mate then
-            b.aidT = (b.aidT or 0) + dt
-            if b.aidT >= 3.0 then
-              b.aidT = 0
+          local tx, ty, atRig = nil, nil, false
+          if mate then tx, ty, atRig = nearestLight(w, b) end
+          if tx then
+            local dx, dy, d = U.norm(tx - b.x, ty - b.y)
+            local arrive = atRig and TU.world.homeRadius * 0.7 or AID_ARRIVE
+            if d < arrive then
               b:revive()
               w.stats.rescued = w.stats.rescued + 1
+            else
+              b.x, b.y = onLand(w, b.x + dx * AID_SPEED * dt, b.y + dy * AID_SPEED * dt)
+              b.crawling = true          -- the same tell DEAD RECKONING sets
+              mate.wx, mate.wy = b.x, b.y
             end
-          else
-            b.aidT = 0
           end
         end
       end
@@ -301,7 +328,7 @@ local C = {
     flag = true },
 
   { id = "deadReckoning", f = F.BOTS, r = 2, name = "DEAD RECKONING",
-    desc = "The downed do not wait. They drag themselves to the nearest light.",
+    desc = "The downed do not wait. They crawl, if a light is close enough to reach.",
     -- The other answer to the rescue decision, and the opposite build to
     -- MUTUAL AID: this one is paid for in Beacons, and it rewards spacing them
     -- out over the island rather than stacking them where you already stand.
@@ -309,7 +336,7 @@ local C = {
     -- it keeps the terrain query off the frame.
     every = 0.1,
     tick = function(chips, w, dt)
-      local speed = 30
+      local speed = CRAWL_SPEED
       local list = w.bots
       for i = 1, #list do
         local b = list[i]
@@ -539,9 +566,29 @@ function Chips:add(chip)
 end
 
 function Chips:has(id) return (self.owned[id] or 0) > 0 end
+--- Keys that are not only about chips.
+---
+--- `downedTime` is the rescue clock's multiplier, and bot.lua asks for it here
+--- because chips were the only thing that used to move it. The night moves it
+--- too: a rescue window that is the same twenty seconds on cycle 7 as it was on
+--- cycle 1 means a bad night is never a triage problem, and three machines down
+--- at once is never a choice about which one you can reach. The chips' answer
+--- and the night's are multiplied, so a card that buys you time still buys you
+--- time -- it just buys less of it late, which is when you wanted it.
+local ENV = {
+  downedTime = function(self, v)
+    local w = self.world
+    local cycle = (w and w.cycle) or 1
+    local k = TU.rescue.clockByCycle ^ math.max(0, cycle - 1)
+    return (v or 1) * max(TU.rescue.clockFloor, k)
+  end,
+}
+
 function Chips:get(key, default)
   local v = self.mods[key]
-  if v == nil then return default end
+  if v == nil then v = default end
+  local env = ENV[key]
+  if env then return env(self, v) end
   return v
 end
 function Chips:count() return #self.list end

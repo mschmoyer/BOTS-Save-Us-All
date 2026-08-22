@@ -109,6 +109,26 @@ P.lichen     = hex "#7f8f68"
 -- reads by value and texture, and anything more saturated over that much of the
 -- screen turns dead ground into a colour swatch.
 P.necrosis   = hex "#6b6a44"
+-- The two colours of an airless world, used only by the oxygen grade in
+-- daynight.lua. Eleven days without an atmosphere is not a *dirty* sky, it is
+-- an *absent* one: nothing left up there to scatter blue, so the light arrives
+-- unfiltered and everything under it goes to bone and dust. Both of these are
+-- deliberately pale and warm-neutral rather than brown -- the failure mode of a
+-- "dead world" grade is a sepia filter, and the fix is to bleach the frame
+-- instead of dirtying it.
+--
+-- `deadHaze` is the dust hanging in the daylight; it is washed over the whole
+-- frame by the fog step, so it must be *lighter* than the scene or the island
+-- goes muddy instead of dry.
+P.deadHaze   = hex "#e8d3a6"
+-- `deadShade` is the hue the shadows take when there is no sky to tint them.
+-- Only the *hue* is used -- the grade normalises this one to unit luminance
+-- before using it as a gain -- so read it as "warm stone", not as a
+-- brightness. More chromatic than the haze because of that normalisation: at
+-- the tint amount the post chain runs, a colour this saturated still only
+-- lands about +10% red and -20% blue on a shadow.
+P.deadShade  = hex "#c2a578"
+
 -- Dying grass, for the few metres of living ground a scar has already reached.
 -- Grass does not go grey when it dies, it goes straw and lies down; a scar that
 -- fades out through neutral grey wears a halo, and the halo is the tell.
@@ -165,5 +185,82 @@ function P.hsv(h, s, v, a)
   else r, g, b = v, p, q end
   return { r, g, b, a or 1 }
 end
+
+------------------------------------------------------ NEW: the radio and the sky
+-- The narrative pass, in one block so a concurrent edit merges cleanly.
+--
+-- `radioLamp` is the Home Rig's radio beacon, and it is the one warm orange
+-- that turns. Deliberately deeper and redder than `eye` -- a Beacon's lantern
+-- is a pale honey and reads as somewhere to carry the fallen; this reads as a
+-- filament, and the two are never on screen close enough to be compared. It is
+-- small, it is one bead, and it never bloomed hard enough to join the night's
+-- red vocabulary in practice; if it ever does, take value out of it, not hue.
+P.radioLamp  = hex "#ff9418"
+-- The point of light that crosses the top of the frame three times before the
+-- Harvester Prime lands. Not a colour with an opinion: a cold white with just
+-- enough blue in it to sit outside every warm thing on the island, so it reads
+-- as *far away* rather than as another lamp somebody lit.
+P.skyContact = hex "#dce8f4"
+
+--------------------------------------------------- NEW: the ones who were here
+-- Relics. The island carries a handful of hand-authored objects that say people
+-- worked here and are not here now (see src/entities/relic.lua). They are drawn
+-- from these four values and from the ramps above, and nothing else in the game
+-- uses them, so the whole vocabulary of "abandoned" can be re-tuned from one
+-- block.
+--
+-- `derelict` is the ramp everything dead is cut from, and it is deliberately
+-- NOT `metal`. A bot, a Repulsor, the Home Rig -- every working machine on the
+-- island is `metal` or `metalW`, both of which run bright and blue at the top.
+-- This one is darker at every stop, and its highlight is a grey rather than a
+-- near-white, so a wreck reads as *matte* next to anything that is still
+-- switched on. A player should be able to tell at a hundred yards whether a
+-- silhouette is worth walking to, and the answer must always be no.
+-- Lifted once already: cut two stops lower than this, every relic on a sunlit
+-- meadow read as a hole in the ground rather than as an object standing on it.
+-- The boss can be the darkest mass in the frame because it is ninety units
+-- across; a twenty-four unit suit cannot.
+P.ramp.derelict = { hex "#191d22", hex "#333c44", hex "#5b6873", hex "#96a2aa" }
+-- Poured concrete under a dead sky. Warm grey-buff rather than the cold blue of
+-- `rock`, because a slab a person laid is not the same material as the island's
+-- own stone and the two must not read as one thing.
+P.ramp.concrete = { hex "#3a3730", hex "#6d675b", hex "#948b7b", hex "#c0b6a2" }
+
+-- Oxide bleeding out of a seam. Warm, low and desaturated: bright rust is a
+-- decorative colour and this is a stain, so it never runs above the value of
+-- the metal it is running down.
+P.rust       = hex "#6f4326"
+-- Sun-killed paint. Every painted mark a person left -- a lane line, a cargo
+-- strap, a stencil edge -- is this, at a low alpha. It is the same chalky bone
+-- as `deadHaze` because it has been under the same dead sky for eleven days.
+P.chalk      = hex "#cabfa6"
+-- What grows back over the edge of a thing nobody maintains any more. A single
+-- colour rather than a ramp, used at low alpha over the rim of a slab or the
+-- verge of a road: the tell that says a hard edge is old is that the ground has
+-- started eating it.
+P.encroach   = hex "#2c5f39"
+
+---------------------------------------------- NEW: what a machine has been through
+-- Two colours, and they are the only ones the per-bot wear system uses (see
+-- `Bot:drawWear`). Everything else it needs -- the patina on the hull, the
+-- brightened rim -- it takes off `P.ramp.metal`, because a machine that has
+-- been out for four nights is the same metal, darker.
+--
+-- Neither of these may be red, the crew's blue, or the player's yellow. After
+-- dusk the frame is multiplied by the lighting buffer and those three colours
+-- are the whole of the night's language -- something that wants to hurt you,
+-- your crew, you -- so a service mark that borrowed one would be a lie told at
+-- the exact moment the player is reading colour and nothing else.
+--
+-- `wearMark` is the mark itself: one per night survived, scored into the
+-- plating. Bone rather than white, and only just warm, so it separates from the
+-- cool near-white rim it sits a few pixels away from -- at play scale a machine
+-- is thirty pixels tall and two near-whites would be one near-white.
+P.wearMark   = hex "#d9cdb2"
+-- ...and the dark it is scored into: the shadow inside an opened seam, and the
+-- cut a fall leaves. Deliberately above `P.black` -- a true black hole in a
+-- chassis reads as a missing polygon rather than as damage.
+P.wearCut    = hex "#0e141a"
+
 
 return P

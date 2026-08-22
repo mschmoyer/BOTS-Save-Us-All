@@ -12,102 +12,224 @@
 --
 -- Anything cute fails test 3. Nothing in here explains the theme, admires the
 -- forest on the player's behalf, or says the word love. The one line that did
--- ("this is what love is") is gone.
+-- ("this is what love is") is gone. So is "we love you", which said it again.
 --
 -- Lines are also kept out of the cutscenes' way: no ambient line is a line a
 -- bot says in a scripted beat, because hearing "it is very big" from a passing
--- harvester an hour before the boss lands spends it.
-local U = require("src.core.util")
+-- harvester an hour before the boss lands spends it. "save the human" was in
+-- the rebellion pool and is not any more: the first cohort launches in the same
+-- tick the beat is queued, so it could -- and did -- reach the screen before
+-- the cutscene said it.
 
 local N = {}
 
+------------------------------------------------------------------------ traits
+-- Traits are SPEECH BEHAVIOURS, not moods. Twelve moods produce twelve
+-- synonyms; six behaviours produce six grammars, and a grammar is audible in
+-- ten seconds. A machine that only reports numbers, standing next to one that
+-- only asks questions, is two people. Twelve adjectives sharing one pool are
+-- one person twelve times -- which is what this was before.
+--
+-- `tint` is not read by anything yet. It is left here as the hook for per-bot
+-- rendering rather than deleted, so whoever adds that has one number per
+-- personality to reach for; if that never lands, delete the field.
 N.traits = {
-  { id = "eager",     label = "EAGER",     tint = 0.10 },
-  { id = "careful",   label = "CAREFUL",   tint = -0.05 },
-  { id = "dreamy",    label = "DREAMY",    tint = 0.18 },
-  { id = "loud",      label = "LOUD",      tint = 0.06 },
-  { id = "shy",       label = "SHY",       tint = -0.10 },
-  { id = "stubborn",  label = "STUBBORN",  tint = -0.02 },
-  { id = "curious",   label = "CURIOUS",   tint = 0.14 },
-  { id = "tidy",      label = "TIDY",      tint = 0.02 },
-  { id = "anxious",   label = "ANXIOUS",   tint = -0.12 },
-  { id = "proud",     label = "PROUD",     tint = 0.08 },
-  { id = "gentle",    label = "GENTLE",    tint = 0.12 },
-  { id = "restless",  label = "RESTLESS",  tint = 0.04 },
+  { id = "counter", label = "COUNTER", tint =  0.02 },  -- reports numbers
+  { id = "watcher", label = "WATCHER", tint =  0.14 },  -- reports what it sees
+  { id = "quiet",   label = "QUIET",   tint = -0.10 },  -- one to three words
+  { id = "fusser",  label = "FUSSER",  tint = -0.02 },  -- judges the work
+  { id = "worrier", label = "WORRIER", tint = -0.12 },  -- only questions
+  { id = "stayer",  label = "STAYER",  tint =  0.10 },  -- will not stop
 }
 
 -- Keyed by phase so the bots' mood tracks the game's.
 N.chatter = {
   -- Daylight. A shift. Most of it is work talk; a little of it is the bot
-  -- noticing that somebody else exists.
+  -- noticing that somebody else exists. "you were here yesterday" was the model
+  -- for this pool and now lives in `watcher`, where one kind of machine owns it.
   day = {
     "good dirt here", "another one in", "it will be tall", "i like this spot",
-    "that makes %d", "the ground is warm", "more sun today", "seventeen more",
-    "this one is crooked. leaving it.", "growing is slow work",
-    "i can smell water", "you were here yesterday", "working",
-    "the air tastes better", "roots go further down than you think",
-    "i put one behind the rock", "nothing is eating this one",
+    "the ground is warm", "more sun today", "this row is not done",
+    "nothing yet", "the ground is wet here", "i will come back to this one",
+    "most of it is under the ground", "i put one behind the rock",
     "the wind turns at noon", "i am saving this hill",
     "somebody planted here before me", "this one grew overnight",
-    "leave the small ones room", "i will do the slope next",
-    "my feet are muddy", "it is taller than me now",
-    "i counted wrong. starting again.", "shade already",
-    "you can rest. i have this.", "we are ahead of yesterday",
-    "%d and still going",
+    "i will do the slope next", "i have been standing here too long",
+    "it is taller than me now", "we are ahead of yesterday",
+    "the rig is that way", "i marked this one", "there is room past the rocks",
+    "the old row is still standing",
   },
   -- Night. Shorter lines, closer together, and nobody says it will be fine.
   night = {
     "lights on", "stay near me", "i hear them", "do not go far",
-    "i will hold this line", "something is moving out there",
-    "keep the little ones safe", "i am not afraid", "i am a bit afraid",
+    "keep the little ones safe", "i am not afraid",
     "count us when it is light", "they do not like the lamp",
-    "i can hold longer than this", "if i stop, keep going",
-    "the little ones are covered", "it is coming this way",
-    "do not look at it. work.", "we lost the far row", "i am still here",
-    "morning is not far",
+    "if i stop, keep going", "the little ones are covered",
+    "it is coming this way", "do not look at it. work.",
+    "we lost the far row", "i am still here", "morning is not far",
+    "the lamp is holding", "i cannot see the north row", "one got past me",
+    "stand in the light", "it went for the small ones",
+    "i am between it and the tree", "say something",
   },
+  -- First light, and the thing the night pool asked for. "count us when it is
+  -- light" is a request nobody ever fulfilled; this is the answer to it, and
+  -- "who is missing" goes unanswered in its turn.
+  dawn = {
+    "count us", "%d", "everyone stand up", "who is missing",
+    "the lamps can go off",
+  },
+  -- Said at first light, by one machine, and ONLY after the radio beat has
+  -- played -- see story.lua's phase:dawn handler. Before that beat the rig's
+  -- readout is furniture the player walks past; after it there is somebody else
+  -- on the island who checks it every morning too, and says so, and the number
+  -- never changes. Nothing in here remarks on that, and nothing in here is
+  -- sad about it. It is a shift report.
+  --
+  -- This is the thread that carries cycles 4 to 7. Not another cutscene: one
+  -- line, once a dawn, for the rest of the run, so that "Or the radio." at the
+  -- end lands on a player who has heard a machine say it four times.
+  radio = {
+    "still zero", "i listened all night", "nothing on nine",
+    "i will check again", "channel nine is clear",
+  },
+  -- Its own damage. Reports of condition, never complaints, and the best of
+  -- them report the tree instead of the machine.
   hurt = {
-    "ow", "still working", "that is fine", "keep going",
-    "do not stop for me", "i have a dent", "it did not get the tree",
-    "i can still walk",
+    "something broke", "still working", "that is fine", "keep going",
+    "do not stop for me", "my arm is slow now", "it did not get the tree",
+    "i can still walk", "i am at half", "i can finish the row", "again",
+    "do not carry me yet", "leave me. the row is not done.",
   },
   -- Said by whoever was standing nearby. Never on the first loss of the run:
-  -- the first-loss beat opens on "it stopped" and needs to say it first.
+  -- the first-loss beat opens on "it stopped" and needs to say it first, so
+  -- that line is not in here.
+  --
+  -- %s is the name of the bot that just went down -- see N.remember. It turns
+  -- "say the name" from an instruction into a thing somebody then does.
   loss = {
-    "where did it go", "it stopped", "i cannot hear them", "we lost one",
-    "say the name", "i will finish its row", "put it down gently",
+    "where did it go", "it will not get up", "i cannot hear them",
+    "we lost one", "say the name", "i will finish its row",
+    "put it down gently", "%s was on this row", "who was standing with it",
+    "i was too far", "do not step there", "it is not lit any more",
+  },
+  -- The human is on the ground and the reboot clock is running. Forty machines
+  -- stood around watching this in silence before there was a pool for it.
+  downed = {
+    "get up", "he is not moving", "stand over him", "i cannot carry him",
+    "someone go to the rig", "we are still working",
+  },
+  -- Said by the machine in your arms, not by a bystander. "am i still lit"
+  -- is the human's own word out of the first-loss beat, twenty minutes later,
+  -- from something that heard him say it.
+  carried = {
+    "am i still lit", "put me by the light", "i am heavy", "which way",
+    "i can walk soon", "do not run",
+  },
+  -- It woke up in the light. Said by the one that stood back up.
+  saved = {
+    "i am up", "you came back", "the light did it", "i can work now",
+    "i will stay near you",
   },
   -- Orders have stopped making sense. None of these is a line from the
   -- extraction beat.
   boss = {
-    "i do not understand", "why", "my orders stopped",
-    "nothing is telling me what to do", "it is standing on the trees",
-    "where is he", "that is not blight", "i am waiting",
+    "why", "my orders stopped", "where do i stand",
+    "it is standing on the trees", "where is he", "that is not blight",
+    "i am waiting", "it does not stop", "the north rows are gone",
+    "i will keep planting",
   },
   -- On the way past, at a run, once. "get behind us" is the answer to the only
-  -- order he ever gave them that they refused.
+  -- order he ever gave them that they refused. The line this pool is a
+  -- rehearsal for is said in the cutscene and only there.
   rebel = {
-    "save the human", "we love you", "go", "we have you",
-    "get behind us", "it is our turn", "goodbye",
+    "go", "we have you", "get behind us", "stay there", "we are closer",
+    "we are going", "goodbye",
+  },
+  -- Not crew. Every machine that was working somewhere else on the island when
+  -- the rebellion started, walking in off the treeline. World:speak drops a
+  -- bot's previous bubble for its next one, so this arrives in place of the
+  -- `rebel` line rather than on top of it. Nobody in here is glad to be here
+  -- and nobody says what they came for: they say what they left.
+  reinforce = {
+    "i heard it from the water", "i was on the far side", "i left the row",
+    "more behind me",
   },
   -- The oxygen crossed another quarter. The sky line is the prologue's first
-  -- sentence, answered.
+  -- sentence, answered. Nothing in here admires it.
   grown = {
-    "the sky changed colour", "the numbers went up", "it is working",
-    "that is a real forest now", "more of it every day",
+    "the sky changed colour", "the numbers went up",
+    "i cannot count them any more", "i cannot see the water from here",
+    "more of it every day",
   },
   -- The player traded daylight for a worse night.
   hold = {
-    "more light", "we can finish this row", "it will be a long night",
+    "more light", "we can finish this row", "i will not stop at dark",
     "i will work fast", "keep the sun up",
   },
-  -- The rig emptied the sky. About a second and a half before the cut.
+  -- The rig emptied the sky. About a second and a half before the cut, and
+  -- nobody in here promises a next time.
   failed = {
     "the air is going", "hold on to me", "get to the rig",
-    "we can start again", "it is taking it back",
+    "i am still holding one", "it is taking it back",
   },
-  ending = { "we are still here", "you can take it off now" },
 }
+
+--------------------------------------------------------------- trait grammars
+-- A trait's private lines, and nobody else's. Only the two long phases have
+-- them: day and night are where the player hears the same pool for ten minutes
+-- and where a personality has room to register. Everything else -- a death, a
+-- hit, the boss -- is a short, loud pool that every machine draws from flat,
+-- because a bot that only asks questions still has to be able to say "i was
+-- too far".
+N.traitLines = {
+  counter = {
+    day = { "%d", "that makes %d", "i counted wrong. starting again.",
+            "i counted them again", "i will count again at noon",
+            "i counted the small ones twice" },
+    night = { "%d", "%d standing", "i counted us", "we were more this morning",
+              "i cannot count in the dark" },
+  },
+  watcher = {
+    day = { "you were here yesterday", "nothing is eating this one",
+            "somebody walked through the north row",
+            "there is a hole in the far row", "the blight edge moved",
+            "you have not been to the hill" },
+    night = { "something is moving out there", "the far lamp went out",
+              "they are by the water", "it is not coming this way",
+              "there is light at the rig" },
+  },
+  quiet = {
+    day = { "working", "shade already", "here", "one more", "done", "again" },
+    night = { "lit", "awake", "hold", "it moved", "cold" },
+  },
+  fusser = {
+    day = { "this one is crooked. leaving it.", "leave the small ones room",
+            "the ground is soft on this side", "somebody planted these too close",
+            "this hole is not deep enough", "i will straighten it tomorrow" },
+    night = { "the row is not straight any more", "they trampled the edge",
+              "i will fix this in the light", "this is not how i left it",
+              "do not stand on the new ones" },
+  },
+  worrier = {
+    day = { "is this the right row", "will it be enough",
+            "should i be somewhere else", "did somebody count these",
+            "is he coming back", "how deep should it be" },
+    night = { "how long is left", "where is everyone", "is it still out there",
+              "did anything get through", "is the lamp still on" },
+  },
+  stayer = {
+    day = { "this row is mine", "i am not stopping yet",
+            "i will finish before dark", "i can do the whole slope",
+            "i have not stopped today" },
+    night = { "i can hold", "i will hold this line", "i do not want to stop",
+              "do not carry me. i can walk.", "i am not going in" },
+  },
+}
+
+-- How often a bot with a private pool reaches for it. Low enough that the
+-- shared pool still carries the phase, high enough that a counter has said
+-- three numbers before you have walked past it twice.
+local TRAIT_SHARE = 0.35
 
 --- Deterministic name from the bot type and a serial number.
 function N.name(prefix, serial)
@@ -118,25 +240,41 @@ function N.trait(rng)
   return rng and rng:pick(N.traits) or N.traits[math.random(#N.traits)]
 end
 
---- A line from `phase`'s pool. `trait` biases *which half* of the pool a bot
---- draws from, so an ANXIOUS one and a PROUD one sound like different machines
---- reading the same script - which is what the traits were for.
+--- The name of the last bot to go down, for the `loss` pool's %s. It is a fact
+--- about the world rather than an argument, so it is remembered here: the call
+--- site that has the name (the director) is not the one that speaks the line
+--- (a bot standing nearby).
+N.lastLost = nil
+function N.remember(name) N.lastLost = name end
+
+--- A line from `phase`'s pool. A trait does not get a *slice* of the shared
+--- pool any more -- that produced twelve vocabularies that differed by one
+--- sentence in sixteen, and three pairs at night that were byte-identical. It
+--- gets its own handful of lines and reaches for them about a third of the
+--- time, so what separates two bots is how they talk, not which fifteen of the
+--- same thirty sentences they happen to own.
 function N.line(phase, rng, count, trait)
   local pool = N.chatter[phase] or N.chatter.day
-  local n = #pool
   local s
-  if trait and n >= 6 then
-    -- each trait gets a stable window over the pool, wide enough to overlap its
-    -- neighbours so nobody sounds like a single stuck sentence
-    local idx = 0
-    for i = 1, #N.traits do if N.traits[i].id == trait.id then idx = i break end end
-    local span = math.max(4, math.floor(n * 0.55))
-    local base = math.floor((idx - 1) / math.max(1, #N.traits) * (n - span))
-    local pick = rng and rng:int(1, span) or math.random(span)
-    s = pool[math.min(n, base + pick)]
+  local own = trait and N.traitLines[trait.id]
+  own = own and own[phase]
+  if own and #own > 0 then
+    -- spelled out, not `rng and rng:chance(x) or ...`: that idiom falls through
+    -- to the fallback every time chance() answers false, which quietly doubled
+    -- the trait rate and took the draw off the bot's own rng.
+    local roll
+    if rng then roll = rng:chance(TRAIT_SHARE) else roll = math.random() < TRAIT_SHARE end
+    if roll then s = rng and rng:pick(own) or own[math.random(#own)] end
   end
-  s = s or (rng and rng:pick(pool) or pool[math.random(n)])
-  if s:find("%%d") then s = s:format(count or 0) end
+  s = s or (rng and rng:pick(pool) or pool[math.random(#pool)])
+  if s:find("%%d") then
+    local n = tostring(count or 0)
+    s = s:gsub("%%d", function() return n end)
+  end
+  if s:find("%%s") then
+    local who = N.lastLost or "one of us"
+    s = s:gsub("%%s", function() return who end)
+  end
   return s
 end
 

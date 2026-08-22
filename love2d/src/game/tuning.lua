@@ -201,6 +201,78 @@ T.bots = {
   chatterEvery = { 9, 26 },
 }
 
+------------------------------------------- NEW: what one machine carries of its
+-- own run. In one block so a concurrent edit merges cleanly.
+--
+-- The first pillar of this game is that the bots are people, and until now the
+-- entire per-instance model was two integers. Everything below exists to make
+-- one machine distinguishable from the forty-seven standing next to it: what it
+-- did (the ledger and the epitaph cut from it), what that did to it (the wear),
+-- and what it costs the ones still standing when it goes (the grief).
+
+--- How much of a machine's history is on its chassis, and how it is quantised.
+---
+--- One integer per bot -- `Bot.shadeK` -- decides how dark its metal is baked,
+--- and BOTH nights survived and the speech trait feed it. That is deliberate:
+--- the hulls are tessellated once per (type, shade) and replayed, so a
+--- continuous tint would mean a bake per bot and a continuous *anything* here
+--- would cost more than the whole rest of this file. Six levels is enough that
+--- a four-night machine is plainly not a fresh one and cheap enough that the
+--- whole crew shares thirty baked hulls.
+T.bots.wear = {
+  fullNights   = 4,      -- nights to full patina
+  levels       = 4,      -- patina steps between fresh and full: one per night
+  neutral      = 1,      -- shade index of a fresh, untinted machine
+  shades       = 7,      -- total shade levels (0 .. shades-1)
+  -- names.lua gives every trait a `tint`; this turns it into +-1 shade level.
+  -- A quiet machine is physically dimmer than a loud one, which is free
+  -- characterisation riding on the wear bake rather than a system of its own.
+  -- Kept to one level against the patina's four on purpose: personality must
+  -- not be mistakable for age, and the tick row is the unambiguous counter
+  -- either way.
+  tintScale    = 7,
+  dropPerLevel = 0.14,   -- metal-ramp stops darker per level
+  rimGain      = 0.18,   -- ...and how much brighter the rubbed rim gets
+  -- The countable one. A machine wears one mark per night it has stood
+  -- through, and they start at the second so that "has a mark at all" already
+  -- means something -- everything alive is past its first dawn within minutes.
+  tickFrom     = 2,
+  tickMax      = 5,
+  -- Scars: one per time it went down and got back up, drawn from a small baked
+  -- library so two machines with the same count still do not match.
+  scarMax      = 4,
+  scarVariants = 8,
+}
+
+--- The thresholds an epitaph has to clear before it is worth saying. See
+--- `Bot:epitaph`: the line is the RAREST true fact about the machine, and these
+--- are where "true" stops being interesting.
+T.bots.epitaph = {
+  nights = 3,        -- nights before age outranks work
+  mined  = 8,        -- cobalt chunks brought home
+  walked = 30000,    -- world pixels under its own tracks
+}
+
+--- What a loss costs the machines that saw it. One spatial query, one timer and
+--- one multiplier: the crew stops working and walks to the body, which is the
+--- story of a death told entirely in movement.
+T.bots.grief = {
+  radius  = 340,     -- who saw it
+  time    = 14,      -- seconds they carry it
+  workMul = 0.5,     -- how much less they get done meanwhile
+  arrive  = 46,      -- how close they stand
+  chatter = 0.55,    -- chance a grieving bot's next line comes from the loss pool
+}
+
+--- A machine you walked out and picked up. For about a cycle it stays where it
+--- can see you rather than going back to the flag.
+T.bots.loyal = {
+  time      = 150,   -- seconds
+  pull      = 0.62,  -- chance its next wander target is picked near you
+  radius    = 210,   -- ...and how far out
+  plateFloor = 0.55, -- its nameplate never fades below this while it holds
+}
+
 -------------------------------------------------------------------------- trees
 T.tree = {
   growTime      = 26,          -- sapling -> mature
@@ -270,6 +342,87 @@ T.o2 = {
   siphonDrain = 0.6,            -- debt added per second per feeding siphon
   debtCap     = 45,             -- a swarm of siphons cannot zero you out
   debtRecover = 0.35,           -- debt bled off per second once they stop
+}
+
+------------------------------------------------------------- the airless world
+-- How hard the oxygen reading grades the frame. This is the campaign's only
+-- picture of itself: the premise is that the aliens stripped the atmosphere
+-- eleven days ago, and the one mechanic that answers it is the forest, so the
+-- world has to *look* airless at 0% and has to visibly come back as the needle
+-- climbs. Consumed only by src/engine/daynight.lua, applied on top of the
+-- time-of-day grade, and a pure function of the current reading -- not of
+-- progress -- so the extraction rig dragging oxygen back down drags the colour
+-- out of the island with it.
+--
+-- Every value below is the multiplier (or mix weight) at **0% oxygen**. At
+-- 100% every one of them is inert and the frame is exactly the frame the game
+-- shipped with: the restored look is the target, and this block only describes
+-- the distance the world has to travel to reach it.
+T.deadAir = {
+  -- Recovery curve. r = o2^curve, and r is what everything below lerps on.
+  -- Below 1 this front-loads the arc: at a quarter of a full sky the world is
+  -- already halfway back. That is deliberate. A linear ramp banks the whole
+  -- payoff in the last two cycles, where the player is fighting the boss and
+  -- not looking at the grass; a front-loaded one pays out at every dawn, which
+  -- is when the player actually re-reads the island.
+  curve      = 0.55,
+
+  -- Chroma is the main tell, and the one that is easiest to overdo. 0.33 takes
+  -- day's 1.22 grade saturation down to ~0.40; measured over the play area of
+  -- a cycle-1 frame that is a mean pixel saturation of 0.15 against the live
+  -- world's 0.63. Far enough that the sward reads as straw and the sea reads
+  -- as tin; not so far that the frame goes monochrome, because a fully grey
+  -- island looks like a broken shader rather than a dead planet. It is worth
+  -- knowing which way the failure lies: too little and it is a hazy morning,
+  -- too much and it is a black-and-white photograph.
+  saturation = 0.33,
+  -- High key, not dim. Nothing is filtering the sun any more, so the frame is
+  -- *brighter* than a live one, pushed far enough into the tonemap's shoulder
+  -- that the sand and the surf bleach out. This is the single value that keeps
+  -- the dead world beautiful instead of depressing: drop it below 1.0 and the
+  -- same desaturation immediately reads as mud.
+  exposure   = 1.09,
+  -- Barely any. "Crushed shadows" was the first instinct and it was mostly
+  -- wrong here: once the chroma is gone the darkest thing on the island is a
+  -- blight scar at about 0.05 luminance, and squeezing that turned every scar
+  -- into a black hole that read as a missing tile rather than as poisoned
+  -- ground. 1.06 did exactly that and was backed off to this; the `lift` at
+  -- the bottom of the block puts a floor back under the same pixels.
+  contrast   = 1.03,
+
+  -- The dust. `haze` is added to the phase's own fog strength rather than
+  -- multiplying it, because day's fog is 0.11 and dusk's is 0.46: a multiplier
+  -- big enough to matter at noon is a whiteout at dusk. `fogMul` is the gentle
+  -- multiplicative part that survives at every hour.
+  --
+  -- Both the added haze and its colour are scaled by how high the key light
+  -- is, so the dust only shows where there is light to scatter in it. That is
+  -- what protects the night: at midnight this whole paragraph is zero and the
+  -- night grade is the night grade, lift and all.
+  -- Both feed Post.setFog, whose strength is multiplied by Post.tuning.fogAmount
+  -- (0.13) before it reaches the shader -- so `haze` of 1.3 at noon is a wash
+  -- of about 18% of the dust colour over the frame, which is a lot of dust and
+  -- still not a whiteout. fogMul stays near the old 1.06 on purpose: it is the
+  -- part that survives into the night, where a bigger number would just make
+  -- the dark navy fog darker.
+  fogMul     = 1.15,
+  haze       = 1.30,
+  -- How far the atmosphere's colour is dragged toward P.deadHaze at noon.
+  hazeTint   = 0.86,
+  -- ...and how far the *shadow* tint is dragged toward P.deadShade. Lower than
+  -- the haze: the grade normalises this one to unit luminance and uses it on
+  -- every dark pixel in the frame, so a strong warm here turns the whole
+  -- island sepia, which is the exact postcard this is trying not to be.
+  shadeTint  = 0.72,
+  -- Glare. Dry air scatters the highlights, and a touch more bloom over a
+  -- bleached frame reads as heat rather than as a bug.
+  bloom      = 1.16,
+  -- The floor the dust puts under the frame, screened into the shadows the way
+  -- the sky's own lift is. Small -- 0.055 of a pale bone -- but it is the
+  -- difference between a scar reading as poisoned ground and reading as a hole
+  -- in the map, and it is what keeps a bleached frame from going contrasty and
+  -- grim. Scaled by the same daylight factor, so it never touches night.
+  lift       = 0.055,
 }
 
 ------------------------------------------------------------------------ cycles
@@ -964,5 +1117,259 @@ T.music = {
   fadeOut  = 2.2,
   stopFade = 1.5,
 }
+
+------------------------------------------------------------- NEW: the radio
+-- The narrative pass, in one block so a concurrent edit merges cleanly.
+--
+-- The radio is the only thing in this game that accumulates. It is a row on
+-- the dawn screen, a lamp on the Home Rig and a readout beside it, and the
+-- three of them say exactly the same thing seven times in a row. None of the
+-- numbers below is allowed to move during a run except `dayZero + cycle`.
+T.radio = {
+  -- Days since the sky went, at the first dawn. The prologue says "eleven
+  -- days" and the HUD then counts cycles, so the eleven never became twelve
+  -- anywhere the player could see it. 11 + cycle is where it becomes twelve.
+  dayZero    = 11,
+
+  -- The rig's amber lamp. A slow turn, not a pulse: `sweep` seconds per
+  -- revolution, and `peak` is the power the facing term is raised to, which is
+  -- what makes the pass a pass rather than a sine wave. `floor` is what the
+  -- bead reads with its back to you -- never zero, or the lamp looks broken
+  -- rather than turned away.
+  sweep      = 6.4,
+  peak       = 7,
+  floor      = 0.14,
+  lampRange  = 150,            -- how far the amber carries, in world units
+
+  -- The readout, in the bot nameplate's micro type because it is the same kind
+  -- of object: a machine saying what it is. Slightly further out than a plate
+  -- (bots come to you; the rig does not), and dimmer.
+  plateNear  = 200,
+  plateFade  = 130,
+  plateSize  = 7.5,
+  plateAlpha = 0.62,
+  -- The number on it. It is a constant. That is the whole readout.
+  signals    = 0,
+}
+
+-- The light in the sky, three times, before the thing it belongs to lands.
+-- Screen-space, drawn over the graded scene by src/world/weather.lua, and
+-- deliberately made of nothing the player can act on: no sound, no ping, no
+-- toast, and it never comes down.
+T.skyContact = {
+  -- Fires on the o2 milestone step. Was 3 (75%), which a traced run does not
+  -- reach until cycle six -- so all three sightings crowded into the last two
+  -- cycles and the thing arrived with no more warning than it had before. At 2
+  -- the first one lands mid-run, which is the whole point of it.
+  o2Mark     = 2,
+  lastCycles = 2,              -- ...then at dusk on each of the last two
+  dur        = 8.0,            -- seconds to cross the frame
+  y0         = 0.045,          -- entry height, as a fraction of the frame
+  y1         = 0.105,          -- exit height: a straight track, barely sloped
+  r          = 3.4,            -- the point itself, in pixels
+  glow       = 62,
+  alpha      = 0.95,
+  edge       = 0.14,           -- fraction of the pass spent fading in and out
+}
+
+------------------------------------------------------------- NEW: relics
+-- The evidence. A handful of hand-authored objects placed once at world
+-- generation, drawn once, and never spoken about: see src/entities/relic.lua.
+--
+-- The three rules that make this block worth reading:
+--
+--  1. Nothing here is a reward curve or a difficulty knob. A relic is not
+--     interactive, has no caption, is not on the minimap and emits no light.
+--     Every number below is either a *distance* or a *count*.
+--  2. `noPlant` is the only way a relic touches gameplay at all. A Planter
+--     refuses a spot inside that radius, so a wood grows around a wreck rather
+--     than swallowing it, and the thing is still standing in the clearing at the
+--     ending when the camera pulls back over the canopy. It is much wider than
+--     the object it protects, and the note on `noPlant` below says why.
+--  3. The `near` distances exist so a player who never leaves the valley they
+--     woke up in still walks past two or three of these across a run, and the
+--     rest are out where only exploring finds them. Placement that relies on
+--     the player going looking is placement that most players never see.
+T.relic = {
+  -- Relics take their own RNG stream, seeded off the run's seed. They must not
+  -- draw from `world.rng`: that stream places the home rig, the cobalt and every
+  -- spread roll after it, so spending from it would shift every island in the
+  -- game the day this file landed and make every previous balance trace a
+  -- comparison between two different worlds.
+  seedSalt   = 104729,
+  -- Placement attempts before a relic is skipped. Generous, and it has to be:
+  -- a scattered relic must clear `separation` from a dozen already-placed
+  -- objects, `roadClear` from every road segment, the shore and the rig, and at
+  -- 70 the fourth suit and the second pallet simply failed to land on the
+  -- smaller seeds. This runs once, at world generation, behind a loading screen
+  -- that is already spending most of a second baking the terrain.
+  tries      = 260,
+
+  homeClear  = 250,            -- nothing of ours inside this of the player's rig
+  -- Two separations, and the split matters.
+  --
+  -- `separation` is between relics of DIFFERENT kinds. A suit and a pallet in
+  -- one frame is two sentences; that is fine, and sometimes better than fine.
+  --
+  -- `sameKind` is between two of the SAME kind, and it is much wider, because
+  -- two identical objects in one frame is not two sentences -- it is one prop,
+  -- twice, and it reads as a spawner. An early capture caught two empty suits
+  -- in a single view and instantly turned the strongest object in the set into
+  -- set dressing. The camera shows about 1280x720 world units, so `sameKind`
+  -- puts the second one a screen and a half away.
+  --
+  -- Both were 500 for a while and that failed differently: twelve relics each
+  -- claiming a 500-unit disc is 9.4 million square units of exclusion on a
+  -- 3.5 million unit island, so the fourth suit and the hauler simply had
+  -- nowhere legal to stand and were dropped on half the seeds tested.
+  separation = 420,
+  sameKind   = 900,
+  roadClear  = 130,            -- ...except to a road segment, which is thinner
+  minShore   = 70,             -- keep everything out of the surf
+
+  count      = { suit = 4, pallet = 2 },
+
+  -- Where each one goes, as a distance band from the Home Rig. `wreckMin` is a
+  -- floor rather than a band: the second rig is chosen as the furthest valid
+  -- candidate found, because "somebody else tried this, a long way from you" is
+  -- the whole sentence and it is ruined by proximity.
+  near       = {
+    suit     = { 340, 700 },
+    pallet   = { 380, 780 },
+    road     = { 260, 520 },   -- the road passes the rig; he parked by it
+  },
+  far        = {
+    pad      = { 820, 1600 },
+    mast     = { 700, 1600 },
+  },
+  wreckMin   = 1150,
+  scatterMin = 560,            -- scattered relics keep at least this from home
+
+  -- The road. Segments are all one length so a single baked shape serves the
+  -- whole run, and they overlap by `overlap` so the joins do not show.
+  road       = {
+    segLen   = 150,
+    width    = 62,
+    overlap  = 9,
+    perSide  = 6,              -- segments laid each way from the anchor
+    curve    = 0.13,           -- radians of heading drift per segment, max
+    variants = 3,
+  },
+
+  -- How far a Planter has to stay off each kind, in world units. The road's is
+  -- measured from its segment rather than from its centre, so it is a corridor
+  -- and not a bead on a string.
+  --
+  -- These have to be wider than the object they protect, because a canopy is
+  -- drawn above its trunk: a mature tree standing well SOUTH of a relic still
+  -- paints over it, which is the same occlusion problem the bot pips and the
+  -- x-ray focus exist to solve. Measured in a nine-hundred-tree forest, at 74
+  -- the empty suits were completely buried and at 54 the road could not be
+  -- found in the frame at all.
+  --
+  -- AND THEY HAVE TO BE NARROWER THAN THAT WANTS TO BE, because denying ground
+  -- is not free and the first pass at these numbers was a real balance
+  -- regression. Sampled against the same two tests `plantTree` applies, the
+  -- 112/78 set took 13.6% of the plantable island on the largest seed measured
+  -- and 24.3% on the smallest -- and a fill test on that small seed reached 450
+  -- trees where an unrelic'd island reached 500, widening to 515 against 663 at
+  -- a higher target. A fifth of the wood is not a price a prop gets to charge.
+  --
+  -- What resolved it: the nine-hundred-tree probe is harsher than the game. A
+  -- real run finishes at four to five hundred trees on this island, so the
+  -- occlusion these have to beat is the canopy of a *sparse* wood. Re-verified
+  -- at that density, the set below reads as well as the wide one did and costs
+  -- roughly half the ground. The road is the biggest saving and the most
+  -- deliberate: it protects the carriageway and nothing more, so the wood does
+  -- close over stretches of it -- which is the object's own description.
+  noPlant    = {
+    wreck = 112, road = 44, suit = 92, pallet = 88,
+    pad = 124, mast = 88, hauler = 80,
+  },
+}
+
+------------------------------------------------ NEW: what he does with his hands
+-- The last human speaks eight times in fifteen minutes. Everything else he
+-- feels has to arrive as behaviour, so these three blocks are the whole of his
+-- non-verbal vocabulary. Every number in them is small on purpose: the player
+-- sees each of these fifty times in a run, and anything that reads as a
+-- performance the second time is worse than nothing.
+--
+-- One block per thing he does, so a concurrent edit merges cleanly.
+
+-- Standing still. An ambient weight shift that never stops, and on top of it a
+-- gesture every few seconds: he works a shoulder, he looks at the sky, he
+-- checks the suit. Near the Home Rig it is always the same one -- he checks the
+-- radio -- because it is the only thing on the island he keeps doing that never
+-- works.
+T.idle = {
+  delay      = 1.5,            -- seconds standing before the first gesture
+  gap        = { 3.2, 6.4 },   -- and between them after that
+  stillSpeed = 26,             -- under this he counts as standing
+
+  -- The weight shift. Always running while he is on his feet, sub-pixel slow,
+  -- and it is the difference between a man standing and a sprite parked.
+  swayPeriod = 7.3,
+  sway       = 1.1,            -- pixels of hip travel, each way
+
+  -- The radio. Inside this of the rig, every idle is the radio idle.
+  rigRange   = 320,
+
+  dur = { shoulder = 1.5, sky = 2.2, suit = 1.7, radio = 2.6 },
+
+  -- Amplitudes, as fractions of the body radius unless noted.
+  roll       = 1.0,            -- how far the shoulder rolls back, 0..1
+  headLift   = 0.34,           -- the sky look
+  leanIn     = 0.12,           -- the radio lean, in shear units
+  chestBlink = 0.60,           -- how far the chest readout dips while he reads it
+  damp       = 8,              -- how fast a pose channel reaches its target
+}
+
+-- He notices the dead. A bot goes down near him and he turns his head to it.
+-- That is all of it: no animation, no sound, no toast. It is purely cosmetic --
+-- the aim cone, the blaster and the shove never see it -- so it can never cost
+-- the player anything, which is why it is allowed to happen while they are busy.
+T.notice = {
+  range    = 460,              -- how near a body has to fall to register
+  dur      = 1.35,             -- how long the head stays turned
+  cooldown = 1.8,              -- a bad night must not turn him into a bobblehead
+  turn     = 0.26,             -- head offset toward it, in body radii
+  lean     = 0.09,             -- and what the torso does about it, in shear units
+  gaze     = 11,               -- how fast the head comes round
+}
+
+-- The helmet, at the end. He does not gain a pale head: he takes the thing off
+-- and sets it on the grass, and it stays there. Driven off wall-clock rather
+-- than a dt, because the scene that plays this does not tick the world.
+T.helmet = {
+  seal   = 0.55,               -- seconds spent breaking the seal, helmet still up
+  lower  = 1.15,               -- and setting it down
+  side   = 1.5,                -- where it lands, in body radii, to his near side
+  drop   = 1.25,               -- and in front of his boots
+  arc    = 20,                 -- pixels the hand travels through on the way down
+  fade   = 7.0,                -- seconds the visor takes to go out on the ground
+}
+
+------------------------------------------------------- NEW: what a rescue costs
+-- Carrying a downed machine to a beacon is the tenderest verb in the game and
+-- it used to cost 34% movement speed and nothing else: you could shove, dash
+-- and pulse with a body in your arms, and only dying put it down. Traced, every
+-- pickup reached a beacon -- a hundred percent conversion, which is another way
+-- of saying there was no decision in it.
+--
+-- Dash is deliberately still allowed. It is the escape verb, and taking it away
+-- makes rescues impossible rather than tense.
+T.rescue = {
+  handsFull  = true,           -- no shove and no pulse with someone in your arms
+  dropOnHit  = true,           -- and a hit puts them down where you stood
+  fumble     = 0.6,            -- seconds before you can pick them back up
+
+  -- The night's own pressure on the rescue clock. Applied on top of whatever
+  -- the chips say, so late nights are a triage problem -- three down at once on
+  -- cycle 7 is a choice about which one you can reach.
+  clockByCycle = 0.94,         -- multiplier per cycle after the first
+  clockFloor   = 0.62,         -- never below this fraction of T.downedTime
+}
+
 
 return T

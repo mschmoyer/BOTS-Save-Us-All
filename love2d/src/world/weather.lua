@@ -8,6 +8,8 @@ local Opt    = require("src.core.optional")
 local VFX  = Opt.require("src.engine.vfx")
 local Wind = Opt.require("src.world.wind")
 local Audio = Opt.require("src.engine.audio")
+local Draw = Opt.require("src.engine.draw")
+local TU   = require("src.game.tuning")
 
 local W = {
   state = "clear",       -- clear | breezy | overcast | rain | storm
@@ -48,10 +50,96 @@ local function pick(rng, phase, cycle)
   return rng:pick(pool)
 end
 
+------------------------------------------------------------------ sky contact
+-- Something crosses the top of the frame, three times, before the Harvester
+-- Prime comes down.
+--
+-- It lives in the weather because that is what it is to the player: a thing the
+-- sky does. It is not an entity, it has no sound, it puts nothing on the
+-- minimap, it never lands, and no line of dialogue acknowledges it. The only
+-- job it has is that when a machine finally does descend, it is the fourth time
+-- the player has seen a light up there rather than the first.
+--
+-- Three sightings: the 75% oxygen milestone -- the point at which the sky is
+-- worth looking at from somewhere else -- and then dusk on each of the last two
+-- cycles. Suppressed once the rig is actually here, because by then the thing
+-- has arrived and a fourth light in the sky is just weather.
+local sky = { t = 0, live = false, n = 0, dir = 1, drop = 0, fired = false,
+              phase = nil }
+W.skyContact = sky
+
+local function skyStart()
+  local C = TU.skyContact
+  sky.live = true
+  sky.t = 0
+  sky.n = sky.n + 1
+  -- alternate the heading: three passes on one track is a looping animation,
+  -- three passes on different ones is traffic
+  sky.dir = (sky.n % 2 == 1) and 1 or -1
+  sky.drop = W.rng:range(-0.5, 1.0) * (C.y1 - C.y0)
+end
+
+local function skyUpdate(dt, world)
+  if sky.live then
+    sky.t = sky.t + dt
+    if sky.t >= TU.skyContact.dur then sky.live = false end
+    return
+  end
+  if not world then return end
+  local phase = world.phase
+  local prev = sky.phase
+  sky.phase = phase
+  if phase == "extraction" or phase == "ending" then return end
+
+  local C = TU.skyContact
+  if not sky.fired and (world.o2Step or 0) >= C.o2Mark then
+    sky.fired = true
+    skyStart()
+    return
+  end
+  if phase == "dusk" and prev ~= "dusk"
+     and (world.cycle or 1) > TU.cycle.count - C.lastCycles then
+    skyStart()
+  end
+end
+
+--- One point of light, on a straight track, over about eight seconds. Drawn
+--- inside the scene so the grade and the bloom have it -- it is up there with
+--- the weather, not printed on the interface.
+local function skyDraw()
+  if not sky.live then return end
+  local C = TU.skyContact
+  local g = love.graphics
+  local w, h = g.getDimensions()
+  local k = sky.t / C.dur
+  local pad = 40
+  local x = sky.dir > 0 and (-pad + (w + pad * 2) * k) or (w + pad - (w + pad * 2) * k)
+  local y = h * (C.y0 + (C.y1 - C.y0) * k + sky.drop)
+  -- in and out at the ends, so it enters and leaves rather than appearing
+  local a = C.alpha * U.saturate(k / C.edge) * U.saturate((1 - k) / C.edge)
+  if a <= 0.004 then return end
+  -- Additively, and by hand. This is called at the tail of the scene pass,
+  -- straight after the lighting composite, and two things there will eat it:
+  -- whatever blend mode and shader that pass left bound, and the grade, whose
+  -- shoulder turns a 95% white alpha blend into a grey smear. A light in the
+  -- sky is a light: it goes on top of the frame, not into it.
+  local pbm, pam = g.getBlendMode()
+  local psh = g.getShader()
+  g.setShader()
+  if Draw.glow then Draw.glow(x, y, C.glow, P.skyContact, a * 0.55, 3) end
+  g.setBlendMode("add", "alphamultiply")
+  g.setColor(P.skyContact[1], P.skyContact[2], P.skyContact[3], a)
+  g.circle("fill", x, y, C.r, 12)
+  g.setColor(1, 1, 1, 1)
+  g.setBlendMode(pbm, pam)
+  g.setShader(psh)
+end
+
 function W.reset()
   W.state, W.rain, W.target = "clear", 0, 0
   W.cloud, W.cloudTarget, W.wetness = 0, 0, 0
   W.t, W.nextChange = 0, 50
+  sky.t, sky.live, sky.n, sky.fired, sky.phase = 0, false, 0, false, nil
 end
 
 function W.set(state, immediate)
@@ -82,6 +170,7 @@ end
 
 function W.update(dt, world)
   W.t = W.t + dt
+  skyUpdate(dt, world)
   W.nextChange = W.nextChange - dt
   if W.nextChange <= 0 then
     local phase = world and world.phase or "day"
@@ -131,6 +220,7 @@ function W.drawOverlay()
     g.rectangle("fill", 0, 0, g.getDimensions())
   end
   g.setColor(1, 1, 1, 1)
+  skyDraw()
 end
 
 return W

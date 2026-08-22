@@ -27,6 +27,7 @@ local Signal   = require("src.core.signal")
 local Input    = require("src.engine.input")
 local Opt      = require("src.core.optional")
 local Script   = require("src.game.script")
+local Names    = require("src.game.names")
 local Dialogue = require("src.game.dialogue")
 
 local Draw = Opt.require("src.engine.draw")
@@ -50,6 +51,8 @@ local T = {
   hintGap     = 1.1,
   hintRepeats = 2,       -- a hint may come back once if it went unanswered
   reactGap    = 5.5,
+  hurtQuiet   = 8.0,     -- seconds after a hit before a "calm" beat may play
+  reinforceGap = 5.0,    -- ...between two walk-ins saying where they came from
 }
 Story.tuning = T
 
@@ -124,18 +127,37 @@ local function pickBot(world, x, y, skip, filter)
   return best
 end
 
+--- Blight that does not leave at sunrise and cannot come at you. This is the
+--- same predicate Enemy:flee tests to decide who stays: a Scar, and a dormant
+--- Maw. tuning.lua's own note on the Scar is that it "never moves, never
+--- chases, and cannot hurt the player at all".
+---
+--- They are excluded from the count below, and that is a fix rather than a
+--- nicety. A Scar roots where something was chewing a tree, which is inside
+--- the wood, and it is still there the next morning and the morning after. So
+--- from about cycle four the player's own forest permanently contained one,
+--- `blightNear` never read zero in daylight, and `guard = "calm"` -- which
+--- demands exactly zero -- became unsatisfiable for the rest of the run. Every
+--- beat behind it starved. In one traced run on seed 7 that cost the game both
+--- of its middle beats outright: nothing was said between 1:21 and 13:33.
+local function rooted(e)
+  return (e.def and e.def.holdsGround) or e.type == "scar"
+end
+
 local function blightNear(world, r)
   local p = world and world.player
   if not p then return 0 end
   local n = 0
   if world.hEnemy and world.hEnemy.each then
     world.hEnemy:each(p.x, p.y, r, function(e)
-      if e.alive and not e.fleeing and U.dist2(e.x, e.y, p.x, p.y) <= r * r then n = n + 1 end
+      if e.alive and not e.fleeing and not rooted(e)
+         and U.dist2(e.x, e.y, p.x, p.y) <= r * r then n = n + 1 end
     end)
   elseif world.enemies then
     for i = 1, #world.enemies do
       local e = world.enemies[i]
-      if e.alive and not e.fleeing and U.dist2(e.x, e.y, p.x, p.y) <= r * r then n = n + 1 end
+      if e.alive and not e.fleeing and not rooted(e)
+         and U.dist2(e.x, e.y, p.x, p.y) <= r * r then n = n + 1 end
     end
   end
   return n
@@ -151,10 +173,22 @@ local function guardOk(kind, world)
   if kind == "fight" then
     return hp >= 2 and blightNear(world, T.fightRadius) <= 3
   end
-  -- calm: daylight, nothing hunting you, and not mid-rescue
+  -- calm: daylight, nothing hunting you, not mid-rescue, and not in the
+  -- seconds after a hit.
   if world.phase == "night" or world.phase == "dusk" then return false end
   if world.phase == "extraction" or world.phase == "ending" then return false end
-  if hp < 2 then return false end
+  -- That last clause used to read `hp < 2`, and it was the second thing
+  -- starving the middle of the run. Hearts never come back except by going
+  -- down and rebooting, so a player who took two hits on cycle two and then
+  -- played well spent the rest of the game on one heart -- and every beat
+  -- behind this guard was unreachable for the whole of it. The better they
+  -- played, the less of the story they were told. Measured on seed 2: the
+  -- answer beat sat through both of its cycles at hp=1 with zero blight on
+  -- the screen and was dropped on its patience.
+  --
+  -- What the rule wants is "not while they are being killed", and that is a
+  -- clock, not a resource.
+  if (Story.hurtT or 0) > 0 then return false end
   if p.carrying then return false end
   return blightNear(world, T.calmRadius) == 0
 end
@@ -178,6 +212,10 @@ local BEATS = {
       if not b then return false end
       ctx.bot = b
       bind("botA", b)
+      -- The one the player heard say "oh". Not "the first bot built": the beat
+      -- can be cancelled and re-prepped against a different machine, and it is
+      -- the one that spoke that beats 7 and 10 are about.
+      Story.theFirstOne = b
       return true
     end,
   },
@@ -202,7 +240,14 @@ local BEATS = {
     end,
   },
   {
-    id = "question", pri = 1, guard = "calm", delay = 4.0, patience = 420,
+    -- Cycle 3, not cycle 5. Three is the first dawn the player owns a real
+    -- wood and a real crew, which is when "what are the trees for" has
+    -- anything behind it -- and it is what opens cycle 6 for the answer, so
+    -- the middle of the run has two beats in it instead of one.
+    --
+    -- pri 2, not 1. At the bottom of the table it yielded to everything, and
+    -- in a traced run it slipped a cycle and a half past its own signal.
+    id = "question", pri = 2, guard = "calm", delay = 4.0, patience = 420,
     prep = function(world, ctx)
       local p = world.player
       local b = pickBot(world, p and p.x, p and p.y, nil,
@@ -211,6 +256,78 @@ local BEATS = {
       if not b then return false end
       ctx.bot = b
       bind("botA", b)
+      -- beat 6 opens on this machine quoting its own log back
+      Story.questionBot = b
+      return true
+    end,
+  },
+  {
+    -- Cycle 4. The only thing standing in the measured 4:13 -> 10:20 silence.
+    -- It has no geography: the subject is the rig's radio, which is a fixture,
+    -- the camera is on the bot, and the only cancel path is "no living bot",
+    -- which cancels the run's whole story anyway. It touches no relic and reads
+    -- no position, so it cannot starve on where the player happens to be.
+    id = "radio", pri = 2, guard = "calm", delay = 4.0, patience = 420,
+    -- It only exists between the two. Held behind the question; once the answer
+    -- has played it can never fire, and expires on its patience unplayed -- a
+    -- beat about the middle must not arrive after the end of the middle.
+    require = function() return Story.fired.question and not Story.fired.answer end,
+    prep = function(world, ctx)
+      local p = world.player
+      -- The machine that asked, if it is still standing. Same fallback as the
+      -- answer beat: cancelling here would reopen the dead zone this is for.
+      local b = Story.questionBot
+      if not (b and b.alive and b.state ~= "dead" and b.state ~= "down") then
+        b = pickBot(world, p and p.x, p and p.y, nil,
+                    function(bb) return bb.type == "planter" end)
+         or pickBot(world, p and p.x, p and p.y)
+      end
+      if not b then return false end
+      ctx.bot = b
+      bind("botA", b)
+      -- ...and promote the replacement, so the answer beat gets the machine the
+      -- player just heard rather than re-picking a third stranger.
+      Story.questionBot = b
+      return true
+    end,
+  },
+  {
+    -- The answer, three cycles later. It only exists as a reply, so it will
+    -- not play until the question has actually been asked: `require` is
+    -- checked at fire time, every frame, so a question still sitting in the
+    -- queue holds this one behind it instead of racing it.
+    id = "answer", pri = 1, guard = "calm", delay = 4.0, patience = 420,
+    require = function() return Story.fired.question end,
+    prep = function(world, ctx)
+      local p = world.player
+      -- Preferring the bot that asked is the beat: "i asked what the trees are
+      -- for" is a machine reading its own log. The fallback is not a nicety --
+      -- cancelling here would reopen the exact dead zone this beat is for.
+      local b = Story.questionBot
+      if not (b and b.alive and b.state ~= "dead" and b.state ~= "down") then
+        b = pickBot(world, p and p.x, p and p.y, nil,
+                    function(bb) return bb.type == "planter" end)
+         or pickBot(world, p and p.x, p and p.y)
+      end
+      if not b then return false end
+      ctx.bot = b
+      bind("botA", b)
+      return true
+    end,
+  },
+  {
+    -- The bot from beat 2 is gone. Queued only when it is NOT the run's first
+    -- loss -- if it is, firstLoss has the body, and two funerals over it would
+    -- be worse than none.
+    id = "firstBotLost", pri = 2, guard = "calm", delay = 2.2, patience = 300,
+    prep = function(world, ctx)
+      -- botB, not botA: botA is the machine that died, and the survivor
+      -- standing over it is somebody else. ctx.lostX/lostY stay put -- the
+      -- camera step reads them, and there is no body to follow.
+      local b = pickBot(world, ctx.lostX, ctx.lostY)
+      if not b then return false end
+      ctx.bot = b
+      bind("botB", b)
       return true
     end,
   },
@@ -247,7 +364,14 @@ local BEATS = {
     -- fired by scenes/ending.lua, which owns the staging around it
     prep = function(world, ctx)
       local p = world.player
-      local a = pickBot(world, p and p.x, p and p.y)
+      -- The machine that said "oh / hello" gets "you can take it off now", if
+      -- it is still standing. The nearest survivor is whoever the ring happened
+      -- to seat closest, and in one traced capture that was a repulsor pylon
+      -- built four minutes earlier. scenes/ending.lua revives the downed before
+      -- it calls this, so `state == "down"` is not a reason to pass it over.
+      local first = Story.theFirstOne
+      if not (first and first.alive and first.state ~= "dead") then first = nil end
+      local a = first or pickBot(world, p and p.x, p and p.y)
       local b = pickBot(world, p and p.x, p and p.y, a)
       bind("botA", a)
       bind("botB", b)
@@ -441,6 +565,30 @@ local function react(phase, x, y)
 end
 Story.react = react
 
+--- The same thing, but from a bot we already have. Some lines belong to one
+--- machine and not to whoever happens to be standing nearest: the one in your
+--- arms is the one with an opinion about being carried, and `pickBot` skips
+--- downed bots anyway, so routing those through `react` would have put "put me
+--- by the light" in the mouth of a bystander.
+local function reactFrom(bot, phase)
+  local w = Story.world
+  if not w or w.cutscene or Dialogue.isActive() then return end
+  if Story.reactT > 0 then return end
+  if not bot or not bot.alive or not bot.say then return end
+  bot:say(phase)
+  Story.reactT = T.reactGap
+end
+Story.reactFrom = reactFrom
+
+--- Which of the two long pools the world is in. Anything that can happen at
+--- any hour has to ask: a hit taken at noon used to answer with the night pool,
+--- so a bot would say "morning is not far" in broad daylight.
+local function phasePool()
+  local w = Story.world
+  local ph = w and w.phase
+  return (ph == "night" or ph == "dusk") and "night" or "day"
+end
+
 ------------------------------------------------------------------------- state
 local function resetState()
   Story.world    = nil
@@ -449,10 +597,18 @@ local function resetState()
   Story.armed    = {}
   Story.cooldown = 0
   Story.reactT   = 0
+  Story.dawnFlip = false
+  Story.hurtT    = 0
+  Story.reinforceT = 0
   Story.time     = 0
   Story.moved    = 0
   Story.lastX, Story.lastY = nil, nil
   Story.did      = {}
+  -- Two machines the story keeps hold of by name. The first is the one the
+  -- player heard boot and speak; the second is the one that asked what the
+  -- trees are for, so the beat that answers can be the same voice.
+  Story.theFirstOne  = nil
+  Story.questionBot  = nil
   Story.epitaphs = {}
   Story.sacrificed = {}
   Story.watch    = nil
@@ -553,6 +709,12 @@ local function subscribe()
   -- last, so they are last on the list, which is where they belong.
   Signal.on("bot:sacrificed", function(bot)
     if not bot or not bot.name then return end
+    -- Reinforcements walked in off the treeline during the rebellion; world.lua
+    -- says in so many words that they are not in the ending's ledger, "because
+    -- the names in that ledger are the ones you built and lost". They leaked in
+    -- through here, and because they arrive with empty ledgers and live seconds
+    -- they filled twenty-two rows of one memorial with the same sentence.
+    if bot.offRoster then return end
     if bot.epitaph then Story.epitaphs[bot.name] = bot:epitaph() end
     Story.sacrificed[#Story.sacrificed + 1] = {
       name = bot.name, type = bot.type,
@@ -568,15 +730,35 @@ local function subscribe()
     local first = not (Story.fired.firstLoss or Story.armed.firstLoss)
     -- On the very first one, keep quiet: the cutscene opens on "it stopped",
     -- and an ambient bubble that got there first spends the line.
+    -- The name goes over first: the `loss` pool can say it, and "say the name"
+    -- is only a ritual if somebody then does.
+    Names.remember(bot.name)
     if not first then react("loss", bot.x, bot.y) end
     local ep = bot.epitaph and bot:epitaph() or nil
     queue("firstLoss", { lostName = bot.name, lostX = bot.x, lostY = bot.y,
                          lostType = bot.type,
                          lostEpitaph = ep and ("it " .. ep) or nil })
+    -- ...and if the one that just stopped is the one that said hello, it gets
+    -- its own beat rather than a line in the toast feed. Only when it is not
+    -- also the first loss: that body already has a scene standing over it.
+    if not first and Story.theFirstOne and bot == Story.theFirstOne then
+      queue("firstBotLost", { lostX = bot.x, lostY = bot.y })
+    end
   end, Story)
 
+  -- The two scheduled beats, and the only two things in the table that are on
+  -- a clock rather than on an event. Everything else fires off something the
+  -- player did or something that happened to them, which is why the middle of
+  -- the run went quiet: nothing happens in the middle that the story is
+  -- listening for. Re-queued every cycle on purpose -- `armed` swallows the
+  -- duplicate, and if either is ever dropped on its patience the next dawn
+  -- puts it back.
   Signal.on("phase:day", function(cycle)
-    if cycle and cycle >= 5 then queue("question", {}) end
+    if not cycle then return end
+    if cycle >= 3 then queue("question", {}) end
+    -- re-queued every dawn from cycle 4; `armed` swallows the duplicate
+    if cycle >= 4 then queue("radio",    {}) end
+    if cycle >= 6 then queue("answer",   {}) end
   end, Story)
 
   Signal.on("phase:extraction", function(boss)
@@ -590,13 +772,57 @@ local function subscribe()
   -- reactions: the bots noticing their own lives
   Signal.on("phase:dusk", function() react("night") end, Story)
   Signal.on("phase:night", function() react("night") end, Story)
-  Signal.on("phase:dawn",  function() react("day") end, Story)
+  -- Dawn is not just "day again": the night pool spends itself asking to be
+  -- counted at first light, and this is the pool that counts.
+  -- First light. Once the radio beat has played, one machine in four reports
+  -- the readout instead of counting the crew -- the recurring half of that beat,
+  -- and the only thing that speaks in cycles 4 through 7 on most runs. The
+  -- number it reports has never changed and never will.
+  Signal.on("phase:dawn",  function()
+    -- Alternating, not random: a coin flip can hand a whole run the counting
+    -- pool and the thread never appears. There are only three or four dawns
+    -- left after the beat fires and every one of them has to count.
+    if Story.fired.radio then
+      Story.dawnFlip = not Story.dawnFlip
+      react(Story.dawnFlip and "radio" or "dawn")
+    else
+      react("dawn")
+    end
+  end, Story)
   Signal.on("boss:phase",  function() react("boss") end, Story)
 
   -- The player traded a worse night for more daylight. Somebody who has to
   -- work through that night has an opinion about it.
   Signal.on("world:heldDawn", function() react("hold") end, Story)
+  -- Deliberately NOT routed through phasePool(). An oxygen milestone is an
+  -- event with a pool of its own, like `loss` and `boss` and `failed`, and
+  -- phasePool() only picks between the two long ambient pools -- sending this
+  -- through it would answer the best number in the game with "good dirt here".
+  -- The one line in `grown` that reads oddly after dark is "the sky changed
+  -- colour", one draw in five, and the cost of fixing it is a second five-line
+  -- pool for a moment that happens four times a run. Left as it is on purpose.
   Signal.on("o2:milestone",   function() react("grown") end, Story)
+
+  -- The island answers. A machine that was working somewhere else walks in off
+  -- the treeline, and it says where it came from rather than one of the crew's
+  -- rebellion lines -- which is what made the reinforcements read as the game
+  -- topping up the fight instead of as strangers arriving. It said a `rebel`
+  -- line inside Bot:rebel a tick ago; World:speak drops a bot's previous bubble
+  -- when it gets a new one, so this replaces that rather than stacking on it.
+  --
+  -- Its own clock, deliberately not the shared reaction gap: measured, the
+  -- shared gap is already spent by the fight these are arriving into, and
+  -- routing them through it gave one walk-in in ten its own line and left the
+  -- other nine sounding like crew. One every five seconds against an arrival a
+  -- second is a trickle of strangers rather than a chant.
+  Signal.on("bots:reinforce", function(b)
+    local w = Story.world
+    if not w or w.cutscene or Dialogue.isActive() then return end
+    if (Story.reinforceT or 0) > 0 then return end
+    if not b or not b.alive or not b.say then return end
+    b:say("reinforce")
+    Story.reinforceT = T.reinforceGap
+  end, Story)
 
   -- Deliberately NOT subscribed: "bots:cohort". Bot:rebel already says a rebel
   -- line for every bot that launches, so a cohort of eight arrives with its own
@@ -611,20 +837,39 @@ local function subscribe()
   end, Story)
   Signal.on("player:hurt", function()
     local p = Story.world and Story.world.player
-    react("night", p and p.x, p and p.y)
+    -- ...and hold the quiet beats off for a few seconds. This is the whole of
+    -- what `guard = "calm"` used to try to say with `hp >= 2`.
+    Story.hurtT = T.hurtQuiet
+    react(phasePool(), p and p.x, p and p.y)
+  end, Story)
+  -- He is on the ground and the reboot clock is up. This one jumps the queue:
+  -- whatever a bot was about to say about the dirt matters less.
+  Signal.on("player:down", function(p)
+    Story.reactT = 0
+    react("downed", p and p.x, p and p.y)
   end, Story)
   Signal.on("tree:planted", function(t, by)
     if by == "player" then Story.did.handplant = true end
     local w = Story.world
-    if w and (w.treeCount or 0) % 40 == 0 then react("day", t and t.x, t and t.y) end
+    -- ...and not "day": the fortieth tree gets planted after dark as often as
+    -- not, and a bubble reading "more sun today" at 0:13 of a bad night is the
+    -- same mistake as answering a hit with the night pool.
+    if w and (w.treeCount or 0) % 40 == 0 then react(phasePool(), t and t.x, t and t.y) end
   end, Story)
-  Signal.on("bot:revived", function(b) react("rebel", b.x, b.y) end, Story)
+  -- This used to fire the REBELLION pool, so a routine daylight rescue on cycle
+  -- two had a bystander saying "save the human" and "goodbye" twenty minutes
+  -- before the scene that those belong to. It is the bot that just stood up
+  -- that has something to say, and what it has to say is about standing up.
+  Signal.on("bot:revived", function(b) reactFrom(b, "saved") end, Story)
 
   -- tutorial acknowledgements
   Signal.on("player:shove", function() Story.did.shove = true end, Story)
   Signal.on("player:pulse", function() Story.did.pulse = true end, Story)
   Signal.on("player:dash",  function() Story.did.dash = true end, Story)
-  Signal.on("player:carry", function() Story.did.carry = true end, Story)
+  Signal.on("player:carry", function(bot)
+    Story.did.carry = true
+    reactFrom(bot, "carried")
+  end, Story)
   Signal.on("cobalt:gained", function() Story.did.cobalt = true end, Story)
 end
 
@@ -766,6 +1011,8 @@ function Story.update(dt)
 
   Story.time = (Story.time or 0) + dt
   if Story.reactT > 0 then Story.reactT = Story.reactT - dt end
+  if Story.hurtT > 0 then Story.hurtT = Story.hurtT - dt end
+  if Story.reinforceT > 0 then Story.reinforceT = Story.reinforceT - dt end
 
   local p = world.player
   if p then

@@ -10,6 +10,8 @@ local J        = require("src.engine.juice")
 local Opt      = require("src.core.optional")
 local TU       = require("src.game.tuning")
 local Chips    = require("src.game.chips")
+local Names    = require("src.game.names")
+local Save     = require("src.game.save")
 local Director = require("src.game.director")
 local Warmup   = require("src.game.warmup")
 
@@ -20,6 +22,7 @@ local CobaltE    = require("src.entities.cobalt")
 local Projectile = require("src.entities.projectile")
 local Boss       = require("src.entities.boss")
 local HomeRig    = require("src.entities.homerig")
+local Relic      = require("src.entities.relic")
 
 local Terrain  = Opt.require("src.world.terrain")
 local Tree     = Opt.require("src.entities.tree")
@@ -65,7 +68,13 @@ function World:init(seed, opts)
   -- of them is built once instead of twice a frame -- `World:draw` and
   -- `World:emitLights` each made their own, and a table a frame is a table a
   -- frame.
-  self.mobileLists = { self.bots, self.enemies, self.cobalts, self.projectiles }
+  -- Relics are static, non-interactive world objects (src/entities/relic.lua).
+  -- They ride the mobile lists purely for the draw and shadow passes and the
+  -- view cull those already do; they are never swept, never tick, and emit no
+  -- light, so nothing else in this file has to know about them.
+  self.relics = {}
+  self.mobileLists = { self.bots, self.enemies, self.cobalts, self.projectiles,
+                       self.relics }
   -- the same trees as `self.trees`, in depth order, and the slice of that the
   -- camera can see: see World:addTree
   self.treesZ, self.visTrees = {}, {}
@@ -108,9 +117,16 @@ function World:init(seed, opts)
   self.centerX, self.centerY = TU.world.w / 2, TU.world.h / 2
 
   self:placeHome()
+  Relic.populate(self)
   if opts.restore then
     self:restore(opts.restore)
   else
+    -- Serials are module state on Bot and count for the life of the process,
+    -- not the life of a run: a second run started in the same session named
+    -- its first planter SEED-13, and at a hundred of a type the %02d wrapped
+    -- round to SEED-00. A restore does NOT reset them -- it takes the serials
+    -- off the save instead, and the crew that came back keeps its names.
+    if Bot.resetSerials then Bot.resetSerials() end
     self:seedCobalt()
   end
   Warmup.mark("home")
@@ -483,6 +499,10 @@ function World:plantTree(x, y, by)
   end
   local gap = TU.tree.spreadReject * 0.74
   if self.hTree:nearest(x, y, gap, fAlive) then return false end
+  -- Nothing roots on top of a relic, so the wood grows around the wreck, the
+  -- road and the pad instead of swallowing them, and they are still standing in
+  -- their clearings when the ending pulls the camera back over the canopy.
+  if Relic.blocksPlantingAt(self, x, y) then return false end
 
   local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000)) or nil
   if not t then return false end
@@ -500,13 +520,26 @@ end
 
 --- The plant chime climbs a pentatonic ladder with the forest. It has to be able
 --- to come back down, or a bad night leaves the sound lying about the world.
+--- Traits live in names.lua as tables; a save carries the id. Rebuilt into the
+--- same table the live game uses, so a restored record is shaped like one that
+--- was made this session.
+local traitById
+local function traitOf(id)
+  if not id or id == "" then return nil end
+  if not traitById then
+    traitById = {}
+    for i = 1, #Names.traits do traitById[Names.traits[i].id] = Names.traits[i] end
+  end
+  return traitById[id]
+end
+
 --- Rebuild a saved run in place. Called from init, so nothing has ticked yet
 --- and no signal has a listener: this writes state, it does not play the run
 --- forward. See src/game/save.lua for what is stored and why so little of it.
 function World:restore(d)
   local Tree_  = Tree
   local trees  = d.trees or {}
-  for i = 1, #trees, 5 do
+  for i = 1, #trees, Save.TREE_STRIDE do
     local x, y, seed, growth, elder = trees[i], trees[i + 1], trees[i + 2],
                                       trees[i + 3], trees[i + 4]
     local t = Tree_.new and Tree_.new(x, y, seed) or nil
@@ -525,23 +558,76 @@ function World:restore(d)
   for i = 1, #chips do self.chips:add(chips[i]) end
 
   local bots, types, names = d.bots or {}, d.botTypes or {}, d.botNames or {}
-  for i = 1, #bots, 4 do
-    local k = (i - 1) / 4 + 1
+  local traits = d.botTraits or {}
+  local BS = Save.BOT_STRIDE
+  -- The highest serial ever issued per type, gathered as the crew is rebuilt.
+  -- Bot's serial counter is module state and a restore restarts it at the
+  -- number of bots that came back, so without this a newly built machine takes
+  -- a dead one's name -- observed as two FRAME-04s collapsing into one row on a
+  -- memorial that dedupes by name. See Bot.resetSerials.
+  local topSerial = {}
+  for i = 1, #bots, BS do
+    local k = (i - 1) / BS + 1
     local botType = types[k]
     if botType and TU.bots[botType] then
       local b = Bot.new(bots[i], bots[i + 1], botType, self, self.rng)
       b.maxHp  = b.maxHp + self.chips:get("botHp", 0)
       b.hp     = math.min(bots[i + 2] or b.maxHp, b.maxHp)
       b.serial = bots[i + 3] or b.serial
+      if b.serial > (topSerial[botType] or 0) then topSerial[botType] = b.serial end
+      -- their own tally, not the world's: this is what Bot:epitaph reads, and
+      -- dropping it here memorialised six cycles of work as "was here"
+      b.planted = bots[i + 4] or 0
+      b.built   = bots[i + 5] or 0
+      b.log.planted, b.log.built = b.planted, b.built
+      -- The rest of the ledger rides the same row, once save.lua's BOT stride
+      -- grows to carry it (the comment there says exactly how). Read only when
+      -- the stride is actually wide enough -- at stride 6 these slots are the
+      -- NEXT machine's position, and a bot that inherited its neighbour's x as
+      -- a night count would be worse than one that forgot.
+      if BS >= 13 then
+        local L = b.log
+        L.nights    = bots[i + 6] or 0
+        L.downs     = bots[i + 7] or 0
+        L.saves     = bots[i + 8] or 0
+        L.carried   = bots[i + 9] or 0
+        L.mined     = bots[i + 10] or 0
+        L.shots     = bots[i + 11] or 0
+        L.bornCycle = bots[i + 12] or self.cycle
+      end
       if names[k] and names[k] ~= "" then b.name = names[k] end
+      b.trait = traitOf(traits[k]) or b.trait
+      -- the trait feeds the wear shade, and the ledger above feeds the patina,
+      -- so a restored veteran has to look like one before its first frame
+      b:refreshWear()
       -- they were already standing when you left; do not boot them all again
       b.state, b.stateT, b.bootT = "work", 0, 0
       self:addEntity(self.bots, self.hBot, b)
     end
   end
+  -- The dead count too. A machine that died before the save is still holding
+  -- its name on the memorial, and the memorial dedupes by name, so the counter
+  -- has to clear the highest serial ever ISSUED and not the highest still
+  -- standing. Names are written "%s-%02d", so a serial past ninety-nine comes
+  -- back wrapped and this is a floor rather than an exact recovery -- which is
+  -- still strictly better than restarting at the size of the surviving crew.
+  local prefixOf = {}
+  for i = 1, #TU.bots.order do
+    local kind = TU.bots.order[i]
+    prefixOf[TU.bots[kind].prefix] = kind
+  end
+  for i = 1, #(d.lostNames or {}) do
+    local pre, num = string.match(d.lostNames[i] or "", "^(%u+)%-(%d+)$")
+    local kind = pre and prefixOf[pre]
+    if kind then
+      num = tonumber(num) or 0
+      if num > (topSerial[kind] or 0) then topSerial[kind] = num end
+    end
+  end
+  if Bot.resetSerials and next(topSerial) then Bot.resetSerials(topSerial) end
 
   local nodes = d.nodes or {}
-  for i = 1, #nodes, 3 do
+  for i = 1, #nodes, Save.NODE_STRIDE do
     local c = CobaltE.new(nodes[i], nodes[i + 1], self, self.rng, true)
     c.left = nodes[i + 2] or c.left
     self:addEntity(self.cobalts, self.hCobalt, c)
@@ -553,7 +639,34 @@ function World:restore(d)
   self.cobalt = math.max(0, math.floor(d.cobalt or 0))
   self.time   = d.time or 0
   self.o2     = d.o2 or 0
-  self.allLostNames = d.lost or {}
+  -- The memorial reads records ({name, type, cycle, trait, planted, built}),
+  -- so they go out as parallel arrays and come back as records. They used to
+  -- go out through a string serialiser, which wrote each one as its own
+  -- address and printed "table: 0x7f21fcb071a8" on the ending screen.
+  self.allLostNames = {}
+  local lNames = d.lostNames or {}
+  local lTypes, lTraits, lFacts = d.lostTypes or {}, d.lostTraits or {}, d.lostFacts or {}
+  local LS = Save.LOST_STRIDE
+  for i = 1, #lNames do
+    local f = (i - 1) * LS
+    local rec = { name = lNames[i], type = lTypes[i],
+                  trait = traitOf(lTraits[i]),
+                  cycle = lFacts[f + 1] or 0,
+                  planted = lFacts[f + 2] or 0,
+                  built = lFacts[f + 3] or 0 }
+    -- ...and the rest of the ledger, when the LOST stride carries it. Same
+    -- gate and same reason as the BOT stride above.
+    if LS >= 10 then
+      rec.nights    = lFacts[f + 4] or 0
+      rec.downs     = lFacts[f + 5] or 0
+      rec.saves     = lFacts[f + 6] or 0
+      rec.carried   = lFacts[f + 7] or 0
+      rec.mined     = lFacts[f + 8] or 0
+      rec.shots     = lFacts[f + 9] or 0
+      rec.bornCycle = lFacts[f + 10] or rec.cycle
+    end
+    self.allLostNames[i] = rec
+  end
   self.rallyX, self.rallyY = d.rallyX, d.rallyY
 
   local st = d.stats or {}
@@ -647,6 +760,12 @@ function World:spawnBot(x, y, botType, free, offRoster)
   local b = Bot.new(x, y, botType, self, self.rng)
   b.maxHp = b.maxHp + self.chips:get("botHp", 0)
   b.hp = b.maxHp
+  -- Not crew: a machine that was working somewhere else on the island when the
+  -- rebellion started and walked in for the rig. It matters on the memorial --
+  -- these arrive seconds before they die, so without knowing what they are the
+  -- epitaph can only report their age, and a dozen rows reading "lasted one
+  -- second" is a bug however true each one is. See Bot:epitaph.
+  b.offRoster = offRoster or nil
   self:addEntity(self.bots, self.hBot, b)
   if not offRoster then self.stats.botsBuilt = self.stats.botsBuilt + 1 end
   if self.phase == "extraction" and self.boss and self.boss.alive and self.botsRebelled then
@@ -798,7 +917,10 @@ function World:dropCarried(player)
   -- home is meant to be a real option, not one that needs prior planning.
   local atRig = self.homeX and U.dist(b.x, b.y, self.homeX, self.homeY) < TU.world.homeRadius
   if atRig or self:beaconAt(b.x, b.y) then
-    b:revive()
+    -- "player", not a bare revive: this is the one rescue the player made with
+    -- their own hands, and it is the only one that buys the machine a loyalty
+    -- timer and the rarest epitaph in the game.
+    b:revive("player")
     self.stats.rescued = self.stats.rescued + 1
   end
 end
@@ -1146,8 +1268,11 @@ function World:beginExtraction()
   self.hEnemy:insert(self.boss)
   for i = 1, #self.bots do
     local b = self.bots[i]
-    -- everyone gets up for this, including the ones still on the ground
-    if b.state == "down" then b:revive() end
+    -- everyone gets up for this, including the ones still on the ground.
+    -- "rig", so it is not counted as a rescue: nobody came and got them, and
+    -- forty machines whose epitaph reads "the light brought it back" is the
+    -- mail merge this whole pass exists to delete.
+    if b.state == "down" then b:revive("rig") end
     if b.state == "work" then
       b.mood = "confused"
       -- nothing gets to take them from you before they choose it themselves
@@ -1633,9 +1758,21 @@ function World:emitLights(Light)
 end
 
 ------------------------------------------------------------------------ signals
+--- NEW: the loss record carries the machine's whole ledger, not two numbers.
+---
+--- The memorial is the only place a name is ever read again, and a field that
+--- exists only on the live bot is no use there -- `cycle` is the cycle the LOSS
+--- was recorded in, so without `bornCycle` and `nights` the ending cannot say
+--- how long anything lasted without inventing it. `epitaph` is the finished
+--- line as `Bot:epitaph` cut it at the moment of death, which is the only
+--- moment `age` and the machine's remaining charges are still true -- so
+--- scenes/ending.lua can take `rec.epitaph` verbatim and fall back to the
+--- fields only for a record that came back off a save.
 Signal.on("bot:lost", function(bot, peaceful)
   local w = bot.world
   if not w or peaceful then return end
+  local L = bot.log
+  local line = bot:epitaph()
   w.stats.botsLost = w.stats.botsLost + 1
   w.lostNames = w.lostNames or {}
   w.lostNames[#w.lostNames + 1] = bot.name
@@ -1643,8 +1780,71 @@ Signal.on("bot:lost", function(bot, peaceful)
   w.allLostNames[#w.allLostNames + 1] = { name = bot.name, type = bot.type,
                                           cycle = w.cycle, trait = bot.trait,
                                           planted = bot.planted or 0,
-                                          built = bot.built or 0 }
-  Signal.emit("bot:epitaph", bot.name, bot:epitaph())
+                                          built = bot.built or 0,
+                                          epitaph = line,
+                                          nights = L and L.nights or 0,
+                                          bornCycle = L and L.bornCycle or w.cycle,
+                                          downs = L and L.downs or 0,
+                                          saves = L and L.saves or 0,
+                                          carried = L and L.carried or 0,
+                                          mined = L and L.mined or 0,
+                                          shots = L and L.shots or 0,
+                                          lit = L and L.lit or 0,
+                                          walked = L and math.floor(L.walked) or 0,
+                                          age = math.floor(bot.age or 0) }
+  Signal.emit("bot:epitaph", bot.name, line)
+end)
+
+--- NEW: the one counter that makes a machine old.
+---
+--- Every bot still standing when the sun comes up has survived a night. That
+--- single number is what `Bot:refreshWear` turns into the patina and the tick
+--- marks a player can read off a crowd, and it is what `Bot:epitaph` falls back
+--- to for a machine that did no work of its own. One pass over at most
+--- forty-eight bots, once a cycle.
+Signal.on("phase:dawn", function()
+  local w = Signal._world
+  if not w or not w.bots then return end
+  for i = 1, #w.bots do
+    local b = w.bots[i]
+    if b.alive and b.state ~= "dead" and b.log then
+      b.log.nights = b.log.nights + 1
+      if b.refreshWear then b:refreshWear() end
+    end
+  end
+end)
+
+--- NEW: what a loss costs the crew.
+---
+--- A death used to change nothing in the world: a counter went up, two lists
+--- grew, and the other machines carried on planting. One spatial query over the
+--- neighbours now stops them working and sends them to the body for about
+--- fourteen seconds -- see `T.bots.grief`, `Bot:workRate` and `Bot:pickWander`.
+--- The player watches the crew put their work down and walk over, which is the
+--- story of a loss told entirely in movement and costs one query.
+---
+--- Hoisted, not a closure: `Spatial:each` is called with this on every loss and
+--- a five-upvalue closure per call was the single largest allocator in the game
+--- before PERFORMANCE.md item 7 went through it.
+local griefX, griefY = 0, 0
+local function grieve(b)
+  if not b.alive or b.state ~= "work" then return end
+  b.grief = TU.bots.grief.time
+  b.griefX, b.griefY = griefX, griefY
+  b.wx, b.wy = griefX, griefY
+end
+
+local function crewMourns(bot)
+  local w = bot.world
+  if not w or not w.hBot then return end
+  if w.phase == "extraction" or w.phase == "ending" then return end
+  griefX, griefY = bot.x, bot.y
+  w.hBot:each(bot.x, bot.y, TU.bots.grief.radius, grieve)
+end
+
+Signal.on("bot:downed", crewMourns)
+Signal.on("bot:lost", function(bot, peaceful)
+  if not peaceful then crewMourns(bot) end
 end)
 
 -- Old Growth applies to what you plant next, not to the wood you already have:

@@ -157,10 +157,27 @@ function Game:buildRun(opts)
   if jump and jump ~= "" then self:devJump(jump) end
 
   DayNight.set("day", 0)
+  -- Prime the oxygen grade before the first frame is drawn. syncDayNight runs
+  -- in update(), which is one frame later than the first draw on some paths,
+  -- and one frame of a restored world in front of a 0% meter is a flash.
+  self:syncDayNight()
   Music.setState("day")
   Warmup.mark("music")
-  -- you have met the mechanic already
-  if Story.begin and not self.saved then Story.begin(self.world, "prologue") end
+  -- The director always takes over the world -- a resumed run only skips the
+  -- opening beat (nil rather than "prologue"): you have met the mechanic
+  -- already, and you met her before you closed the tab. Gating the whole call
+  -- on a new run left Story.world nil for the rest of a continued run, which
+  -- silently deleted every beat, every hint, every reaction and every epitaph
+  -- the memorial was going to read.
+  if Story.begin then
+    Story.begin(self.world, (not self.saved) and "prologue" or nil)
+    if self.saved then
+      local r = Save.restoreStory(self.saved, self.world)
+      print(string.format("RESUME|cycle=%d beats=%d epitaphs=%d hints=%d fallen=%d",
+                          self.world.cycle, r.beats, r.epitaphs, r.hints,
+                          #(self.world.allLostNames or {})))
+    end
+  end
 
   self:bindSignals()
   Warmup.mark("story")
@@ -434,7 +451,12 @@ function Game:syncDayNight()
   else
     DayNight.set(w.phase, p)
   end
-  DayNight.o2Influence(w.o2 / TU.o2.target)
+  -- o2Influence takes a *percentage*, and this used to hand it the 0..1
+  -- fraction -- so the whole oxygen grade ran at DN.o2 <= 0.01 for the entire
+  -- campaign and the sky never cleaned up at all. It went unnoticed because
+  -- the ramp it drove was only a few percent wide at either end; it is not any
+  -- more, so the units matter now.
+  DayNight.o2Influence(100 * w.o2 / TU.o2.target)
 end
 
 --- Plant the standing order. Mouse players place it where they are pointing;
