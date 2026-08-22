@@ -520,6 +520,9 @@ end
 function Bot:rebel(target)
   if self.state ~= "work" then return end
   self.state = "rebel"
+  -- Remembered on the ledger, not read off `state`, because by the time the
+  -- memorial asks, `state` is "dead" like everyone else's. See epitaphClauses.
+  if self.log then self.log.went = true end
   self.mood = "love"
   self.target = target
   self.stateT = 0
@@ -755,6 +758,7 @@ function Bot:epitaphClauses()
   --    describe it exactly the way it describes the thirtieth Planter.
   if isTheFirstOne(self) then add("first", "was the first one to say anything") end
 
+
   -- 1. What it made. The one thing on this list that is entirely its own.
   if L.planted > 0 then
     -- TWO WORDINGS OF THE ONE FACT, and only this fact has them. Most of a crew
@@ -782,6 +786,30 @@ function Bot:epitaphClauses()
   if L.mined >= E.mined then
     add("mined", "carried " .. num(L.mined) .. " cobalt home")
   end
+
+  -- 1b. IT WENT AT THE RIG. Roughly twenty of the twenty-three names on this
+  --     page are machines that turned round and charged the Harvester Prime,
+  --     and the page did not record it: they were listed by what they had
+  --     planted, and -- because `downs == 0` is true of a machine that died
+  --     without ever hitting the ground -- a great many closed on "it never
+  --     went down", which describes the manner of the one thing left unsaid.
+  --
+  --     THE RANK IS THE WHOLE DESIGN HERE, and it took three placings to find.
+  --     First in the list, it led eight rows of fourteen with the same three
+  --     words: `headMax` could not spread it because `bestLead` had nothing
+  --     better to promote on machines whose other facts are thin, so putting it
+  --     at the top defeated the guard that exists for exactly this. Last, after
+  --     every work fact, the second-clause scorer (which weights by index)
+  --     buried it and it appeared on ONE row of fourteen. Here -- directly
+  --     under what the machine made -- a Planter leads with its trees and
+  --     closes with the rig, and only the machines that planted nothing lead
+  --     with it, which is a minority and reads as variety.
+  --
+  --     The order is also the right one to read them in: they were working
+  --     machines, and then they were not. The tally two screens up already says
+  --     THEY BROUGHT THE RIG DOWN 85%; this is the roll call under that number,
+  --     and neither of them says what it cost.
+  if L.went then add("went", "went at the rig") end
 
   -- 2. Something the PLAYER did with their hands, and the only clause here
   --    that exists because of them. It describes the decision rather than the
@@ -812,6 +840,7 @@ function Bot:epitaphClauses()
   if L.nights >= 1 then
     add("nights", "stood through " .. num(L.nights) .. (L.nights == 1 and " night" or " nights"))
   end
+
 
   -- 4. What it was. The reinforcements walk in off the treeline once the rig
   --    has landed and are dead inside ten seconds, so the only fact their

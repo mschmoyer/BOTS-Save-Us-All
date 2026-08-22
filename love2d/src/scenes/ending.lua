@@ -398,6 +398,11 @@ local SECOND = {         -- clauses that can be a row's second sentence
   planted = true, built = true, lit = true, shots = true, mined = true,
   carried = true, saves = true, never = true, walked = true, nights = true,
   came = true, born = true,
+  -- "went" has to be allowed here or `headMax` would cap it at three rows and
+  -- the other seventeen machines that charged the rig would not carry it at
+  -- all. It is the one fact on this page that most of the dead share and that
+  -- the page had no way to say.
+  went = true,
   -- "first" is a headline and nothing else; "lasted" is what the page says
   -- when there is nothing to say, and it is never worth saying twice.
 }
@@ -544,8 +549,19 @@ local function composeRow(list, used, said, worded, heads, jit, prev, prevHead,
         cand[n] = c
         c._ph, c._vk = phrase(c, worded, jit)
         c._say = sentence(c, c._ph)
-        c._score = i + MEM.spread * min(used[c.key] or 0, MEM.spreadCap)
-                     + MEM.exact * (said[c._ph] or 0)
+        -- `went` pays neither penalty. Both exist to stop a FORM being reused
+        -- -- "planted N trees" over and over is a template, and the page is
+        -- right to ration it. But twenty of these machines charged the rig,
+        -- that is one fact rather than a form, and a memorial is supposed to
+        -- repeat the thing they all did. Rationed like a template it appeared
+        -- on two rows out of fourteen; the other twelve were listed by their
+        -- gardening. This is the line the whole ending is about.
+        local rationed = c.key ~= "went"
+        c._score = i
+        if rationed then
+          c._score = c._score + MEM.spread * min(used[c.key] or 0, MEM.spreadCap)
+                              + MEM.exact * (said[c._ph] or 0)
+        end
         -- A DEMOTED HEADLINE IS MOVED, NOT DROPPED. When the row opens on a
         -- promoted clause, the machine's own ranked fact takes the second
         -- sentence ahead of everything else: the page decided it should not
