@@ -158,8 +158,56 @@ for _, line in ipairs(N.chatter.lastnight or {}) do
   end
 end
 
+-- EVERY BEAT THE DIRECTOR CAN QUEUE MUST HAVE A SCRIPT.
+--
+-- story.lua's fire() does `local beat = Script.beats[entry.def.id]` and then
+-- `if not beat then return true end` -- and true means CONSUMED, so a beat the
+-- registry does not know is queued, waited for, guarded, fired, and thrown away
+-- in silence. No error, no warning, nothing in the trace. `lastNight` shipped
+-- like that: a whole scene, written and wired and never once played, and the
+-- only reason it was caught is that somebody went looking for it by name.
+-- Nothing about it failed loudly, including this file -- which iterates
+-- Script.beats too, so those lines were never checked against the pools either.
+--
+-- Read as TEXT, not required: story.lua pulls in modules that need love, so it
+-- cannot be loaded under bare luajit -- and a check that skips itself is not a
+-- check. Every beat table in that file opens `id = "name"`, so the ids are
+-- greppable, and a false positive here is a beat id written some other way,
+-- which is worth a look anyway.
+local missing = 0
+do
+  local f = io.open("src/game/story.lua", "r")
+  if not f then
+    print("BEATS  src/game/story.lua not found; run this from love2d/")
+    missing = 1
+  else
+    local src = f:read("*a")
+    f:close()
+    -- Only the BEATS table. `id = "..."` also appears in the tutorial table
+    -- below it, and those are hints, not beats -- scanning the whole file
+    -- reported twelve false positives including "shove".
+    local a = src:find("local BEATS", 1, true)
+    local b = src:find("local BEAT_BY_ID", 1, true)
+    src = (a and b) and src:sub(a, b) or src
+    local seen, ids = {}, {}
+    for id in src:gmatch('id%s*=%s*"([%w_]+)"') do
+      if not seen[id] then seen[id] = true ids[#ids + 1] = id end
+    end
+    table.sort(ids)
+    for _, id in ipairs(ids) do
+      if not Script.beats[id] then
+        print(("NO SCRIPT  beat %q is queued by story.lua and is not in "
+               .. "Script.beats -- fire() will discard it in silence"):format(id))
+        missing = missing + 1
+      end
+    end
+    print(("beat ids found in story.lua: %d"):format(#ids))
+  end
+end
+
 print(("checked %d scripted bot lines + %d human lines against %d pools: "
        .. "%d collisions, %d cross-pool duplicates, %d near-misses (advisory), "
        .. "%d/%d cycle-count claim(s) stale")
       :format(#order, #human, #all, fail, dupes, nears, stale, counted))
-os.exit(fail == 0 and dupes == 0 and stale == 0 and 0 or 1)
+print(("%d beat(s) queued with no script"):format(missing))
+os.exit(fail == 0 and dupes == 0 and stale == 0 and missing == 0 and 0 or 1)

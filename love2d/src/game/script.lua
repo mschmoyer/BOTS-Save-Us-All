@@ -203,9 +203,18 @@ S.question = {
 -- the climax. Nothing was written for cycle 7 at all -- the two scheduled beats
 -- stop at 6.
 --
--- Twelve words, and the human does not answer the last one. That is the point
--- of it: he has spent the whole game not being answered, and here he is the one
--- who does not answer. Nothing says so.
+-- Eight words, and the human does not answer. That is the point of it: he has
+-- spent the whole game not being answered, and here he is the one who does not
+-- answer. Nothing says so.
+--
+-- It was twelve, and the machine said "the last one" first. Cut, for the reason
+-- at the top of this file -- no line describes something already on the screen,
+-- and the dial has read THE LAST NIGHT for a minute while the ambient pool says
+-- it three more ways. It was also breaking the silence it was written for: with
+-- it, botA spoke twice and the human was quiet in the MIDDLE, so his quiet at
+-- the end read as the scene running out rather than as a refusal. A statement
+-- left hanging is just an ending; this is now a clean two-hander, and the
+-- silence has one owner.
 --
 -- IT DOES NOT MENTION THE SKY. There is a light up there on this dusk --
 -- world/weather.lua puts one on each of the last two -- and the rule that makes
@@ -221,9 +230,7 @@ S.lastNight = {
     camera({ entity = function(ctx) return ctx.bot end, zoom = 1.8, dur = 0.8 }),
     wait(0.9),
     line("human", "Seventh night.", "flat"),
-    wait(1.2),
-    line("botA", "the last one", "flat"),
-    wait(1.8),
+    wait(1.6),
     line("botA", "i will be here in the morning", "flat"),
     wait(2.6),
     camera({ release = true, dur = 0.5 }),
@@ -626,6 +633,7 @@ S.beats = {
   question     = S.question,
   radio        = S.radio,
   answer       = S.answer,
+  lastNight    = S.lastNight,
   firstBotLost = S.firstBotLost,
   extraction   = S.extraction,
   rebellion    = S.rebellion,
@@ -644,7 +652,7 @@ S.beats = {
 --- must never play after the answer has. story.lua holds it behind
 --- `Story.fired.question` and drops it once `Story.fired.answer` is set.
 S.order = { "prologue", "firstBot", "firstAttack", "firstLoss",
-            "question", "radio", "answer", "firstBotLost",
+            "question", "radio", "answer", "lastNight", "firstBotLost",
             "extraction", "rebellion", "ending" }
 
 S.titles = {
@@ -655,10 +663,11 @@ S.titles = {
   question     = "5  THE QUESTION",
   radio        = "6  THE RADIO",
   answer       = "7  THE ANSWER",
-  firstBotLost = "8  THE FIRST ONE",
-  extraction   = "9  EXTRACTION",
-  rebellion    = "10  THE REBELLION",
-  ending       = "11  ENDING",
+  lastNight    = "8  THE LAST DUSK",
+  firstBotLost = "9  THE FIRST ONE",
+  extraction   = "10  EXTRACTION",
+  rebellion    = "11  THE REBELLION",
+  ending       = "12  ENDING",
 }
 
 return S

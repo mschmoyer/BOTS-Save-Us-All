@@ -74,7 +74,12 @@ N.chatter = {
   night = {
     "lights on", "stay near me", "i hear them", "do not go far",
     "count us when it is light", "they do not like the lamp",
-    "if i stop, keep going", "the little ones are covered",
+    -- "if i stop, keep going" was here. "Go on without me" is the most worn
+    -- line in this genre, and the header above already records a wistful, a
+    -- brave and a funny line being cut -- this was the brave one that got
+    -- through. `hurt` keeps "do not stop for me", which is the same idea about
+    -- the present moment rather than a farewell, and is the better one.
+    "the little ones are covered",
     "it is coming this way", "do not look at it. work.",
     "we lost the far row", "i am still here", "i cannot see you",
     "the lamp is holding", "i cannot see the north row", "one got past me",
@@ -254,7 +259,11 @@ N.traitLines = {
     day = { "this row is mine", "i will finish before dark",
             "i can do the whole slope", "give me the far side",
             "nobody else needs to come out here" },
-    night = { "i will hold this line", "i do not want to stop",
+    -- "i do not want to stop" was here, and it broke this pool's own rule two
+    -- comments up: stubbornness is expressed as LOGISTICS, which is what a
+    -- machine has instead of pride. Its four siblings all obey that. Stating a
+    -- want is the one thing the voice rules say has to come out of behaviour.
+    night = { "i will hold this line", "not yet",
               "i am not going in", "i am the last one out here",
               "somebody has to be on this side" },
   },
