@@ -164,9 +164,13 @@ local TUNE = {
 
   -- ---------------------------------------------------------- sprite atlas
   -- Item F6. OFF by default and it must stay that way until a human has looked
-  -- at the pictures: it trades the vertex-shader sway for a per-sprite
-  -- rotation, and the sway is what the forest is for. The long argument for
-  -- and against lives above `atlasBuild` further down this file.
+  -- at the pictures: it trades the vertex-shader sway for a per-sprite shear,
+  -- and the sway is what the forest is for. The long argument for and against
+  -- lives above `atlasBuild` further down this file.
+  -- Measured on the standard 723-tree night island: draw calls 1263 -> 473,
+  -- tree fill 20.2 -> 44.1 screens a frame, and 5.6% of in-game pixels move by
+  -- more than 10/255 at atlasCell 256 (6.8% at 128). Every other item on the
+  -- performance list moved under 0.05%.
   --   atlas        master switch. BOTS_TREE_ATLAS=0|1 overrides it.
   --   atlasPixels  on-screen tree height AT OR BELOW which a tree is drawn from
   --                the atlas. 1e9 = the whole forest; set it to a few hundred
@@ -180,7 +184,12 @@ local TUNE = {
   --                far out of depth order a batched tree can land, so it trades
   --                draw calls against sorting error.
   --   atlasSwayLag how much of the crown's lagged sway the single per-sprite
-  --                rotation uses. 1 = the crown's sway, 0 = the trunk's.
+  --                transform uses. 1 = the crown's sway, 0 = the trunk's.
+  --   atlasSwayGain scales that. The mesh bends by `sway * h * h` and a sprite
+  --                can only be linear in h, so 1.0 matches the crown's travel
+  --                exactly and over-leans everything below it; 0.75 matches the
+  --                middle of the crown and leaves the trunk stiffer. There is
+  --                no value that is right for both - that IS the trade.
   atlas         = false,
   atlasPixels   = 1e9,
   atlasCell     = 128,
@@ -196,11 +205,18 @@ local TUNE = {
   atlasBands    = 8,
   atlasSwayLag  = 0.75,
   atlasSwayGain = 1.00,
+  -- Sway as a SHEAR about the root rather than a rotation. Both are linear in
+  -- height and neither can be the shader's quadratic, but the shader's bend is
+  -- a pure x displacement - `vp.x += sway * h * h` - and a shear is a pure x
+  -- displacement too, so it is the closer of the two: the crown's blobs stay
+  -- the shape they were baked, and the tree does not get shorter as it leans.
+  -- A rotation tips every leaf with the trunk. Set false to compare.
+  atlasSwayShear = true,
   atlasSunStep  = 0.10,   -- sun/rim movement that forces a re-bake of the page
   atlasShadow   = true,   -- project a baked silhouette for the shadow pass
-  atlasShadowCell = 1.0,  -- shadow page cell, as a fraction of atlasCell. Half
-                          -- costs a quarter of the memory and loses the trunk's
-                          -- shadow, which is a line about one pixel wide there.
+  atlasShadowCell = 0.5,  -- shadow page cell, as a fraction of atlasCell. Half
+                          -- was photographed against full and is the same
+                          -- picture at a quarter of the memory.
 }
 
 ---------------------------------------------------------------- the species
@@ -1367,14 +1383,19 @@ local STUMP_TOP = P.ramp.bark[3]
 --
 -- WHAT IT COSTS, HONESTLY, BECAUSE THIS IS THE PART SOMEBODY HAS TO JUDGE:
 --
---   * Sway stops being a bend and becomes a lean. The mesh shader displaces
---     each vertex by `sway * h * h`: the trunk stays put, the crown swings,
---     and the canopy trails the trunk by `canopyLag` seconds because each
---     vertex mixes two different samples of the wind field. A sprite has one
---     rotation, applied about the base, and a rotation is linear in height -
---     so the whole tree tilts like a mast instead of bending like a tree, and
---     the crown and the trunk are locked to the same phase. `atlasSwayLag`
---     picks which of the two wind samples that single rotation follows.
+--   * Sway stops being a bend and becomes a lean, and THIS IS THE ITEM. The
+--     mesh shader displaces each vertex by `sway * h * h`: the foot of the
+--     trunk does not move at all, the bend accumulates up the tree, and the
+--     canopy trails the trunk by `canopyLag` seconds because each vertex mixes
+--     two different samples of the wind field. A sprite gets ONE transform, and
+--     any transform is linear in height, so the trunk becomes a straight
+--     slanting pole and the crown and the trunk are locked to one phase.
+--     Two things take the edge off it and neither removes it. The transform is
+--     a SHEAR about the root rather than a rotation (`atlasSwayShear`), because
+--     the shader's bend is a pure sideways displacement and so is a shear -
+--     a rotation would additionally tip every leaf and shorten the tree.
+--     And `atlasSwayLag` picks which of the two wind samples the one shear
+--     follows, so the crown can still be the thing that reads as moving.
 --   * Leaf loss goes. A chewed tree folds its foliage along the per-vertex
 --     blob offsets, which a sprite has no way to express, so any tree with
 --     `death` on it is sent back to the mesh path (there are never many).
@@ -1386,9 +1407,18 @@ local STUMP_TOP = P.ramp.bark[3]
 --     cycle is a few hundred re-bakes, each 250 mesh draws in one frame.
 --   * Elders lose their gold rim: it is a per-tree uniform in the mesh path
 --     and there is one page here, baked with the common cool rim.
---   * Resolution. A cell is `atlasCell` pixels; a tree drawn bigger than that
---     is a magnified bitmap. At the game's zoom a grown tree is 250-300 px, so
---     a 128 px page is a 2x blow-up of the canopy detail.
+--   * Resolution, and it is the other half of the bill. A cell is `atlasCell`
+--     pixels and a tree drawn bigger than that is a magnified bitmap. At the
+--     game's zoom a grown tree is 250-300 px, so a 128 px cell is a 2x blow-up
+--     and it reads as blur; 256 is where a near tree stops looking soft. That
+--     costs memory and only memory: one page is `atlasCell * 16` square, and
+--     the browser has to hold it in `rgba16f` at eight bytes a pixel because
+--     love.js has no `rgba8`. 128 -> 42 MB of VRAM, 192 -> 94 MB, 256 -> 168 MB.
+--   * Fill goes UP, which is the one number that moves the wrong way. A mesh
+--     rasterises its own triangles; a sprite rasterises its whole rectangle,
+--     transparent corners included. Measured on the 723-tree night island,
+--     tree fill went 20.2 -> 44.1 screens a frame. Free on a desktop GPU and
+--     first in line on a phone.
 --   * Depth. A batch draws all at once, so a batched tree can sort up to one
 --     band out of order against a mesh tree or a bot in the same band.
 --
@@ -1412,6 +1442,12 @@ Tree.atlas = atlas
 --- it, so an A/B is an environment variable rather than an edit.
 local atlasWant = nil
 local atlasPx, atlasCellPx = nil, nil
+-- The shadow pass gets its own switch. It is the half of the atlas that costs
+-- the most FILL - a shadow silhouette is a sparse shape inside a quad that the
+-- sun's shear then stretches - so canopy-only is a real operating point, not a
+-- debug flag: it keeps 462 of the 798 tree draw calls saved and adds 7.6
+-- screens of overdraw instead of 26.
+local atlasShadowOn = nil
 local function atlasEnabled()
   if atlasWant == nil then
     local v = bakeCfg("BOTS_TREE_ATLAS")
@@ -1422,6 +1458,12 @@ local function atlasEnabled()
     end
     atlasPx = tonumber(bakeCfg("BOTS_TREE_ATLAS_PX") or "") or TUNE.atlasPixels
     atlasCellPx = floor(tonumber(bakeCfg("BOTS_TREE_ATLAS_CELL") or "") or TUNE.atlasCell)
+    local sh = bakeCfg("BOTS_TREE_ATLAS_SHADOW")
+    if sh ~= nil then
+      atlasShadowOn = (sh ~= "0" and sh ~= "false" and sh ~= "off")
+    else
+      atlasShadowOn = TUNE.atlasShadow and true or false
+    end
   end
   return atlasWant and not atlas.failed
 end
@@ -1507,11 +1549,13 @@ local function atlasBuild(sunX, sunY)
     -- ground-contact ellipse the canopy mesh does not have - and reusing the
     -- canopy's alpha for it, which the first version of this did, paints a
     -- hard, opaque, full-detail crown on the ground where a soft blur belongs.
-    -- It was then tried at half resolution, on the theory that a shadow is a
-    -- blur and nothing in it is legible. That is wrong twice over: the trunk's
-    -- shadow is a line one pixel wide at half scale and simply disappears, and
-    -- the branch structure inside the crown shadow is most of what makes a
-    -- forest floor read as a forest floor.
+    -- It sits at half the canopy's cell (`atlasShadowCell`) because a shadow
+    -- is a blur and full resolution was tried against it and photographed no
+    -- differently, at a quarter of the memory. What a batched shadow does lose
+    -- is not resolution: the page pre-composites the shadow mesh's own
+    -- part-transparent blobs, so the places where three of them overlapped and
+    -- went nearly black now cap at one alpha, and the branch structure inside
+    -- the crown shadow goes flat.
     local k = TUNE.atlasShadowCell or 1
     local sw = max(16, floor(cw * k))
     local sh = max(16, floor(ch * k))
@@ -1579,7 +1623,11 @@ local function atlasBuild(sunX, sunY)
           local col, row = i % cols, floor(i / cols)
           local cx = col * cell + cell * 0.5
           local by = row * cellH + pad + ey * s
-          atlas.quad[key]  = lg.newQuad(col * cell, row * cellH, cell, cellH,
+          -- The cell layout never changes once the page exists, so the Quads
+          -- are made once and re-used: a re-bake at dusk must not hand the
+          -- collector five hundred fresh ones.
+          atlas.quad[key]  = atlas.quad[key]
+                          or lg.newQuad(col * cell, row * cellH, cell, cellH,
                                         atlas.page, atlas.pageH)
           atlas.scale[key] = s
           atlas.baseY[key] = by - row * cellH
@@ -1619,7 +1667,8 @@ local function atlasBuild(sunX, sunY)
           -- `extentR` was measured off the canopy mesh, so leave it room
           local sc = min((scell - pad * 2) / (er * 2.30), (scellH - pad * 2) / (ey * 1.15))
           local col, row = i % cols, floor(i / cols)
-          atlas.squad[key]  = lg.newQuad(col * scell, row * scellH, scell, scellH,
+          atlas.squad[key]  = atlas.squad[key]
+                           or lg.newQuad(col * scell, row * scellH, scell, scellH,
                                          atlas.spage, atlas.spageH)
           atlas.sscale[key] = sc
           atlas.sbaseY[key] = pad + ey * sc
@@ -1729,11 +1778,20 @@ local function atlasAdd(tr)
   local s = atlas.scale[tr.key]
   local a = tr.fade * (1 - (tr.xray or 0) * TUNE.xrayAlpha)
   local w = TUNE.atlasSwayLag
-  local rot = tr.drot + (tr.swayNow * (1 - w) + tr.swayLag * w) * TUNE.atlasSwayGain
+  local sway = (tr.swayNow * (1 - w) + tr.swayLag * w) * TUNE.atlasSwayGain
   local b = atlas.batch
   -- premultiplied: the tint and the fade go into the colour together
   b:setColor(tr.tintR * a, tr.tintG * a, tr.tintB * a, a)
-  b:add(q, tr.x, tr.y, rot, tr.dsx / s, tr.dsy / s, atlas.ox, atlas.baseY[tr.key])
+  if TUNE.atlasSwayShear then
+    -- kx shears x by y, and the cell's y runs negative upward from the root, so
+    -- a NEGATIVE kx pushes the crown the way a positive sway does. The mesh is
+    -- normalised to a unit-tall adult, so one unit of sway is one shear unit.
+    b:add(q, tr.x, tr.y, tr.drot, tr.dsx / s, tr.dsy / s,
+          atlas.ox, atlas.baseY[tr.key], -sway, 0)
+  else
+    b:add(q, tr.x, tr.y, tr.drot + sway, tr.dsx / s, tr.dsy / s,
+          atlas.ox, atlas.baseY[tr.key])
+  end
   atlas.n = atlas.n + 1
   return true
 end
@@ -1758,14 +1816,32 @@ local function atlasAddShadow(tr, dirX, dirY, len, fade)
   if band ~= atlas.band then atlasFlush() atlas.band = band end
   local s = atlas.sscale[tr.key]
   local w = TUNE.atlasSwayLag
-  local rot = tr.drot + (tr.swayNow * (1 - w) + tr.swayLag * w) * TUNE.atlasSwayGain
+  local sway = (tr.swayNow * (1 - w) + tr.swayLag * w) * TUNE.atlasSwayGain
   local b = atlas.sbatch
   b:setColor(1, 1, 1, fade)
-  b:add(q, tr.x, tr.y, rot,
-        tr.dsx / s, (tr.dsy / s) * (TUNE.shadowSquash - dirY * len),
-        atlas.sox, atlas.sbaseY[tr.key], -dirX * len, 0)
+  -- The sun's shear and the wind's shear are both shears about the root in the
+  -- same axis, so they simply add.
+  if TUNE.atlasSwayShear then
+    b:add(q, tr.x, tr.y, tr.drot,
+          tr.dsx / s, (tr.dsy / s) * (TUNE.shadowSquash - dirY * len),
+          atlas.sox, atlas.sbaseY[tr.key], -dirX * len - sway, 0)
+  else
+    b:add(q, tr.x, tr.y, tr.drot + sway,
+          tr.dsx / s, (tr.dsy / s) * (TUNE.shadowSquash - dirY * len),
+          atlas.sox, atlas.sbaseY[tr.key], -dirX * len, 0)
+  end
   atlas.sn = atlas.sn + 1
   return true
+end
+
+--- Bytes of GPU memory the two pages hold, which is the cost nobody sees in a
+--- draw-call count. rgba16f is 8 bytes a pixel and it is what the browser has
+--- to use, because love.js has no `rgba8`.
+local function atlasBytes()
+  local per = (atlas.format == "rgba16f" and 8) or 4
+  local a = (atlas.page or 0) * (atlas.pageH or 0)
+  local b = (atlas.spage or 0) * (atlas.spageH or 0)
+  return (a + b) * per
 end
 
 --- Page geometry and the run's re-bake count, for the report.
@@ -1775,6 +1851,7 @@ function Tree.atlasStats()
            spage = atlas.spage, spageH = atlas.spageH, cell = atlas.cell,
            cellH = atlas.cellH,
            cells = CELLS, rebuilds = atlas.rebuilds, buildMs = atlas.buildMs,
+           bytes = atlasBytes(),
            pixels = atlasPx or TUNE.atlasPixels }
 end
 
@@ -2348,7 +2425,7 @@ function Tree:drawShadow(sunAngle, sunLength, ambient)
   end
   -- Sprite-atlas path (item F6, off by default). The shadow silhouette is the
   -- canopy cell projected by a shear and a y-scale; see `atlasAddShadow`.
-  if TUNE.atlasShadow and px <= (atlasPx or TUNE.atlasPixels) and self.alive
+  if atlasShadowOn ~= false and px <= (atlasPx or TUNE.atlasPixels) and self.alive
      and self.death < 0.02 and atlasReadyShadow() then
     if fillOn then
       -- A sprite rasterises its whole cell, transparent corners included, not

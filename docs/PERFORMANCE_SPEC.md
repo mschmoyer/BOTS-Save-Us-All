@@ -484,11 +484,44 @@ deliberately so "no visual change" held for F4.
   `{flicker=...}` tables this item named) and 8 KB in `Text.display`'s cache-key
   concatenation; the bot fixes are the same two lines already applied to the
   cobalt, the player and the rig.
-- **F6. Trees through a sprite atlas.** The only route to 60 fps at 720p, and the
-  one item that changes how the game looks: sway becomes a per-sprite rotation
-  instead of vertex-shader displacement. **Requires a visual sign-off before it
-  ships** — the forest's character is the game's whole power fantasy. If the
-  captures look worse, the correct outcome is to not ship it and say why.
+- **F6. Trees through a sprite atlas.** — **BUILT AND MEASURED, NOT SHIPPED.
+  It is behind `TUNE.atlas` / `BOTS_TREE_ATLAS=1`, default OFF, and the visual
+  sign-off this entry asked for has not happened.** The full write-up is
+  `PERFORMANCE.md` item 8; the short version is three numbers.
+
+  *Draw calls, the prize: **1263 -> 473** natively on the 723-tree night island,
+  **1142 -> 439** in the browser at 720p, with uniform uploads 2,007 -> 457.
+  Tree draw calls specifically go 798 -> 29.*
+
+  *Frame time, the point of the exercise: **it did not move.** Three 240-second
+  Chromium runs taken one at a time on an idle machine — mesh 76.6 ms, atlas
+  80.0 ms, atlas-canopy-only (728 calls) 79.2 ms. Seven hundred fewer draw calls
+  and fifteen hundred fewer uniform uploads bought nothing measurable.*
+
+  *Fill is why, and it is the cost the item never costed: **20.2 -> 46.5 screens
+  a frame**. A mesh rasterises its triangles; a sprite rasterises its rectangle.
+  This machine rasterises through SwiftShader, where fill is the entire budget,
+  so it reads the trade at its worst; on a desktop GPU those 26 screens are
+  noise and the draw calls would be the whole story. **Nobody has run this on a
+  real GPU, and that is the measurement the decision needs.***
+
+  *Picture: **5.6-7.0% of pixels move by more than 10/255** on the deterministic
+  jump A/B, against 0.022-0.045% for F1+F2+F4 together. Sway becomes a shear
+  about the root — chosen over the rotation this entry predicted, because the
+  shader's bend is a pure sideways displacement and so is a shear; the rotation
+  measured 9.5% instead of 6.8%. The other half is resolution: a 128 px cell is
+  a 2x blow-up of a near tree, and the 256 px cell that fixes it costs 168 MB of
+  VRAM instead of 40, because love.js has no `rgba8` and the page must be
+  `rgba16f`.*
+
+  **The hybrid this document and PERFORMANCE.md both proposed does not pay.**
+  Sweeping the screen-pixel threshold: 64 px -> 1259 draw calls, 96 -> 1206,
+  128 -> 1168, 200 -> 852, unbounded -> 473. Same shape as F2's finding — a
+  mature forest has no small trees, and the trees whose sway is most legible are
+  exactly the ones holding the draw calls.
+
+  With the switch off, the game is byte-for-byte the shipped picture within the
+  usual floor (0.010-0.020% over 10/255).
 
 ## Open, and deliberately not closed here
 
@@ -566,3 +599,8 @@ F1 is self-contained in `bot.lua`.
 C3 and F6 are the two that may legitimately end in "we measured it and it is not
 worth it". That is an acceptable outcome for both, provided the negative result
 is written down here.
+
+F6 has now ended in neither: it is built, it works, it is switched off, and the
+number that decides it — the frame cost of 26 extra screens of overdraw on
+hardware that is not a software rasteriser — has not been taken. See the F6
+entry above.

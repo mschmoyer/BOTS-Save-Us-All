@@ -219,20 +219,99 @@ calls and a tree costs two**.
 
 ### The one that actually reaches 60 fps
 
-8. **Trees through a sprite atlas.** Each tree sends its own `uT` uniform, so
-   LÖVE cannot batch the mesh draws: **visible tree count is the draw-call
-   count, twice over.** Rendering the 250 mesh variants to an atlas once and
-   drawing LOD-range trees through a `SpriteBatch` collapses the far forest to
-   one call. *Risk: medium-high — sway becomes a per-sprite rotation rather
-   than a vertex-shader displacement, and that is the forest's whole character.*
+8. ~~**Trees through a sprite atlas.**~~ **BUILT AND MEASURED. NOT SHIPPED —
+   it is behind `TUNE.atlas` (`BOTS_TREE_ATLAS=1`), default OFF, and it needs a
+   human to look at the pictures and at one number the item never costed.**
 
-Items 3-6 take 62 ms to roughly 30 (16 fps -> ~33). Item 8 is the only route to
-60 at 720p: there is no way to draw 400 individually-uniformed meshes a frame
-through emscripten's WebGL inside the budget.
+   The draw-call premise was right and the win is the biggest on this list.
+   *Measured on the standard 723-tree night island at 1600x900: total draw calls
+   **1263 -> 473**. Tree canopy 462.0 -> 22.6, tree shadow 336.5 -> 6.5, and
+   entity draws fall 402.2 -> 379.5 for free, because the tree meshes were
+   flushing the entity batches too.*
+
+   **And the browser frame did not get faster.** Real Chromium, 1280x720,
+   `BOTS_JUMP=night`, 600 trees, 40 bots, three 240-second runs taken strictly
+   one at a time on an otherwise idle machine:
+
+   | | GL draw calls | uniform uploads | rAF callback |
+   | --- | --- | --- | --- |
+   | mesh (shipped) | 1142 | 2007 | **76.6 ms** |
+   | atlas, canopy + shadow | 439 | 457 | **80.0 ms** |
+   | atlas, canopy only | 728 | 1053 | **79.2 ms** |
+
+   **703 fewer draw calls and 1,550 fewer uniform uploads bought nothing.** The
+   reason is a cost this item never named: **a mesh rasterises its own triangles
+   and a sprite rasterises its whole rectangle**, so tree fill goes **20.2 ->
+   46.5 screens a frame** — the shadow silhouette is the worst of it, 7.1 ->
+   25.7, because it is a sparse shape in a quad that the sun's shear then
+   stretches. This machine rasterises through SwiftShader, where fill is the
+   entire budget, so it reads the trade at its worst; on a desktop GPU 26 extra
+   screens at 720p is a fraction of a millisecond and the draw calls would be
+   the whole story. **Nobody has run this on a real GPU. That is the measurement
+   the decision needs, and it is not in this document.**
+
+   It does not pay for itself in Lua either. GPU nulled and JIT off, two
+   interleaved rounds: whole frame 8.932/9.141 (mesh) against 8.707/9.561
+   (atlas) — noise, and lower on each side once. The tree passes themselves move
+   consistently the wrong way: `treeDraw` 0.610/0.584 -> 0.758/0.819 ms and
+   `treeShadow` 0.338/0.348 -> 0.340/0.394, so **about +0.25 ms of interpreted
+   Lua**, and that is with `SpriteBatch:add` nulled out by the profiler, so the
+   true figure is higher.
+
+   Note also what this does to the model at the top of the page. If WebGL
+   submission were really ~16 ms of a 33 ms frame at ~26 us a call, deleting 703
+   calls should have been worth most of a frame. It was worth zero. Either the
+   per-call figure does not hold at this scale or the fill exactly ate it; the
+   fill measurement says the latter, but the two are in tension and somebody
+   should say which on hardware that rasterises.
+
+   The picture changes, and by two orders of magnitude more than anything else
+   here. *Deterministic A/B, seed 12345, `BOTS_JUMP=extraction` and `night`,
+   frames 300/600/900: **5.6-7.0% of pixels move by more than 10/255**, against
+   0.022-0.045% for F1+F2+F4 combined.* Two things cause it and both are in the
+   captures:
+
+   - **Sway stops being a bend.** The shader displaces every vertex by
+     `sway * h * h`, so the foot of the trunk never moves and the crown swings.
+     A sprite gets one linear transform. It is a shear about the root rather
+     than a rotation, which keeps the crown's blobs upright and the tree's
+     height honest, but the trunk still leans as a straight pole. Using a
+     rotation instead measured 9.5% of pixels rather than 6.8%.
+   - **Resolution.** A cell is `atlasCell` px; at the game's zoom a grown tree
+     is 250-300 px, so a 128 px cell is a 2x blow-up and the near forest reads
+     as blurred. 256 fixes it and costs **168 MB of VRAM** against 40 MB — the
+     browser has no `rgba8`, so the page has to be `rgba16f` at 8 bytes a pixel.
+
+   **The hybrid the item suggested cannot pay.** Batching only trees below a
+   screen-pixel threshold, sweeping the threshold on that same scene:
+   64 px -> 1259 draw calls, 96 -> 1206, 128 -> 1168, 200 -> 852, all -> 473.
+   It is the same finding as item 4's: **a mature forest has no small trees**,
+   and the trees the atlas would have to leave alone for sway's sake are exactly
+   the ones that own the draw calls.
+
+   Also carried, all visible in `/tmp/f6_png`: a batched tree can sort one depth
+   band out of order against a bot (a lamp bot goes behind foliage it was in
+   front of); the crown shadow loses its internal structure because the page
+   pre-composites the shadow mesh's translucent blobs instead of stacking them
+   per fragment; elders lose their gold rim; and the page is re-baked when the
+   sun turns (5 times over 244 frames of night, 31 ms each natively).
+
+   With the switch OFF the picture is the shipped one: against the file before
+   this item existed, 0.010-0.020% of in-game pixels differ by more than 10/255,
+   inside the same floor F1/F2/F4 measured.
+
+Items 3-6 take 62 ms to roughly 30 (16 fps -> ~33). Item 8 was the only route to
+60 at 720p on the draw-call side, and it delivers there — but it buys the draw
+calls with fill, and until somebody measures it on a real GPU rather than a
+software rasteriser, "the only route to 60" is a claim the numbers do not yet
+support.
 
 ## Measuring it yourself
 
     tools/perf.sh                                         # draw calls and fill
+    BOTS_TREE_ATLAS=1 tools/perf.sh                       # ...with item 8 on
+    BOTS_TREE_ATLAS_CELL=256 BOTS_TREE_ATLAS_PX=220 ...   # ...its two knobs
+    BOTS_TREE_ATLAS_SHADOW=0 ...                          # ...canopy only
     tools/alloc.sh                                        # KB allocated per pass
     BOTS_ALLOC_T2=1 tools/alloc.sh                        # ...and who it calls
     BOTS_PERF_NULLGPU=1 BOTS_PERF_NOJIT=1 tools/perf.sh   # the Lua half alone

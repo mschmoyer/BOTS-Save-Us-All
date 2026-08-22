@@ -41,10 +41,11 @@ function S:draw()
     local Tree = require("src.entities.tree")
     if Tree.atlasStats then
       local a = Tree.atlasStats()
-      print(string.format("PERFATLAS,%s,on=%s,ready=%s,fmt=%s,page=%dx%d,shadowpage=%dx%d,cell=%dx%d,px=%g,rebuilds=%d,lastbuild_ms=%.1f",
+      print(string.format("PERFATLAS,%s,on=%s,ready=%s,fmt=%s,page=%dx%d,shadowpage=%dx%d,cell=%dx%d,px=%g,vram_mb=%.1f,rebuilds=%d,lastbuild_ms=%.1f",
         self.tag, tostring(a.on), tostring(a.ready), tostring(a.format),
         a.page or 0, a.pageH or 0, a.spage or 0, a.spageH or 0,
-        a.cell or 0, a.cellH or 0, a.pixels or 0, a.rebuilds or 0, a.buildMs or 0))
+        a.cell or 0, a.cellH or 0, a.pixels or 0, (a.bytes or 0) / 1048576,
+        a.rebuilds or 0, a.buildMs or 0))
     end
     Perf.report(self.tag, string.format("trees=%d,bots=%d,blight=%d,parts=%d,phase=%s,cs=%d,ss=%d,batched=%d",
       w.treeCount, #w.bots, #w.enemies,
