@@ -14,6 +14,7 @@
 -- them, never keep a reference expecting it to stay still, and never allocate.
 local U = require("src.core.util")
 local P = require("src.engine.palette")
+local TU = require("src.game.tuning")
 
 -- Resolved lazily: postfx pulls in the palette, and this file is required from
 -- places that have no graphics context yet.
@@ -83,7 +84,14 @@ DN.lightGain       = 0.3              -- how hot light pools read over the scene
 DN.bloom           = 0.6
 DN.starAlpha       = 0
 DN.moonAlpha       = 0
-DN.o2              = 0.18             -- 0..1, drives the "cleaning sky"
+-- 0..1, drives the whole dead-world grade below. The default is a *live*
+-- sky, and it has to be: every scene that draws the world through this grade
+-- without opting in -- the demos, anything new -- gets the restored frame
+-- rather than inheriting whatever reading the last session left behind. Only
+-- the game scene owns this value, and it sets it every frame from the meter.
+-- (It used to default to 0.18, which was harmless while the ramp was a few
+-- percent wide and is a bleached island now.)
+DN.o2              = 1
 
 -- scratch, never reallocated
 local mixA = { 0, 0, 0, 1 }
@@ -137,28 +145,64 @@ local function recompute()
   mixInto(DN.sunColor, DN.ambient, P.ramp.ember[4], low * 0.45 * (1 - night))
   mixInto(DN.sunColor, DN.sunColor, P.ramp.metal[4], night * 0.55)
 
-  -- oxygen: a dead sky is brown, hazy and flat; a healthy one is clean and blue.
-  -- The *floor* of this ramp matters more than the ceiling: cycle 1 is the first
-  -- impression, so a dead sky may only ever be slightly hazier and slightly
-  -- flatter than a live one, never dingy.
+  -- oxygen: the whole campaign, in the grade.
+  --
+  -- This used to be a few percent wide, on the argument that cycle 1 is the
+  -- first impression and a dead sky should never look dingy. It cost the
+  -- premise: the aliens took the atmosphere eleven days ago, the Mechanic's
+  -- first line is "The sky has been that colour for eleven days", and the
+  -- picture behind it was a lush green meadow under blue water. Nothing the
+  -- player did to the oxygen meter changed the world it was measuring.
+  --
+  -- So the ramp is wide now, and the argument the old comment was making is
+  -- answered by *where* it goes rather than by how far. A dead world here is
+  -- bleached, not dirtied: desaturated, warm-neutral, hazy and a stop brighter
+  -- than a live one -- a salt flat at noon, which is a handsome thing to look
+  -- at and still obviously a place you cannot breathe. Every number lives in
+  -- TU.deadAir with the reasoning; at 100% every one of them is inert, so the
+  -- top of the ramp is exactly the frame the game had before.
+  --
+  -- It is a function of the *reading*, not of progress, so it runs backwards
+  -- too: when the extraction rig starts draining the sky the colour drains out
+  -- of the island with it.
   local o2 = DN.o2
-  mixInto(DN.fogColor, DN.fogColor, P.ramp.cobalt[3], 0.18 * o2)
-  DN.fogStrength = DN.fogStrength * lerp(1.06, 0.66, o2)
-  DN.saturation  = DN.saturation * lerp(0.97, 1.08, o2)
-  DN.exposure    = DN.exposure * lerp(1.00, 1.05, o2)
+  local A  = TU.deadAir
+  local r  = o2 ^ A.curve                    -- recovery, front-loaded
+  local dead = 1 - r
+  -- Dust is only visible in light. Scaling the haze by the key light's height
+  -- keeps the dead world's daylight thick and leaves midnight alone -- which is
+  -- what stops this grade from crushing night into a black rectangle.
+  local sun = U.saturate(0.5 + 0.5 * DN.sunHeight)
+  local dustDay = dead * sun
+
+  mixInto(DN.fogColor, DN.fogColor, P.deadHaze, A.hazeTint * dustDay)
+  mixInto(DN.fogColor, DN.fogColor, P.ramp.cobalt[3], 0.18 * r)
+  DN.fogStrength = DN.fogStrength * lerp(A.fogMul, 0.66, r) + A.haze * dustDay
+  DN.saturation  = DN.saturation * lerp(A.saturation, 1.08, r)
+  DN.exposure    = DN.exposure * lerp(A.exposure, 1.05, r)
+  DN.contrast    = DN.contrast * lerp(A.contrast, 1.00, r)
+  DN.bloom       = DN.bloom * lerp(A.bloom, 1.00, r)
 
   -- the grade tint: mostly the atmosphere, pulled toward the ambient so lit
   -- surfaces do not turn to fog.
   mixInto(DN.skyTint, DN.fogColor, DN.ambient, 0.45)
-  mixInto(DN.skyTint, DN.skyTint, P.ramp.cobalt[4], 0.06 * o2)
+  mixInto(DN.skyTint, DN.skyTint, P.ramp.cobalt[4], 0.06 * r)
+  mixInto(DN.skyTint, DN.skyTint, P.deadShade, A.shadeTint * dustDay)
 
   -- shadows take the sky's colour, strongest when the ambient is weakest. This
   -- is the *floor* of the frame: at night it is the difference between a scene
   -- you can read the silhouettes in and a black rectangle with lamps on it.
+  -- ...plus the dust's own floor on a dead day. Desaturation is what makes a
+  -- blight scar dangerous here: its luminance is about 0.05, so pulling the
+  -- chroma out of it leaves a black hole in the middle of a bleached island,
+  -- which reads as a missing tile rather than as poisoned ground. The dust puts
+  -- a warm floor back under it. It is also the honest answer to "crushed
+  -- shadows": a salt flat has no black in it at noon, everything is scattered.
   local liftAmt = 0.50 * U.saturate(1 - DN.ambientStrength) + 0.018
-  DN.lift[1] = DN.skyTint[1] * liftAmt
-  DN.lift[2] = DN.skyTint[2] * liftAmt
-  DN.lift[3] = DN.skyTint[3] * liftAmt
+  local dustLift = A.lift * dustDay
+  DN.lift[1] = DN.skyTint[1] * liftAmt + P.deadHaze[1] * dustLift
+  DN.lift[2] = DN.skyTint[2] * liftAmt + P.deadHaze[2] * dustLift
+  DN.lift[3] = DN.skyTint[3] * liftAmt + P.deadHaze[3] * dustLift
 
   -- sky bodies ---------------------------------------------------------------
   DN.starAlpha = U.saturate((0.70 - DN.ambientStrength) / 0.40) ^ 1.4
@@ -194,10 +238,39 @@ function DN.setClock(c)
   DN.set(best, bestT)
 end
 
---- Oxygen percentage (0..100). As the forest breathes, the sky cleans up: less
---- haze, more saturation, a cooler and bluer atmosphere.
+--- Oxygen **percentage** (0..100, not a 0..1 fraction -- game.lua got that
+--- wrong for the whole life of the feature). As the forest breathes, the world
+--- comes back: the haze burns off, the chroma returns, the sea goes blue again.
+--- See the oxygen block in recompute() for what it actually does.
+---
+--- The game scene calls this every frame, on top of the DN.set() the same
+--- function already does, so the unchanged case skips the second recompute
+--- rather than doing the whole grade twice for the same reading.
+---
+--- `BOTS_O2=14` PINS THE READING for a whole session, and it is a measurement
+--- hook rather than a cheat: the dead-air grade in `recompute` is a pure
+--- function of this one number, so the only honest way to A/B the recovery
+--- curve is the same island photographed at three fixed readings, and a live
+--- run cannot hold a reading still for even one frame. It pins the GRADE only
+--- -- the meter, the win condition and the HUD go on reading the forest -- so a
+--- pinned capture shows a real world under a chosen sky. Unset, it is nil and
+--- nothing below it runs.
+local o2Pin, o2PinRead = nil, false
+
 function DN.o2Influence(pct)
-  DN.o2 = U.saturate((pct or 0) / 100)
+  -- Resolved on the first call rather than at load: this file is required
+  -- before main.lua has published `BOTS_CFG`, which is also where the browser
+  -- build's `?dev=` query string arrives, so `os.getenv` alone would miss it.
+  if not o2PinRead then
+    o2PinRead = true
+    local c = _G.BOTS_CFG
+    local v = c and c("BOTS_O2")
+    o2Pin = v and tonumber(v) or nil
+  end
+  if o2Pin then pct = o2Pin end
+  local o2 = U.saturate((pct or 0) / 100)
+  if o2 == DN.o2 then return o2 end
+  DN.o2 = o2
   recompute()
   return DN.o2
 end

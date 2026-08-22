@@ -1258,19 +1258,27 @@ local focusFresh = false
 --- Point the x-ray at something (normally the player), in world space.
 --- `radius` widens the protected area to cover whatever is standing near it.
 --- Replaces last frame's focus list; `Tree.addFocus` appends to it.
-function Tree.setFocus(x, y, radius)
+function Tree.setFocus(x, y, radius, strength)
   fociN = 0
-  Tree.addFocus(x, y, radius)
+  Tree.addFocus(x, y, radius, strength)
 end
 
 --- Add a secondary focus for this frame. Ignored once the pool is full, so the
 --- caller never has to know how many other things asked first.
-function Tree.addFocus(x, y, radius)
+---
+--- `strength` 0..1 scales how far the canopy over this point gives way, and
+--- defaults to 1 -- the full hole the player and the downed have always had.
+--- A cutscene wants less: a camera parked on a speaking bot under a mature
+--- canopy showed nothing at all, but punching the same hard hole through the
+--- wood for the length of a scene reads as the forest being deleted around the
+--- speaker. A partial focus fades the crowns to something you can see a machine
+--- through and leaves them standing. Overlapping foci take the strongest.
+function Tree.addFocus(x, y, radius, strength)
   if fociN >= FOCI_MAX then return end
   fociN = fociN + 1
   local f = foci[fociN]
   if f == nil then f = {} foci[fociN] = f end
-  f.x, f.y, f.r = x, y, radius or 60
+  f.x, f.y, f.r, f.s = x, y, radius or 60, strength or 1
   focusFresh = true
 end
 
@@ -2304,12 +2312,18 @@ function Tree:updateXray(dt)
   if self.onScreen and self.growth > 0.30 and self.fade > 0 then
     for i = 1, fociN do
       local f = foci[i]
-      if self.y > f.y - 6 then
+      -- `f.s` is this focus's strength, and the loop can only stop early once
+      -- something has asked for the whole hole: a partial cutscene focus must
+      -- not shadow the player's own full one where the two overlap.
+      if f.s > want and self.y > f.y - 6 then
         local rx = self.canopyR * 1.10 + f.r
         local ry = self.height * 0.52 + f.r * 0.75
         local dx = (self.x - f.x) / (rx > 1 and rx or 1)
         local dy = (self.y - self.height * 0.58 - f.y) / (ry > 1 and ry or 1)
-        if dx * dx + dy * dy < 1 then want = 1 break end
+        if dx * dx + dy * dy < 1 then
+          want = f.s
+          if want >= 1 then break end
+        end
       end
     end
   end

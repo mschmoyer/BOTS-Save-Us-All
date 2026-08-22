@@ -20,7 +20,14 @@ local Audio = Opt.require("src.engine.audio")
 local Bot = Class("Bot", Entity)
 
 local serials = {}
-function Bot.resetSerials() serials = {} end
+--- Serials count for the life of the process, not the life of a run. `seed` is
+--- a { [type] = highest serial issued } table, which is what a RESTORE has to
+--- hand back: rebuilding the crew from a save restarts this counter at the
+--- number of bots that came back rather than at the highest number ever issued,
+--- so a newly built machine could take a dead one's name. It has been observed
+--- -- two FRAME-04s, one memorial row -- and a name is the only thing the
+--- memorial has, so two machines must never share one.
+function Bot.resetSerials(seed) serials = seed or {} end
 
 function Bot:init(x, y, botType, world, rng)
   Bot.super.init(self, x, y)
@@ -64,6 +71,29 @@ function Bot:init(x, y, botType, world, rng)
   self.planted     = 0        -- what this one actually did, for its epitaph
   self.built       = 0
 
+  -- THE LEDGER. `planted` and `built` above are the two numbers this game has
+  -- always kept, and world.lua, hud.lua, save.lua and the memorial all read
+  -- them by those names, so they stay -- mirrored out of here rather than
+  -- migrated. Everything else is new, and it exists so that `Bot:epitaph` can
+  -- say something TRUE about this machine and not about its model number.
+  --
+  -- `nights` is the important one. It is the only field that makes a machine
+  -- old, and old is the only thing a player can read off a crowd at a glance.
+  -- world.lua counts it on `phase:dawn`, over everything still standing.
+  self.log = {
+    planted = 0, built = 0,
+    nights  = 0,        -- dawns it has seen
+    downs   = 0,        -- times it hit the ground
+    saves   = 0,        -- ...and times somebody came and got it
+    carried = 0,        -- ...of which, times the PLAYER walked out and got it
+    mined   = 0,        -- cobalt chunks carried home
+    shots   = 0,        -- darts fired, or shockwaves spent
+    lit     = 0,        -- machines brought back at this Beacon
+    walked  = 0,        -- world pixels under its own tracks
+    bornCycle = (world and world.cycle) or 1,
+  }
+  self:refreshWear()
+
   Audio.play("bot_boot", { pitch = 1 + (self.rng:next() - 0.5) * 0.12, x = x, y = y })
   VFX.emit("bot_boot", x, y, { power = 1 })
   Signal.emit("bot:spawned", self)
@@ -89,7 +119,49 @@ function Bot:workRate()
   if self.world and self.world.beaconBoostAt then
     m = m * (1 + self.world:beaconBoostAt(self.x, self.y))
   end
+  -- Somebody it was standing near went down. It is walking to the body instead
+  -- of working, and it is not working as fast while it does.
+  if (self.grief or 0) > 0 then m = m * T.grief.workMul end
   return m
+end
+
+--- Which of the two long chatter pools the world is in.
+---
+--- The same rule as story.lua's `phasePool()`, and it exists because this file
+--- had the bug twice: a Planter said a DAYLIGHT line every sixth tree it
+--- planted, all night long, and a Repulsor said one as it burned out. Dusk
+--- counts as night here for the same reason it does over there -- the light has
+--- gone and "more sun today" has not been true for a while.
+--- And a third time: `extraction` is not night, so it fell through to the
+--- daylight pool and the crew said "the ground is wet here" with the Harvester
+--- Prime standing on the forest. `Bot:update` only redirected machines still in
+--- `work` and still `confused`, which a rebelling one is not.
+function Bot:phasePool()
+  local ph = self.world and self.world.phase
+  if ph == "extraction" then return "boss" end
+  return (ph == "night" or ph == "dusk") and "night" or "day"
+end
+
+--- Recompute the one integer that decides how this machine is drawn.
+---
+--- See `T.bots.wear`: nights survived and the speech trait both feed a single
+--- quantised shade level, because the hulls are baked per (type, shade) and a
+--- continuous value would mean a tessellation per bot. Called at build, at
+--- every dawn, and after a restore -- never per frame.
+local function iround(x)
+  return x >= 0 and math.floor(x + 0.5) or -math.floor(-x + 0.5)
+end
+
+function Bot:refreshWear()
+  local W = T.wear
+  local L = self.log
+  local nights = L and L.nights or 0
+  local patina = iround(U.saturate(nights / W.fullNights) * W.levels)
+  -- names.lua hands every trait a `tint`; a quiet machine is dimmer than a
+  -- watcher. This is the field that has been sitting there unread.
+  local q = iround(((self.trait and self.trait.tint) or 0) * W.tintScale)
+  self.shadeK = U.clamp(W.neutral + patina - q, 0, W.shades - 1)
+  self.ticks  = (nights >= W.tickFrom) and math.min(nights, W.tickMax) or 0
 end
 
 function Bot:say(phase)
@@ -128,9 +200,15 @@ function Bot:update(dt)
     self.spin = self.spin + dt * 0.6
     if not self.carried then
       if self.rng:chance(dt * 3) then VFX.emit("bot_spark", self.x, self.y) end
-      if self.world and self.world.beaconAt and self.world:beaconAt(self.x, self.y) then
+      local lamp = self.world and self.world.beaconAt and self.world:beaconAt(self.x, self.y)
+      if lamp then
         self.reviveT = (self.reviveT or 0) + dt
-        if self.reviveT >= T.beacon.reviveTime then self:revive() end
+        if self.reviveT >= T.beacon.reviveTime then
+          -- credited to the lamp, so a Beacon's epitaph is a number nobody
+          -- else can have rather than "kept a light on" for the fifth time
+          if lamp.log then lamp.log.lit = lamp.log.lit + 1 end
+          self:revive(lamp)
+        end
       else
         self.reviveT = 0
       end
@@ -140,6 +218,19 @@ function Bot:update(dt)
   end
 
   if self.state == "rebel" then self:updateRebel(dt) return end
+
+  -- Somebody it was standing near went down. For about fourteen seconds it
+  -- walks to the body and works at half rate; `workRate` and `pickWander` read
+  -- the timer. The player watches the crew stop and go over, which is the whole
+  -- of a loss told in movement.
+  if (self.grief or 0) > 0 then
+    self.grief = self.grief - dt
+    if self.griefX then
+      self:lookAt(self.griefX, self.griefY)
+      if self.grief <= 0 then self.griefX = nil end
+    end
+  end
+  if (self.loyalT or 0) > 0 then self.loyalT = self.loyalT - dt end
 
   -- chatter, but never over a cutscene or the ending: the human saying "the air
   -- is back" under a bubble reading "this one is crooked" is the exact failure
@@ -151,7 +242,8 @@ function Bot:update(dt)
   self.chatterT = self.chatterT - dt
   if self.chatterT <= 0 then
     self.chatterT = self.rng:range(T.chatterEvery[1], T.chatterEvery[2])
-    local phase = (self.world and self.world.phase == "night") and "night" or "day"
+    local phase = self:phasePool()
+    if (self.grief or 0) > 0 and self.rng:chance(T.grief.chatter) then phase = "loss" end
     if self.mood == "confused" then phase = "boss" end
     self:say(phase)
   end
@@ -177,8 +269,12 @@ function Bot:moveToward(tx, ty, dt, mul)
   if d < 6 then return true end
   self.vx = U.damp(self.vx, dx * sp, 8, dt)
   self.vy = U.damp(self.vy, dy * sp, 8, dt)
+  local px, py = self.x, self.y
   self:integrate(dt, 0)
   self:constrain(self.world and self.world.terrain, 0)
+  -- the odometer. Every step this machine ever took, for the one epitaph that
+  -- belongs to a machine that did nothing but walk.
+  self.log.walked = self.log.walked + U.dist(px, py, self.x, self.y)
   self:setFacing(dx, dy)
   self:lookAt(tx, ty)
   return false
@@ -186,6 +282,25 @@ end
 
 function Bot:pickWander(minSoil)
   local w = self.world
+  -- It grieves before it works. Whatever it was doing, the next place it wants
+  -- to be is where the body is.
+  if (self.grief or 0) > 0 and self.griefX then
+    local a, d = self.rng:angle(), self.rng:range(T.grief.standOff, T.grief.arrive)
+    self.wx, self.wy = self.griefX + math.cos(a) * d, self.griefY + math.sin(a) * d
+    return
+  end
+  -- You walked out into the dark and carried this one home. For about a cycle
+  -- it works where it can see you, and not where the flag is.
+  if (self.loyalT or 0) > 0 and w and w.player and self.rng:chance(T.loyal.pull) then
+    local a, d = self.rng:angle(), self.rng:range(0, T.loyal.radius)
+    local rx, ry = w.player.x + math.cos(a) * d, w.player.y + math.sin(a) * d
+    if w.terrain and w.terrain.nearestLand then
+      local lx, ly = w.terrain:nearestLand(rx, ry)
+      if lx then rx, ry = lx, ly end
+    end
+    self.wx, self.wy = rx, ry
+    return
+  end
   -- The standing order: when the player has planted a flag, look for ground
   -- near it instead of near yourself. This is how the wood gets a direction.
   if w and w.rallyX then
@@ -222,12 +337,13 @@ function Bot:update_planter(dt)
            self.x + self.rng:range(-14, 14), self.y + self.rng:range(6, 22), self) then
         planted = planted + 1
         self.planted = self.planted + 1
+        self.log.planted = self.log.planted + 1
       end
     end
     self.actionT = self.def.plantEvery * (planted > 0 and 1 or 0.35)
     if planted > 0 then
       self.squashT = 0.3
-      if self.rng:chance(0.16) then self:say("day") end
+      if self.rng:chance(0.16) then self:say(self:phasePool()) end
     end
   end
 end
@@ -250,7 +366,21 @@ function Bot:update_builder(dt)
   -- player's own escalating price never touched it -- which made it the way
   -- around the only brake on the size of the workforce. It walks the same
   -- curve now, in carry rather than cobalt.
-  local crew = (self.world and self.world.countBots and self.world:countBots(want)) or 0
+  --
+  -- ...off the PEAK crew of that type, for the same reason `World:botCost`
+  -- does: read off the standing crew, a death made the next machine of that
+  -- type CHEAPER, and the one brake on the size of the workforce loosened
+  -- exactly when the workforce was being wiped out. `world.peakBots` is the
+  -- remembered crew and it fades back toward the standing one on its own
+  -- (World:updatePeakBots), so this forgets a bad night on the same clock the
+  -- player's own prices do. It does not apply `costForgiveness`: this is an
+  -- integer step at 24 and again at 48 against a cap of 48, so it is two
+  -- values, and blending a fraction into it would buy nothing but a second
+  -- copy of a rule that lives in world.lua.
+  local w = self.world
+  local crew = (w and w.countBots and w:countBots(want)) or 0
+  local peak = w and w.peakBots and w.peakBots[want]
+  if peak and peak > crew then crew = peak end
   local buildCost = (self.def.buildCost or 2)
                     * math.max(1, math.ceil(wantDef.cost / T.planter.cost))
                     * (1 + math.floor(crew / 24))
@@ -261,6 +391,7 @@ function Bot:update_builder(dt)
                                           self.y + self.rng:range(10, 26), want, true) then
       self.carry = self.carry - buildCost
       self.built = self.built + 1
+      self.log.built = self.log.built + 1
       self.actionT = self.def.buildEvery / (self.world.chips and self.world.chips:get("buildRate", 1) or 1)
       self.squashT = 0.4
       Audio.play("build_done", { x = self.x, y = self.y })
@@ -303,6 +434,7 @@ function Bot:update_repulsor(dt)
   if self.pulseT <= 0 then
     self.pulseT = self.def.pulseEvery
     self.charges = self.charges - 1
+    self.log.shots = self.log.shots + 1
     self.pulseAnim = 1
     if self.world then
       self.world:areaShove(self.x, self.y, self.def.radius_pulse, self.def.force,
@@ -312,7 +444,7 @@ function Bot:update_repulsor(dt)
     Audio.play("pulse_release", { pitch = 1.25, volume = 0.6, x = self.x, y = self.y })
     J.shake(0.08)
     if self.charges <= 0 then
-      self:say("day")
+      self:say(self:phasePool())
       self:expire(true)
     end
   end
@@ -335,6 +467,7 @@ function Bot:update_sentry(dt)
       local ax = math.atan2(target.y + target.vy * tt - self.y, target.x + target.vx * tt - self.x)
       ax = ax + self.rng:range(-self.def.spread, self.def.spread)
       self.world:spawnDart(self.x, self.y - 10, ax, self.def.dartSpeed, self.def.damage, self)
+      self.log.shots = self.log.shots + 1
       self.recoil = 1
       Audio.play("spit", { pitch = 1.5, volume = 0.5, x = self.x, y = self.y })
     end
@@ -355,6 +488,7 @@ function Bot:update_harvester(dt)
     end
     if U.dist(self.x, self.y, tx, ty) < self.def.depositRange then
       self.world:addCobalt(self.cargo * TU.cobalt.chunkValue, self.x, self.y)
+      self.log.mined = self.log.mined + self.cargo
       self.cargo = 0
       Audio.play("deposit_pop", { x = self.x, y = self.y })
       VFX.emit("deposit_pop", self.x, self.y)
@@ -386,6 +520,9 @@ end
 function Bot:rebel(target)
   if self.state ~= "work" then return end
   self.state = "rebel"
+  -- Remembered on the ledger, not read off `state`, because by the time the
+  -- memorial asks, `state` is "dead" like everyone else's. See epitaphClauses.
+  if self.log then self.log.went = true end
   self.mood = "love"
   self.target = target
   self.stateT = 0
@@ -443,6 +580,10 @@ function Bot:onDeath()
     return
   end
   self.state = "down"
+  -- It is on the ground, and it will wear that. See `Bot:drawWear`: one cut
+  -- across the plating per time it went down, from a small baked library so
+  -- two machines with the same count still do not match.
+  self.log.downs = self.log.downs + 1
   self.downT = T.downedTime * (self.world and self.world.chips and self.world.chips:get("downedTime", 1) or 1)
   -- what the window started at, so the HUD's rescue ring can read as a fraction
   -- rather than pretending every bot has the same twenty seconds a chip may
@@ -459,15 +600,35 @@ function Bot:onDeath()
   Signal.emit("bot:downed", self)
 end
 
-function Bot:revive()
+--- Somebody came and got it. `by` is "player" when it was carried home in the
+--- player's own hands, "rig" when the extraction simply stands the whole crew
+--- up (which nobody did for it, so it is not a rescue), the Beacon instance
+--- when a lamp did it, and nil for a chip that dragged it to a light.
+function Bot:revive(by)
   self.state = "work"
   self.hp = math.max(1, math.floor(self.maxHp * 0.6))
   self.stateT = 0
   self.carried = false
   self.reviveT = 0
+  -- Being saved used to be a puff, a chime and a toast, after which the machine
+  -- behaved identically forever. It is an event in its life now: it is on the
+  -- ledger, it is the rarest epitaph in the game, and for about a cycle the bot
+  -- works where it can see whoever fetched it.
+  if by ~= "rig" then self.log.saves = self.log.saves + 1 end
+  self.savedBy = by
+  if by == "player" then
+    self.log.carried = (self.log.carried or 0) + 1
+    self.loyalT = T.loyal.time
+    self.wx, self.wy = self.x, self.y
+  end
+  self.grief, self.griefX = 0, nil
   VFX.emit("bot_boot", self.x, self.y, { power = 1.2 })
   VFX.emit("love_heart", self.x, self.y - 14, { power = 0.5 })
   Audio.play("bot_revive", { x = self.x, y = self.y })
+  -- names.lua has a `saved` pool for exactly this: said by the one that stood
+  -- back up, not by a bystander. Not during the finale, where forty machines
+  -- get up at once and the cutscene owns the room.
+  if by ~= "rig" then self:say("saved") end
   Signal.emit("bot:revived", self)
 end
 
@@ -486,23 +647,283 @@ function Bot:expire(peaceful)
   Signal.emit("bot:lost", self, peaceful)
 end
 
---- One line about what this bot actually did, for its death toast and for the
---- memorial. A number the player watched happen carries more than any chatter.
+--- THE MEMORIAL'S ONE NUMBER RULE: words under twenty, digits at twenty and up.
+---
+--- What was here before was a rule nobody could see. Small counts were spelled,
+--- but counts that were "the POINT of the line" -- trees, darts, cobalt -- were
+--- left in digits, so one screen of the memorial read `built 1 planter` /
+--- `fired one dart` / `fired 34 darts` / `stood through seven nights` and what
+--- a reader perceived was not a convention, it was a game that could not decide.
+--- One threshold, every branch, no exceptions: `built one planter` is the row
+--- this fixes, and `carried 350 cobalt home` is why the threshold is low.
+local ONES = { "one", "two", "three", "four", "five", "six", "seven", "eight",
+               "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+               "fifteen", "sixteen", "seventeen", "eighteen", "nineteen" }
+local function num(n)
+  n = math.floor(n)
+  if n <= 0 then return "no" end
+  if n < 20 then return ONES[n] end
+  return tostring(n)
+end
+
+--- ...and the same rule, for anything outside this file that prints a count
+--- into the same page. scenes/ending.lua needs it for the rows it has to
+--- rebuild from a save, where the machine and its ledger are both gone.
+Bot.count = num
+
+local function times(n)
+  if n == 1 then return "once" end
+  if n == 2 then return "twice" end
+  return num(n) .. " times"
+end
+
+-- Cycles are days, and the run is seven of them.
+local ORD = { "first", "second", "third", "fourth", "fifth", "sixth", "seventh",
+              "eighth", "ninth", "tenth" }
+
+--- The one machine the player has a relationship with: the one they heard boot
+--- and speak, which the director keeps a reference to. Read out of the loaded
+--- module rather than required, so a bot does not take a dependency on the
+--- director for the sake of one line -- and so a demo scene with no director
+--- simply gets `false`. `self.isFirstBot` wins if anything ever sets it.
+local function isTheFirstOne(self)
+  if self.isFirstBot then return true end
+  local Story = package.loaded["src.game.story"]
+  return (Story ~= nil and Story.theFirstOne == self) or false
+end
+
+--- EVERY TRUE THING THIS MACHINE'S LEDGER CAN SAY, RANKED.
+---
+--- `Bot:epitaph` used to be a ladder of `return`s: the first true fact won and
+--- the rest of the ledger was thrown away. That is why the memorial read as a
+--- table -- forty-two machines, six or seven surviving sentences, and the
+--- commonest of them on more than half the page. The ladder is now a LIST. The
+--- head of it is still the one fact this machine is described by, and
+--- `Bot:epitaph` still returns exactly that; what is new is that the rest of
+--- the list survives the call, so scenes/ending.lua can give a row a second
+--- clause and can choose that clause against the whole page instead of against
+--- this one machine. See `S:composeMemorial`.
+---
+--- Each entry is `{ key, text, subject }`:
+---   `text`    the clause, no full stop, lowercase, third person unless it says
+---             otherwise. It is printed bare as the head of a row.
+---   `subject` the clause supplies its own subject ("you went out and got it").
+---             Without it the clause is a bare predicate and takes "it" when it
+---             is used as a row's second sentence.
+---   `key`     what KIND of fact it is. Two rows carrying the same key read as
+---             the same sentence however different their numbers are, which is
+---             the thing the page composer is counting.
+---
+--- The order is the ranking, and it is: what it made, then what it cost you,
+--- then what it endured, then what it was. Three notes on it.
+---
+--- THE WORK LEADS. It led before and it still does; a work count is a large
+--- varying integer and is nearly always unique on the page, where age is only
+--- distinguishing for a machine that did nothing else.
+---
+--- `saves` IS DEMOTED BELOW THE WORK. Beacon revives are free, constant and
+--- automatic, so `saves` inflates to six and eight on anything that lived a
+--- while, and while it outranked the work a Planter that put thirty trees in
+--- the ground was described by how often the lamp restarted it. It is a
+--- hit-points readout in the shape of a rescue. It is worth saying; it is not
+--- worth saying first, and it is no longer said with the number as its subject.
+---
+--- "never went down" IS ABOUT `downs`, NOT `saves`, AND IT IS NOT FREE.
+--- `onDeath` counts the fall that killed it, so `downs == 0` can only be true
+--- of a machine that died without ever hitting the ground -- in practice one
+--- that walked into the rig during the rebellion. Gated on nights as well,
+--- because a machine built ninety seconds before the end also never went down
+--- and there is nothing in that worth printing.
+function Bot:epitaphClauses()
+  local L = self.log
+  local out = {}
+  local function add(key, text, subject, alt)
+    out[#out + 1] = { key = key, text = text, subject = subject or nil, alt = alt or nil }
+  end
+  if not L then
+    -- a bot from before the ledger, or a stub in a demo scene
+    local n = self.planted or 0
+    if n > 0 then add("planted", "planted " .. num(n) .. (n == 1 and " tree" or " trees")) end
+    if #out == 0 then
+      local s = math.max(1, math.floor(self.age or 0))
+      add("lasted", "lasted " .. num(s) .. (s == 1 and " second" or " seconds"))
+    end
+    return out
+  end
+  local E = T.epitaph
+  local cycle = (self.world and self.world.cycle) or 1
+
+  -- 0. The only individual in the game. It has its own cutscene when it is
+  --    built and its own cutscene when it goes, and the memorial used to
+  --    describe it exactly the way it describes the thirtieth Planter.
+  if isTheFirstOne(self) then add("first", "was the first one to say anything") end
+
+
+  -- 1. What it made. The one thing on this list that is entirely its own.
+  if L.planted > 0 then
+    -- TWO WORDINGS OF THE ONE FACT, and only this fact has them. Most of a crew
+    -- are Planters and most of a memorial is therefore Planters: on a traced
+    -- run thirty-four of fifty-two rows opened with the same word, and a column
+    -- of "planted" down the middle of the page is the last thing left of the
+    -- mail merge even when no two rows say the same thing. The page alternates
+    -- between these by whichever it has printed less (see `phrase`). It is not
+    -- padding -- both are the same count of the same trees, said the way the
+    -- crew would say it -- and it is the difference between a list and a page.
+    local n = num(L.planted)
+    add("planted", "planted " .. n .. (L.planted == 1 and " tree" or " trees"),
+        nil, "put " .. n .. (L.planted == 1 and " tree" or " trees") .. " in the ground")
+  end
+  if L.built > 0 then
+    add("built", "built " .. num(L.built) .. (L.built == 1 and " planter" or " planters"))
+  end
+  if (L.lit or 0) > 0 then
+    add("lit", "brought " .. num(L.lit) .. " of them back")
+  end
+  if L.shots > 0 then
+    if self.type == "repulsor" then add("shots", "held the line " .. times(L.shots))
+    else add("shots", "fired " .. num(L.shots) .. (L.shots == 1 and " dart" or " darts")) end
+  end
+  if L.mined >= E.mined then
+    add("mined", "carried " .. num(L.mined) .. " cobalt home")
+  end
+
+  -- 1b. IT WENT AT THE RIG. Roughly twenty of the twenty-three names on this
+  --     page are machines that turned round and charged the Harvester Prime,
+  --     and the page did not record it: they were listed by what they had
+  --     planted, and -- because `downs == 0` is true of a machine that died
+  --     without ever hitting the ground -- a great many closed on "it never
+  --     went down", which describes the manner of the one thing left unsaid.
+  --
+  --     THE RANK IS THE WHOLE DESIGN HERE, and it took three placings to find.
+  --     First in the list, it led eight rows of fourteen with the same three
+  --     words: `headMax` could not spread it because `bestLead` had nothing
+  --     better to promote on machines whose other facts are thin, so putting it
+  --     at the top defeated the guard that exists for exactly this. Last, after
+  --     every work fact, the second-clause scorer (which weights by index)
+  --     buried it and it appeared on ONE row of fourteen. Here -- directly
+  --     under what the machine made -- a Planter leads with its trees and
+  --     closes with the rig, and only the machines that planted nothing lead
+  --     with it, which is a minority and reads as variety.
+  --
+  --     The order is also the right one to read them in: they were working
+  --     machines, and then they were not. The tally two screens up already says
+  --     THEY BROUGHT THE RIG DOWN 85%; this is the roll call under that number,
+  --     and neither of them says what it cost.
+  if L.went then add("went", "went at the rig") end
+
+  -- 2. Something the PLAYER did with their hands, and the only clause here
+  --    that exists because of them. It describes the decision rather than the
+  --    freight -- four rows of "you carried it home once" were four printings
+  --    of one string, and the count was never the interesting half anyway.
+  if (L.carried or 0) == 1 then
+    add("carried", "you went out and got it", true)
+  elseif (L.carried or 0) > 1 then
+    add("carried", "you went out for it " .. times(L.carried), true)
+  end
+
+  -- 3. What it took, and kept going. Counted NET OF THE PLAYER'S OWN RESCUES,
+  --    because reviving it by hand increments both counters and the clause
+  --    above has already said so: "you went out and got it. it went down once
+  --    and got back up." is one event printed twice. What is left is what the
+  --    crew did for it while you were somewhere else, which is a different
+  --    fact and worth its own sentence.
+  local others = L.saves - (L.carried or 0)
+  if others >= 4 then
+    add("saves", "we kept picking it up", true)
+  elseif others >= 2 then
+    add("saves", "got up " .. times(others))
+  elseif others == 1 then
+    add("saves", "went down once and got back up")
+  end
+  -- ...AND NOT IF IT WENT AT THE RIG. `downs == 0` is true of a machine that
+  -- died without ever hitting the ground, and the commonest way to do that is
+  -- to walk into the Harvester Prime -- so "never went down" was the page's way
+  -- of describing the manner of the charge while never mentioning the charge.
+  -- Adding the `went` clause did not fix that, it only gave it a rival:
+  -- whenever `went` lost the placement contest the false sentence printed
+  -- anyway, and one row managed both at once --
+  -- `LAMP-01  went at the rig. it never went down.` -- which contradicts itself
+  -- in eleven words. Captured on seed 99; two to four rows a page on every seed
+  -- tested. Removing it costs nothing measurable: contradictions went 2/3/3 to
+  -- 0/0/0 across seeds 4242/99/777 and the number of rows carrying "went at the
+  -- rig" did not change, because the machines simply close on the next true
+  -- thing instead.
+  if (L.downs or 0) == 0 and L.nights >= 2 and not L.went then
+    add("never", "never went down")
+  end
+  if L.walked >= E.walked then add("walked", "walked the whole island") end
+  if L.nights >= 1 then
+    add("nights", "stood through " .. num(L.nights) .. (L.nights == 1 and " night" or " nights"))
+  end
+
+
+  -- 4. What it was. The reinforcements walk in off the treeline once the rig
+  --    has landed and are dead inside ten seconds, so the only fact their
+  --    ledger holds is their age -- and that is the more interesting one
+  --    anyway, and one the player may not know.
+  if self.offRoster then add("came", "came in off the treeline") end
+  -- WHICH NIGHT'S CREW THIS WAS. Every machine has one and no other clause
+  -- carries it, which is what the bottom of a long page needs: by the time the
+  -- rebellion's twenty are being listed, most of them have the same three true
+  -- things and this is the one that still has a number in it. The first day
+  -- gets its own wording because being there at the start is not the same fact
+  -- as being built on a Tuesday.
+  local born = L.bornCycle or 1
+  if born == 1 then
+    if cycle > 1 then add("born", "was here on the first day") end
+  else
+    -- "came online" and not "was built": the row above it is quite often
+    -- `built one planter`, and `built one planter. it was built on the third
+    -- day.` is one word doing two jobs in eleven. ONLINE is the interface's own
+    -- word for this exact event -- it is what the feed says when a machine is
+    -- finished -- so the memorial is not inventing vocabulary to dodge a clash.
+    add("born", "came online on the " .. (ORD[born] or tostring(born)) .. " day")
+  end
+
+  -- 5. It did nothing, because it did not get the time. Say how much it had.
+  --    Never a second clause: it is what the page says when there is nothing
+  --    else, and it takes no position.
+  if #out == 0 then
+    local age = self.age or 0
+    if age >= 100 then
+      local m = math.floor(age / 60 + 0.5)
+      add("lasted", "lasted " .. num(m) .. (m == 1 and " minute" or " minutes"))
+    else
+      local s = math.max(1, math.floor(age))
+      add("lasted", "lasted " .. num(s) .. (s == 1 and " second" or " seconds"))
+    end
+  end
+  return out
+end
+
+--- ONE LINE ABOUT WHAT THIS MACHINE ACTUALLY DID.
+---
+--- The head of `epitaphClauses`, and the last thing the game ever says about
+--- this machine anywhere except the memorial: it is what the loss feed prints
+--- under its name the moment it happens, and what the bot standing over it says
+--- out loud in the first-loss beat. One clause, no full stop -- both of those
+--- readings want a fragment, and the memorial adds its own punctuation.
+---
+--- The voice: terse, literal, third person, lowercase. It is what the bot
+--- standing next to it would say. Nothing wry, nothing that reaches for pathos,
+--- nothing that tells the player how to feel.
+---
+--- THE REST OF THE LIST IS LEFT ON THE WORLD, keyed by name, because the
+--- memorial cannot rebuild it. Half of the names on that page died in the
+--- rebellion, which does not go through `bot:lost` at all, so the only record
+--- of their ledger anybody keeps is the string this function returned -- and a
+--- page that could give a second clause to the machines that died in the field
+--- and not to the ones that charged the rig would break in half down the
+--- middle. This is called on every one of them, from `bot:lost` and from
+--- `bot:sacrificed`, at the one moment the ledger is complete.
 function Bot:epitaph()
-  if (self.planted or 0) > 0 then
-    return self.planted == 1 and "planted one tree" or ("planted " .. self.planted .. " trees")
+  local list = self:epitaphClauses()
+  local w = self.world
+  if w and self.name then
+    w.memorial = w.memorial or {}
+    w.memorial[self.name] = list
   end
-  if (self.built or 0) > 0 then
-    return "built " .. self.built .. (self.built == 1 and " planter" or " planters")
-  end
-  if self.type == "repulsor" then
-    local used = self.def.charges - (self.charges or 0)
-    return used > 0 and ("held the line " .. used .. " times") or "never got to fire"
-  end
-  if self.type == "beacon" then return "kept a light on" end
-  if self.type == "sentry" then return "stood watch" end
-  if self.type == "harvester" then return "carried what it found" end
-  return "was here"
+  return (list[1] and list[1].text) or "was here"
 end
 
 ------------------------------------------------------------------------- render
@@ -521,17 +942,55 @@ local metalRamp = P.ramp.metal
 -- ramp position, so memoise on it -- the same shape player.lua's suit()/bare()
 -- already use. Calls that pass an alpha still allocate; they are the rare ones
 -- and the alpha genuinely varies.
+--
+-- NEW: the memo is two-deep now, because a machine's metal is no longer a
+-- constant of its type. `wearK` is the shade level of whatever is currently
+-- being drawn or baked (see `T.bots.wear` and `Bot:refreshWear`): a machine
+-- that has been out several nights is baked darker and cooler, and so is a
+-- quiet one, because both feed the same integer. Six levels, six types, so the
+-- whole crew still shares at most thirty tessellated hulls.
+local WEAR = T.wear
+local wearK = WEAR.neutral
 local METAL_C = {}
+local function metalRow()
+  local row = METAL_C[wearK]
+  if not row then row = {} METAL_C[wearK] = row end
+  return row
+end
+--- Where on the metal ramp this shade level sits. Dropping the ramp position
+--- darkens AND cools in one number, because `P.ramp.metal` runs from a cold
+--- near-black to a near-white: an old machine gets duller without anybody
+--- having to pick a second colour for it.
+local function wornStop(t)
+  return t - (wearK - WEAR.neutral) * WEAR.dropPerLevel
+end
 local function metal(t, a)
-  if a then return P.shade(metalRamp, t, a) end
-  local c = METAL_C[t]
-  if not c then c = P.shade(metalRamp, t); METAL_C[t] = c end
+  if a then return P.shade(metalRamp, wornStop(t), a) end
+  local row = metalRow()
+  local c = row[t]
+  if not c then c = P.shade(metalRamp, wornStop(t)); row[t] = c end
   return c
 end
 -- The lit edge. `metal`'s own top stop, so the crew's rim is cool white and the
 -- player's is `accentCool` blue: at a glance, across a busy frame, that one
 -- difference is how you find yourself among your own machines.
-local RIM = metalRamp[4]
+--
+-- It carries the other half of the patina: the hull goes duller and the edges
+-- go BRIGHTER, because an edge that has been rubbed for four nights is the one
+-- part of a machine that gets shinier. The gain rides in the colour's own alpha
+-- -- every call site multiplies it by a literal no higher than 0.55, so a gain
+-- of 1.9 still lands inside 1.0 and nothing clips.
+local RIMS = {}
+local function rim()
+  local c = RIMS[wearK]
+  if not c then
+    local base = metalRamp[4]
+    c = { base[1], base[2], base[3],
+          1 + math.max(0, wearK - WEAR.neutral) * WEAR.rimGain }
+    RIMS[wearK] = c
+  end
+  return c
+end
 
 ------------------------------------------------------------------ baked hulls
 -- WHY A CHASSIS IS TESSELLATED ONCE.
@@ -567,12 +1026,18 @@ local RIM = metalRamp[4]
 -- ones (the Beacon's lamp inside its housing, the Harvester's spokes over its
 -- hubs) the type gets a second layer and draws the live part in between, so
 -- what lands on top of what is exactly what it was.
+--
+-- The cache is keyed by (type, shade) now rather than by type alone -- see
+-- `wearK` above. Two nested lookups and no string concatenation: this runs per
+-- layer per bot per frame and this file already owes the frame budget 33 KB.
 local HULL  = {}   -- type -> { layer(r), ..., plate = layer(r) }
-local baked = {}   -- type -> { slot -> baked shape or false }, on first draw
+local baked = {}   -- type -> shade -> { slot -> baked shape or false }
 
 local function bakeSlots(self)
-  local b = baked[self.type]
-  if not b then b = {} baked[self.type] = b end
+  local byType = baked[self.type]
+  if not byType then byType = {} baked[self.type] = byType end
+  local b = byType[wearK]
+  if not b then b = {} byType[wearK] = b end
   return b
 end
 
@@ -609,6 +1074,134 @@ function Bot:pips(r, row, n)
   end
 end
 
+------------------------------------------------------------------- the wear
+-- WHAT A MACHINE LOOKS LIKE AFTER A WEEK OF THIS.
+--
+-- Per TYPE this game has six good silhouettes. Per INSTANCE it had a boot
+-- unfold that tips left or right on serial % 2, a bob phase, and a chatter
+-- pitch: two Planters were byte-identical geometry replayed from one baked
+-- hull, and forty-eight of them at night read as forty-eight grey lumps. The
+-- only way to tell two apart was to read the plate.
+--
+-- Three overlays fix it, and between them they are the difference between
+-- "a planter" and "THAT planter":
+--
+--   PATINA is not here -- it is upstream, in `metal()` and `rim()`, because
+--   baking it costs nothing and drawing it would cost a second pass over the
+--   whole hull. It is the value shift you read across a crowd before you can
+--   resolve any detail.
+--   TICKS are the countable one: one short bright mark per night survived, from
+--   the second night, capped at five. This is what lets a player pick the
+--   veteran out of a crowd without reading anything.
+--   SCARS are the specific one: one cut across the plating per time it hit the
+--   ground, from a library of eight so that two machines with the same count
+--   still do not match.
+--
+-- Both are baked. A tick row bakes exactly like a load row and draws as one
+-- contiguous range of it; the scar library bakes as eight two-primitive cuts
+-- and a machine replays the `downs` it owns. Nothing here allocates and nothing
+-- here runs a cos or a sin per frame.
+
+--- Where each of the six wears it: the flank the ticks run along (x0,y0 -> x1,
+--- y1) and the box the cuts cross (cx, cy, half-width, half-height). All in
+--- radii, all read off the chassis geometry in the HULL tables below, because a
+--- mark floating beside the machine is worse than no mark.
+local WEARFIT = {
+  planter   = { tick = {  0.55,  0.18, -0.55,  0.18 }, box = {  0, -0.20, 0.62, 0.42 } },
+  builder   = { tick = {  0.58,  0.14, -0.58,  0.14 }, box = {  0, -0.30, 0.66, 0.48 } },
+  repulsor  = { tick = {  0.32, -0.26, -0.32, -0.26 }, box = {  0, -0.14, 0.42, 0.32 } },
+  sentry    = { tick = {  0.30, -0.18, -0.30, -0.18 }, box = {  0, -0.56, 0.38, 0.44 } },
+  -- clear of the cargo row `drawLoad` puts at 0.12, or a full Harvester wears
+  -- five cobalt pips and five service marks on the same band
+  harvester = { tick = {  0.80,  0.26, -0.80,  0.26 }, box = {  0, -0.14, 0.86, 0.34 } },
+  -- the only one whose flank is vertical: a Beacon is a mast, so its marks run
+  -- down it and stand out sideways
+  beacon    = { tick = {  0.00, -0.32,  0.00,  0.22 }, box = {  0, -0.55, 0.20, 0.55 } },
+}
+
+--- One cut, as a chord of the ellipse inscribed in the type's chassis box.
+---
+--- A chord, specifically, and not a segment placed by offset and angle: that
+--- was the first version and its cuts overhung the hull, so a Planter with four
+--- of them had scratches across its seedling and the grass. Both ends of a
+--- chord are on the rim by construction, so a cut can never leave the plating
+--- however long it is. The golden angle keeps the eight of them from lining up.
+local function cutAt(box, i, R)
+  local cx, cy = box[1] * R, box[2] * R
+  local hw, hh = box[3] * R * 0.86, box[4] * R * 0.86
+  local a1 = (i * 2.399963) % U.TAU
+  local a2 = a1 + 1.75 + 0.9 * ((i * 0.37) % 1)
+  return cx + math.cos(a1) * hw, cy + math.sin(a1) * hh,
+         cx + math.cos(a2) * hw, cy + math.sin(a2) * hh
+end
+
+local SCARS = {}   -- type -> { shape, per }
+local TICKS = {}   -- type -> pip row
+
+--- Everything this machine has been through, drawn over its hull in its own
+--- local space. Called by each of the six bodies once the chassis is down and
+--- before the face goes on.
+function Bot:drawWear(r)
+  local L = self.log
+  if not L then return end
+  local R = self.def.radius
+  local s = r / R
+  local fit = WEARFIT[self.type]
+
+  local downs = math.min(L.downs or 0, WEAR.scarMax)
+  if downs > 0 then
+    local set = SCARS[self.type]
+    if not set then
+      local shape = Draw.bake(function()
+        for i = 1, WEAR.scarVariants do
+          local x1, y1, x2, y2 = cutAt(fit.box, i, R)
+          -- the cut, and the lip of torn plating above it that catches the
+          -- light. One primitive each: a lone dark line at this scale is a
+          -- smudge, and the pair is what makes it read as an edge.
+          Draw.setColor(P.wearCut, 0.88)
+          Draw.capsule("fill", x1, y1, x2, y2, R * 0.068)
+          Draw.setColor(P.wearMark, 0.42)
+          Draw.capsule("fill", x1, y1 - R * 0.055, x2, y2 - R * 0.055, R * 0.028)
+        end
+      end)
+      set = { shape = shape, per = shape and #shape / WEAR.scarVariants or 0 }
+      SCARS[self.type] = set
+    end
+    if set.per > 0 then
+      for j = 0, downs - 1 do
+        -- which cuts THIS machine wears: its serial picks the starting slot, so
+        -- two Planters that each went down twice are not the same Planter.
+        local i = ((self.serial + j * 3) % WEAR.scarVariants)
+        Draw.replay(set.shape, i * set.per + 1, (i + 1) * set.per, s)
+      end
+    end
+  end
+
+  local n = self.ticks or 0
+  if n > 0 then
+    local row = TICKS[self.type]
+    if not row then
+      local x0, y0, x1, y1 = fit.tick[1] * R, fit.tick[2] * R,
+                             fit.tick[3] * R, fit.tick[4] * R
+      local dx, dy = (x1 - x0) / (WEAR.tickMax - 1), (y1 - y0) / (WEAR.tickMax - 1)
+      -- perpendicular to the row, so a mark on a flank stands off the flank
+      local px, py = -dy, dx
+      local plen = math.sqrt(px * px + py * py)
+      px, py = px / plen * R * 0.12, py / plen * R * 0.12
+      row = pipRow(WEAR.tickMax, function(i)
+        local mx, my = x0 + dx * (i - 1), y0 + dy * (i - 1)
+        Draw.setColor(P.wearCut, 0.75)
+        Draw.capsule("fill", mx - px, my - py, mx + px, my + py, R * 0.078)
+        Draw.setColor(P.wearMark, 0.95)
+        Draw.capsule("fill", mx - px * 0.70, my - py * 0.70,
+                             mx + px * 0.70, my + py * 0.70, R * 0.045)
+      end)
+      TICKS[self.type] = row
+    end
+    self:pips(r, row, n)
+  end
+end
+
 -- Nameplates. Not balance numbers: how near you have to be before a bot tells
 -- you who it is, and how large it says so, in world units.
 local PLATE = {
@@ -616,8 +1209,164 @@ local PLATE = {
   fade = 105,     -- and coming up across this band outside it
   size = 7.5,     -- display-face cap height
   lift = 1.15,    -- radii of clearance above the chassis
+  -- De-collision. One plate per bot is fine in play, where the crew is spread
+  -- over a hillside; the ending gathers every survivor into one ring around
+  -- the player and a dozen plates land on the same line of pixels. Captures of
+  -- the last shot of the game read "LAMP-10RAP-09" and "SCRAP-05 ED-44" as
+  -- literal on-screen text. So colliding plates stack instead: nearest to the
+  -- player keeps the lowest row, and a plate that cannot find a clear row
+  -- inside `rows` gives itself up rather than land on somebody else's name.
+  gap    = 3,     -- clear world px demanded between two plates, horizontally
+  step   = 3,     -- ... and the extra clearance a row of lift buys
+  rows   = 5,     -- how high the stack may go before a plate is dropped
+  leader = 0.34,  -- alpha of the thread tying a lifted plate to its machine
+  -- The backing. It was 0.45 and a name standing next to a Beacon was washed
+  -- out by the lamp's own bloom, which the plate is drawn under.
+  box    = 0.56,
 }
 local PLATE_OPTS = { align = "center", tracking = 0.05 }
+
+-- The de-collision pass. It runs once per frame, over every bot that wants a
+-- plate, and writes the answer onto the bots themselves; each bot then draws
+-- what the pass decided. The order it resolves in is `_plateD` then the name,
+-- never the draw order, because the draw order is a depth sort and a plate
+-- that changes rows when two bots swap depth is worse than the overlap it was
+-- fixing.
+--
+-- There is no per-frame hook to hang this off, so the pass detects the frame
+-- boundary itself: a bot asking for a layout it is not in, or asking twice,
+-- means a new frame has started.
+local plateSeq  = 0
+local plateList = {}   -- candidates, sorted; reused, never reallocated
+local plateBox  = {}   -- x0,y0,x1,y1 per placed plate, flat, likewise
+
+--- A global multiplier on every plate's alpha. The ending drives it at both
+--- ends: up, while the whole surviving crew is standing in a ring two hundred
+--- pixels out and every one of them is half-faded by the distance ramp, which
+--- is the one shot in the game where the names are the subject; and down to
+--- zero under the memorial, because a crowd introducing itself over a list of
+--- the dead is a HUD laid on a monument. Nothing else in the game touches it.
+Bot.plateGain = 1
+
+--- ...and a guest list. When this is set, the machines in it are the only ones
+--- with a name over them, and they keep it whatever the distance ramp says.
+---
+--- It exists for the last shot of the game. A man takes his helmet off in a
+--- ring of thirty machines that are looking at him, and every one of them was
+--- introducing itself by serial number over the top of it: thirty-three plates,
+--- de-collided into neat stacked rows, which is a spreadsheet laid over the one
+--- image the whole run is for. The plates were doing the opposite of what the
+--- comment above says -- individuality is ONE name, not thirty-three. The
+--- ending hands the plate to the two machines the scene is actually about and
+--- leaves the crowd anonymous, which is what a crowd is.
+Bot.plateOnly = nil
+
+--- Alpha this bot's plate wants, 0 for "no plate".
+function Bot:plateAlpha()
+  local gain = Bot.plateGain or 1
+  if gain <= 0 then return 0 end
+  local only = Bot.plateOnly
+  if only and not only[self] then return 0 end
+  if self.state == "boot" or self.state == "dead" then return 0 end
+  if (self.speakT or 0) > 0 then return 0 end
+  -- ...and a bubble owns that space however it got there. `Bot:say` sets
+  -- `speakT`, but a line pushed straight into the world's speech queue -- which
+  -- is how the ending's one spoken line arrives -- does not, and the plate was
+  -- drawn straight through the middle of it.
+  local sp = self.world and self.world.speeches
+  if sp then
+    for i = 1, #sp do if sp[i].who == self then return 0 end end
+  end
+  -- named on purpose: the distance ramp is not allowed to fade these out
+  if only then return U.saturate(0.95 * gain) end
+  if self.state == "down" then return U.saturate(0.95 * gain) end
+  local p = self.world and self.world.player
+  if not p then return 0 end
+  local d = U.dist(self.x, self.y, p.x, p.y)
+  local a = U.saturate((PLATE.near + PLATE.fade - d) / PLATE.fade) * 0.78
+  -- One you carried home keeps its name up while the loyalty holds. It is
+  -- following you around anyway; this is what makes you learn which one it is.
+  if (self.loyalT or 0) > 0 then a = math.max(a, TU.bots.loyal.plateFloor) end
+  return U.saturate(a * gain)
+end
+
+--- Name width in world units. Neither the name nor the size ever changes, so
+--- this is measured once and not once per bot per frame.
+function Bot:plateWidth()
+  local w = self._plateW
+  if not w then
+    w = Text.width(self.name, PLATE.size, PLATE_OPTS)
+    self._plateW = w
+  end
+  return w
+end
+
+local function plateBaseY(b)
+  return b.y - b.radius * (1.6 + PLATE.lift) - PLATE.size
+end
+
+local function byPlate(a, c)
+  if a._plateD ~= c._plateD then return a._plateD < c._plateD end
+  return a.name < c.name
+end
+
+local function layoutPlates(world)
+  plateSeq = plateSeq + 1
+  local seq = plateSeq
+  local list = world.bots
+  local p = world.player
+  local px, py = p and p.x or 0, p and p.y or 0
+  local n = 0
+  for i = 1, #list do
+    local b = list[i]
+    local a = b.alive and b:plateAlpha() or 0
+    b._plateA, b._plateRow = a, 0
+    b._plateBuild, b._plateDrawn = seq, 0
+    if a >= 0.03 then
+      n = n + 1
+      plateList[n] = b
+      -- One you have to walk over and pick up outranks anybody standing:
+      -- its plate is the reason it is drawn at all.
+      b._plateD = U.dist(b.x, b.y, px, py) - (b.state == "down" and 1e6 or 0)
+    end
+  end
+  for i = n + 1, #plateList do plateList[i] = nil end
+  table.sort(plateList, byPlate)
+
+  local h = PLATE.size + 5.5
+  local rowH = h + PLATE.step
+  local placed = 0
+  for i = 1, n do
+    local b = plateList[i]
+    local hw = b:plateWidth() * 0.5 + 3.5 + PLATE.gap
+    local x0, x1 = b.x - hw, b.x + hw
+    local top = plateBaseY(b) - 2.5
+    local row = -1
+    for r = 0, PLATE.rows - 1 do
+      local y0 = top - r * rowH
+      local y1 = y0 + h
+      local free = true
+      for k = 1, placed * 4, 4 do
+        if x0 < plateBox[k + 2] and x1 > plateBox[k] and
+           y0 < plateBox[k + 3] and y1 > plateBox[k + 1] then
+          free = false
+          break
+        end
+      end
+      if free then row = r break end
+    end
+    if row < 0 then
+      b._plateA = 0
+    else
+      b._plateRow = row
+      local k = placed * 4
+      plateBox[k + 1], plateBox[k + 2] = x0, top - row * rowH
+      plateBox[k + 3], plateBox[k + 4] = x1, top - row * rowH + h
+      placed = placed + 1
+    end
+  end
+  return seq
+end
 
 function Bot:drawShadow()
   if self.state == "dead" then return end
@@ -646,6 +1395,9 @@ function Bot:draw()
   if self.state == "dead" or self.carried then return end
   local g = love.graphics
   local r = self.radius
+  -- Which metal this machine is made of, for the whole of its body. Set once
+  -- here and read by `metal()`, `rim()` and `bakeSlots()` all the way down.
+  wearK = self.shadeK or WEAR.neutral
   local boot = self:bootP()
   local pop = 1
   if self.squashT and self.squashT > 0 then
@@ -725,7 +1477,7 @@ local function eyePlate(r, e)
   local x, y, w, h = e[1] * r, e[2] * r, e[3] * r, e[4] * r
   Draw.setColor(metal(1.0))
   Draw.roundRect("fill", x - w * 0.5, y - h * 0.5, w, h, h * 0.42)
-  Draw.setColor(RIM, 0.30)
+  Draw.setColor(rim(), 0.30)
   Draw.capsule("fill", x - w * 0.32, y - h * 0.44, x + w * 0.32, y - h * 0.44, h * 0.055)
 end
 
@@ -828,23 +1580,41 @@ end
 --- whether you are near or not, because that is the one you have to decide
 --- about. Suppressed while it is talking so the bubble owns that space.
 function Bot:drawName()
-  if self.state == "boot" or (self.speakT or 0) > 0 then return end
-  local a
-  if self.state == "down" then
-    a = 0.95
+  local world = self.world
+  if world and world.bots then
+    -- `_plateBuild ~= seq` is a bot the pass has not seen; `_plateDrawn == seq`
+    -- is one asking a second time, which only happens on the next frame.
+    if self._plateBuild ~= plateSeq or self._plateDrawn == plateSeq then
+      layoutPlates(world)
+      if self._plateBuild ~= plateSeq then
+        -- drawn but not in world.bots, so the pass never saw it: give it its
+        -- own alpha unstacked rather than no plate, and stop asking
+        self._plateA, self._plateRow, self._plateBuild = self:plateAlpha(), 0, plateSeq
+      end
+    end
+    self._plateDrawn = plateSeq
   else
-    local p = self.world and self.world.player
-    if not p then return end
-    local d = U.dist(self.x, self.y, p.x, p.y)
-    a = U.saturate((PLATE.near + PLATE.fade - d) / PLATE.fade) * 0.78
+    self._plateA, self._plateRow = self:plateAlpha(), 0
   end
+  local a = self._plateA or 0
   if a < 0.03 then return end
 
   local size = PLATE.size
-  local y = self.y - self.radius * (1.6 + PLATE.lift) - size
-  local tw = Text.width(self.name, size, PLATE_OPTS)
-  Draw.setColor(P.black, 0.45 * a)
-  Draw.roundRect("fill", self.x - tw * 0.5 - 3.5, y - 2.5, tw + 7, size + 5.5, (size + 5.5) * 0.5)
+  local h    = size + 5.5
+  local base = plateBaseY(self)
+  local row  = self._plateRow or 0
+  local y    = base - row * (h + PLATE.step)
+  local tw   = self:plateWidth()
+  -- A lifted plate is no longer sitting on its own head, so it keeps a thread
+  -- back down to the machine it belongs to. Drawn under the box, so the plate
+  -- above it hides the join.
+  if row > 0 then
+    Draw.setColor(P.inkDim, a * PLATE.leader)
+    love.graphics.setLineWidth(1)
+    love.graphics.line(self.x, y + h * 0.5, self.x, base + h * 0.5)
+  end
+  Draw.setColor(P.black, PLATE.box * a)
+  Draw.roundRect("fill", self.x - tw * 0.5 - 3.5, y - 2.5, tw + 7, h, h * 0.5)
   PLATE_OPTS.color = self.state == "down" and P.eyeDown or P.inkDim
   PLATE_OPTS.alpha = a
   Text.display(self.name, self.x, y, size, PLATE_OPTS)
@@ -873,6 +1643,7 @@ function Bot:body_planter(r)
   g.shear(-sway / (r * 0.68), 0)
   self:hull(r, 2)
   g.pop()
+  self:drawWear(r)
   self:drawAntenna(-r * 0.60, -r * 0.56, r * 0.60, r)
   self:drawEye(r)
 end
@@ -887,7 +1658,7 @@ HULL.planter = {
     end
     Draw.setColor(metal(2.4))
     Draw.roundRect("fill", -r * 0.70, -r * 0.66, r * 1.40, r * 1.00, r * 0.32)  -- chassis
-    Draw.setColor(RIM, 0.55)
+    Draw.setColor(rim(), 0.55)
     Draw.capsule("fill", -r * 0.44, -r * 0.60, r * 0.44, -r * 0.60, r * 0.07)
   end,
   -- The seedling, in a frame of its own: root at the origin, tip up the
@@ -915,6 +1686,7 @@ function Bot:body_builder(r)
   Draw.capsule("fill", r * 0.92, -r * 1.48, r * 0.92, -r * 1.48 + hang, r * 0.035)
   Draw.setColor(COBALT_3)
   Draw.diamond(r * 0.92, -r * 1.48 + hang + r * 0.17, r * 0.15, r * 0.20, "fill")
+  self:drawWear(r)
   self:drawLoad(r, 0.02, 1.02)
   self:drawAntenna(-r * 0.62, -r * 0.76, r * 0.54, r)
   self:drawEye(r)
@@ -925,7 +1697,7 @@ HULL.builder = { function(r)
   Draw.roundRect("fill", -r * 0.96, r * 0.16, r * 1.92, r * 0.62, r * 0.26)
   Draw.setColor(metal(2.2))
   Draw.roundRect("fill", -r * 0.76, -r * 0.84, r * 1.52, r * 1.18, r * 0.26)
-  Draw.setColor(RIM, 0.5)
+  Draw.setColor(rim(), 0.5)
   Draw.capsule("fill", -r * 0.50, -r * 0.78, r * 0.50, -r * 0.78, r * 0.07)
   -- the jib: mast and boom. The only thing in the crew that reaches out
   -- sideways, and the tallest outline of the six.
@@ -957,6 +1729,7 @@ function Bot:body_repulsor(r)
       love.graphics.circle("fill", -R * 0.5 + (i - 1) * (R / math.max(1, n - 1)), R * 0.5, R * 0.08)
     end, true)
   end
+  self:drawWear(r)
   self:pips(r, b.charge, self.charges or 0)
   self:drawAntenna(-r * 0.40, -r * 0.34, r * 0.52, r)
   self:drawEye(r)
@@ -973,7 +1746,7 @@ HULL.repulsor = { function(r)
   end
   Draw.setColor(metal(2.3))
   love.graphics.polygon("fill", 0, -r * 1.02, r * 0.86, r * 0.34, -r * 0.86, r * 0.34)
-  Draw.setColor(RIM, 0.5)
+  Draw.setColor(rim(), 0.5)
   Draw.capsule("fill", -r * 0.04, -r * 0.96, -r * 0.74, r * 0.26, r * 0.065)
 end }
 
@@ -983,7 +1756,7 @@ function Bot:body_sentry(r)
   -- The lit edge down the head is a *stroked* line, and a stroked line is the
   -- one thing in the vocabulary that cannot be baked without losing LOVE's own
   -- feathering of it, so it stays live: one call, on the least numerous machine.
-  Draw.setColor(RIM, 0.55)
+  Draw.setColor(rim(), 0.55)
   love.graphics.setLineWidth(r * 0.11)
   love.graphics.line(-r * 0.72, -r * 0.54, 0, -r * 1.46)
   love.graphics.setLineWidth(1)
@@ -994,6 +1767,7 @@ function Bot:body_sentry(r)
   Draw.setColor(LEAF_LOAD, 0.95)
   love.graphics.circle("fill", ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.14)
   Draw.glow(ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.75, LEAF_GLOW, 0.3, 2)
+  self:drawWear(r)
   self:drawAntenna(r * 0.26, -r * 1.14, r * 0.48, r)
   self:drawEye(r)
 end
@@ -1042,6 +1816,7 @@ function Bot:body_harvester(r)
     end)
   end
   self:pips(r, b.cargo, self.cargo or 0)
+  self:drawWear(r)
   self:drawLoad(r, 0.12, 1.30)
   self:drawAntenna(-r * 0.86, -r * 0.48, r * 0.56, r)
   self:drawEye(r)
@@ -1061,7 +1836,7 @@ HULL.harvester = {
   function(r)
     Draw.setColor(metal(2.3))
     Draw.roundRect("fill", -r * 1.02, -r * 0.54, r * 2.04, r * 0.94, r * 0.24)
-    Draw.setColor(RIM, 0.55)
+    Draw.setColor(rim(), 0.55)
     Draw.capsule("fill", -r * 0.78, -r * 0.48, r * 0.78, -r * 0.48, r * 0.07)
   end,
 }
@@ -1075,6 +1850,7 @@ function Bot:body_beacon(r)
   Draw.setColor(P.eye, 0.55 + pulse * 0.45)
   Draw.roundRect("fill", -r * 0.32, -r * 1.80, r * 0.64, r * 0.60, r * 0.18)
   self:hull(r, 2)
+  self:drawWear(r)
   Draw.glow(0, -r * 1.50, r * 2.9 * pulse, P.eye, 0.55)
   self:drawAntenna(-r * 0.36, -r * 1.92, r * 0.46, r)
   self:drawEye(r)
@@ -1097,7 +1873,7 @@ HULL.beacon = {
   function(r)
     Draw.setColor(metal(2.7))
     Draw.roundRect("fill", -r * 0.42, -r * 1.24, r * 0.84, r * 0.22, r * 0.09)
-    Draw.setColor(RIM, 0.5)
+    Draw.setColor(rim(), 0.5)
     Draw.capsule("fill", -r * 0.34, -r * 1.94, r * 0.34, -r * 1.94, r * 0.06)
   end,
 }
@@ -1112,6 +1888,7 @@ end
 --- Drawn by the player while being carried.
 function Bot:drawCarried()
   local g = love.graphics
+  wearK = self.shadeK or WEAR.neutral
   g.push()
   g.translate(self.x, self.y)
   g.rotate(0.5)

@@ -52,6 +52,9 @@ local TAU = U.TAU
 
 local HUD = {}
 
+-- Every word the interface says lives in game/script.lua.
+local STR = Script.hud
+
 --------------------------------------------------------------- the touch layer
 -- Reached lazily, never required: engine/touch.lua requires *this* file (for
 -- the bot silhouettes and the tappable readouts below) and a cycle between the
@@ -152,6 +155,12 @@ HUD.hidden    = false
 HUD.chrome    = 1
 HUD.holdK     = 0        -- 0..1 presence of the HOLD THE DAWN offer
 HUD.botCount  = 0
+-- Trees that have grown old. The only quantity in the game still rising through
+-- the last third -- trees, oxygen and crew are all flat from about cycle 5 --
+-- and until now `world.elderTrees` was read by exactly one line in the repo,
+-- the CSV telemetry in scenes/game.lua. The last three cycles had no number the
+-- player could watch go up.
+HUD.elders    = 0
 HUD.o2Rate    = 0        -- smoothed %/s, signed
 HUD.o2Cause   = nil      -- why it is moving, when it is moving down
 HUD.o2Lag     = 0        -- a slow copy of the reading, for the trend sign
@@ -182,22 +191,31 @@ local toastSeq = 0
 
 --- Push an event onto the feed.
 ---
---- Repeat chatter with the same sub folds into the row that is already there
---- and bumps a counter, so a builder streak is one line rather than six. When
---- the pool is full the lowest-ranked, oldest row is the one that goes.
+--- A repeat folds into the row that is already there and bumps a counter, so a
+--- builder streak is one line rather than six. When the pool is full the
+--- lowest-ranked, oldest row is the one that goes.
+---
+--- The fold used to be gated on `rank <= RANK_CHATTER`, which left the loudest
+--- rank as the only one that could not fold -- and the blight scar notice
+--- (RANK_LOSS, with a fixed text and sub) is emitted once per rooting. Four
+--- rootings put four identical BLIGHT TOOK ROOT rows in a five-row feed, and
+--- the next machine to die hit `wr >= rank and rank >= RANK_LOSS` below and was
+--- DROPPED: the name and epitaph the whole crew system exists to earn, thrown
+--- away to keep a duplicate. Chatter still folds on `sub` alone, so a streak
+--- with a changing head line stays one row; anything louder has to match the
+--- whole line, so two machines dying are two rows and never one.
 function HUD.toast(text, color, sub, dur, rank)
   rank = rank or RANK_PROGRESS
-  if rank <= RANK_CHATTER then
-    for i = 1, TOAST_MAX do
-      local t = toasts[i]
-      if t.live and t.rank == rank and t.sub == sub then
-        t.text  = text
-        t.count = t.count + 1
-        t.t     = 0
-        toastSeq = toastSeq + 1
-        t.seq   = toastSeq
-        return t
-      end
+  for i = 1, TOAST_MAX do
+    local t = toasts[i]
+    if t.live and t.rank == rank and t.sub == sub
+       and (rank <= RANK_CHATTER or t.text == text) then
+      t.text  = text
+      t.count = t.count + 1
+      t.t     = 0
+      toastSeq = toastSeq + 1
+      t.seq   = toastSeq
+      return t
     end
   end
 
@@ -251,11 +269,20 @@ function HUD.clearSpeech() speechN = 0 end
 --- Called by the world (through the method this file installs on World) with a
 --- world-space anchor. Stored, not drawn: placement needs to know about every
 --- other bubble and about the whole HUD, and only the draw pass does.
-function HUD.queueSpeech(x, y, text, a)
+--- `name` is who is talking, and it is the only place their name can appear
+--- while they are talking: `Bot:plateAlpha` returns 0 for the whole time a bot
+--- holds a speech slot, so before this the plate and the voice were mutually
+--- exclusive and the player could never bind a sentence to a serial. The
+--- suppression is right -- a plate and a bubble on the same machine collide --
+--- so the name comes here instead of the plate coming back.
+--- Cleared explicitly: `speech` is a pooled table and a nil name left the
+--- previous speaker's name sitting over the next one's line.
+function HUD.queueSpeech(x, y, text, a, name)
   if speechN >= SPEECH_MAX or not text then return end
   speechN = speechN + 1
   local s = speech[speechN]
   s.x, s.y, s.text, s.a = x, y, text, a or 1
+  s.name = name
 end
 
 ------------------------------------------------------------------ hit targets
@@ -442,6 +469,7 @@ function HUD.init(world)
   HUD.time = 0
   HUD.cob.v = world and world.cobalt or 0
   HUD.trees.v = world and world.treeCount or 0
+  HUD.elders  = world and world.elderTrees or 0
   HUD.o2Shown = world and world.o2 or 0
   HUD.o2Mile = 0
   HUD.duskK, HUD.threat = 0, 0
@@ -463,7 +491,15 @@ function HUD.init(world)
   local Wo = package.loaded["src.world.world"]
   if Wo and rawget(Wo, "_hudSpeech") == nil then
     Wo._hudSpeech = true
-    Wo.drawBubble = function(_, x, y, text, a) HUD.queueSpeech(x, y, text, a) end
+    -- The original is KEPT, because one scene has to draw a bubble itself. The
+    -- ending runs its own draw pass and never calls HUD.draw, so anything this
+    -- hook queues there sits in the buffer until the process exits -- which is
+    -- what happened to the only line in the ending that answers the human.
+    -- See scenes/ending.lua:drawQuietLine.
+    Wo.drawBubbleRaw = Wo.drawBubble
+    Wo.drawBubble = function(_, x, y, text, a, name)
+      HUD.queueSpeech(x, y, text, a, name)
+    end
   end
 
   if bound then return end
@@ -479,6 +515,10 @@ function HUD.init(world)
   -- Chatter. A Builder finishes a Planter every fourteen seconds and there can
   -- be a dozen Builders, so this rank exists to be folded into one line.
   Signal.on("bot:built", function(b)
+    -- The extraction's reinforcements walk in every few seconds and each one
+    -- fires this, so a stream of ONLINE toasts ran through the finale. world.lua
+    -- says in so many words that they are not the roster.
+    if b and b.offRoster then return end
     HUD.toast(b.name, P.accent, "ONLINE", nil, RANK_CHATTER)
   end)
   -- A loss is the one moment this game is built to make land, and it used to
@@ -492,7 +532,11 @@ function HUD.init(world)
     local why
     if b.epitaph then
       local ok, line = pcall(b.epitaph, b)
-      if ok and type(line) == "string" then why = line:upper() end
+      -- Not uppercased. Everywhere else in this interface shouts, and the
+      -- credits print the same sentence in the bot's own lowercase. Shouting it
+      -- here contradicts the memorial at the exact moment the voice matters, so
+      -- the loss toast is the one lowercase thing in the HUD, on purpose.
+      if ok and type(line) == "string" then why = line end
     end
     HUD.toast(b.name, P.danger, why or "DID NOT COME BACK", nil, RANK_LOSS)
   end)
@@ -505,7 +549,10 @@ function HUD.init(world)
     HUD.toast(Script.hud.holdTaken, P.warn, Script.hud.holdAfter, 5)
   end)
   Signal.on("chip:added", function(c) HUD.toast(c.name, P.ramp.ember[4], c.f, 5.5) end)
-  Signal.on("director:dawn", function() HUD.toast("NIGHT SURVIVED", P.accent, nil, 5) end)
+  -- "NIGHT SURVIVED" used to fire here, about two seconds before the dawn
+  -- screen prints CYCLE n SURVIVED in the display face at heading size. Two
+  -- announcements of one fact in the same breath dilute each other, and the
+  -- one that stays is the one the player is about to be sat in front of.
   -- The day's opposition has to announce itself, or a Scar is only ever a dot
   -- on the minimap and the player never connects it to the night that then
   -- starts in the middle of their wood.
@@ -524,7 +571,10 @@ function HUD.init(world)
   -- The world detects milestones and plays the chime. The HUD only reacts.
   Signal.on("o2:milestone", function(m)
     HUD.o2Pulse = 1
-    HUD.toast("OXYGEN " .. itos(m) .. "%", P.o2, "ATMOSPHERE RISING", 5.5)
+    local sub = STR.o2Rising
+    if m >= 100 then sub = STR.o2Orbit
+    elseif m >= 75 then sub = STR.o2AtRange end
+    HUD.toast("OXYGEN " .. itos(m) .. "%", P.o2, sub, 5.5)
     J.flashScreen(0.05, P.o2[1], P.o2[2], P.o2[3])
   end)
 
@@ -533,8 +583,12 @@ function HUD.init(world)
     local w = HUD.world
     if not w then return end
     local n = w.treeCount
+    -- No subtitle. "THE FOREST REMEMBERS" stood here, which is sentiment, is
+    -- not true of anything in the simulation, and glosses a line that needs no
+    -- gloss. The toast takes nil (see blight:cleared) and 400 TREES STANDING
+    -- is the whole announcement.
     if n == 10 or n == 25 or n == 50 or n == 100 or n == 200 or n == 400 then
-      HUD.toast(itos(n) .. " TREES STANDING", P.accent, "THE FOREST REMEMBERS", 5)
+      HUD.toast(itos(n) .. " TREES STANDING", P.accent, nil, 5)
       Audio.play("o2_milestone", { volume = 0.6 })
     end
   end)
@@ -555,6 +609,7 @@ function HUD.update(dt, world)
 
   Text.odometer(HUD.cob, world.cobalt or 0, dt, 9)
   Text.odometer(HUD.trees, world.treeCount or 0, dt, 7)
+  HUD.elders = world.elderTrees or 0
   HUD.o2Shown = U.damp(HUD.o2Shown, world.o2 or 0, 5, dt)
 
   -- Under the bars, not sliced by them. Driven straight off the letterbox
@@ -1013,9 +1068,21 @@ local function drawCycleDial(w, a)
   local tx = cx - R - 16
   UI.text(PHASE_LABEL[phase] or "--", tx, cy - 17, UI.ts.h4,
           UI.mix(P.ink, pc, urgent and 0.8 or 0.15), "right", a, 0.14)
-  UI.caption(extracting and "THE SKY THEY HAVE TAKEN"
-             or ("CYCLE " .. itos(w.cycle or 1) .. " OF " .. itos(TU.cycle.count)),
-             tx, cy + 6, UI.ts.micro, UI.c(P.ink, 0.68 * a), "right", nil, 1)
+  -- On the last cycle the fraction is retired: "CYCLE 7 OF 7" is arithmetic,
+  -- and the run does not need arithmetic at the point where it needs a name.
+  local cyc
+  if extracting then
+    -- What the dial actually reads: the numeral in the middle is w.o2 and the
+    -- sweep is o2/target, so both of them are the air that is LEFT. The caption
+    -- here used to say "THE SKY THEY HAVE TAKEN", which is the other quantity,
+    -- in a register this instrument does not speak.
+    cyc = "AIR REMAINING"
+  elseif (w.cycle or 1) >= TU.cycle.count then
+    cyc = STR.lastNight
+  else
+    cyc = "CYCLE " .. itos(w.cycle or 1) .. " OF " .. itos(TU.cycle.count)
+  end
+  UI.caption(cyc, tx, cy + 6, UI.ts.micro, UI.c(P.ink, 0.68 * a), "right", nil, 1)
   -- Urgency used to be said four ways at once here: the ring colour, the
   -- pulsing sweep, the punched numeral and a set of flashing corner brackets
   -- the size of the dial. The brackets were the loudest and carried the least,
@@ -1332,6 +1399,9 @@ end
 --------------------------------------------------------------------- speech
 --- One bubble, in screen space, already placed.
 local BSIZE = UI.bs.small
+-- The speaker's name, over their line. Deliberately small and quiet: it is a
+-- label on the sentence, not a second sentence.
+local NSIZE = UI.bs.micro
 local function drawBubble(s, alpha)
   local bx, by, bw, bh = s.bx, s.by, s.bw, s.bh
   Draw.softShadow(bx + bw * 0.5, by + bh * 0.75, bw * 0.6, bh * 0.8, 0.34 * alpha)
@@ -1345,7 +1415,12 @@ local function drawBubble(s, alpha)
   Draw.setColor(UI.c(P.ink, 0.18 * alpha))
   lg.setLineWidth(1)
   Draw.roundRect("line", bx + 0.5, by + 0.5, bw - 1, bh - 1, 6)
-  UI.body(s.text, bx + bw * 0.5, by + 5, BSIZE, UI.c(P.ink, 0.96 * alpha), nil, "center")
+  local ty = by + 5
+  if s.name then
+    UI.body(s.name, bx + bw * 0.5, by + 4, NSIZE, UI.c(P.ink, 0.40 * alpha), nil, "center")
+    ty = by + 4 + NSIZE + 2
+  end
+  UI.body(s.text, bx + bw * 0.5, ty, BSIZE, UI.c(P.ink, 0.96 * alpha), nil, "center")
 end
 
 local function overlaps(ax, ay, aw, ah, bx, by, bw, bh)
@@ -1368,7 +1443,9 @@ local function drawSpeech(w, cam, a)
     local alpha = a * s.a
     if alpha > 0.02 then
       local tw = Text.bodyMeasure(s.text, BSIZE)
-      local bw, bh = tw + 20, BSIZE + 14
+      local nw = s.name and Text.bodyMeasure(s.name, NSIZE) or 0
+      if nw > tw then tw = nw end
+      local bw, bh = tw + 20, BSIZE + 14 + (s.name and (NSIZE + 2) or 0)
       local sx, sy = cam:toScreen(s.x, s.y)
       s.ax = sx
       local bx = U.clamp(sx - bw * 0.5, 12, sw - bw - 12)
@@ -1531,6 +1608,11 @@ local function drawBotPip(b, cam, a)
     return
   end
 
+  -- One you carried home is warm for as long as the loyalty holds. Same shape,
+  -- same size, one colour: in a crowd of forty cool marks the one you went and
+  -- got is findable at a glance, and it is following you, so you keep seeing it.
+  local mark = ((b.loyalT or 0) > 0) and P.love or P.eye
+
   -- The dark pass is a centred *outline*, not the player pip's dropped shadow.
   -- At eleven pixels an offset shadow is enough to lift the mark off anything;
   -- at seven it is not, and half of these sit over a sunlit crown the same
@@ -1540,7 +1622,7 @@ local function drawBotPip(b, cam, a)
     Draw.setColor(P.black, BP.haloA * aa)
     lg.setLineWidth(BP.halo)
     lg.circle("line", sx, sy, BP.ringR, 14)
-    Draw.setColor(P.eye, 0.95 * aa)
+    Draw.setColor(mark, 0.95 * aa)
     lg.setLineWidth(1.8)
     lg.circle("line", sx, sy, BP.ringR, 14)
   else
@@ -1549,7 +1631,7 @@ local function drawBotPip(b, cam, a)
     local bob = sin(HUD.time * BP.bob + b.bob) * 1.7
     Draw.setColor(P.black, BP.haloA * aa)
     Draw.chevron(sx, sy + bob, BP.size, pi * 0.5, BP.halo, 0.8)
-    Draw.setColor(P.eye, 0.95 * aa)
+    Draw.setColor(mark, 0.95 * aa)
     Draw.chevron(sx, sy + bob, BP.size, pi * 0.5, 2.2, 0.8)
   end
 end

@@ -27,11 +27,18 @@ local Signal   = require("src.core.signal")
 local Input    = require("src.engine.input")
 local Opt      = require("src.core.optional")
 local Script   = require("src.game.script")
+local Names    = require("src.game.names")
 local Dialogue = require("src.game.dialogue")
+-- Only for T.cycle.count: "the last night" is a game constant and the ambient
+-- overlay below must not hard-code a 7 that tuning.lua is free to move.
+local TU       = require("src.game.tuning")
 
 local Draw = Opt.require("src.engine.draw")
 local Text = Opt.require("src.engine.text")
 local UI   = Opt.require("src.engine.ui")
+-- Only for `Bot.plateOnly`: the two funerals seat the one machine that speaks
+-- and leave the rest of the crew anonymous. See `soloPlate`.
+local Bot  = Opt.require("src.entities.bot")
 -- Only for the two things a hint has to keep off: the bottom band, and the
 -- screen during a cutscene.
 local HUD  = Opt.require("src.game.hud")
@@ -50,6 +57,41 @@ local T = {
   hintGap     = 1.1,
   hintRepeats = 2,       -- a hint may come back once if it went unanswered
   reactGap    = 5.5,
+  hurtQuiet   = 8.0,     -- seconds after a hit before a "calm" beat may play
+  reinforceGap = 5.0,    -- ...between two walk-ins saying where they came from
+  -- A FUNERAL IS ABOUT ONE MACHINE. Both loss beats put the camera on a body
+  -- at zoom 1.7, which is a 940x530 window with the corpse in the middle of it
+  -- -- and the rescue AI walks the crew to whatever went down. Captured: six
+  -- machines in a heap over the husk, the dead one the least visible object in
+  -- its own funeral. `guard = "calm"` only asks about blight, so these two ask
+  -- about the site as well.
+  -- ...this close to the body counts as standing ON it. Was 90, which stopped
+  -- being the right number once `T.bots.grief.standOff` moved the mourners out
+  -- to a ring at 95-150: at 90 the guard was measuring the ring itself. It
+  -- never cleared -- measured on seed 4242, 4 to 5 machines inside 90 for the
+  -- whole 82 seconds the beat waited, against a crowd limit of 2, so the beat
+  -- fired every time through its relief valve rather than because the shot was
+  -- ready. 48 is the body and its own footprint: a machine inside that is
+  -- overlapping the corpse, which is the thing this guard was written to stop.
+  funeralNear = 48,
+  funeralCrowd = 2,      -- ...and this many is a crowd (so: one mourner, or none)
+  -- ...and the opposite failure, which the first cut of this guard produced on
+  -- the very first capture: the crew's grief timer runs 14s and then they all
+  -- walk back to work, so "wait until nobody is on the body" waited until
+  -- nobody was anywhere, and the beat played over a husk alone on a beach with
+  -- a voice off-screen asking whether it could be fixed. Somebody has to be in
+  -- the shot. At zoom 1.7 the frame is 940x530 world units, so this is well
+  -- inside it.
+  funeralWitness = 240,
+  -- ...but a beat that never plays is worse than a crowded one, and the site
+  -- is not guaranteed to clear before `patience` drops it. After this long
+  -- holding a moment that is otherwise good, the funeral takes the crowd.
+  funeralAlone = 45.0,
+  -- ...and how often the beat asks the crew to come, while it waits. Once was
+  -- not enough: a machine that falls where the crew has already finished
+  -- working leaves nobody inside grief's radius to answer the first call, and
+  -- the beat then sat with an empty site until its patience ran out.
+  funeralConvene = 6.0,
 }
 Story.tuning = T
 
@@ -124,21 +166,128 @@ local function pickBot(world, x, y, skip, filter)
   return best
 end
 
+--- Blight that does not leave at sunrise and cannot come at you. This is the
+--- same predicate Enemy:flee tests to decide who stays: a Scar, and a dormant
+--- Maw. tuning.lua's own note on the Scar is that it "never moves, never
+--- chases, and cannot hurt the player at all".
+---
+--- They are excluded from the count below, and that is a fix rather than a
+--- nicety. A Scar roots where something was chewing a tree, which is inside
+--- the wood, and it is still there the next morning and the morning after. So
+--- from about cycle four the player's own forest permanently contained one,
+--- `blightNear` never read zero in daylight, and `guard = "calm"` -- which
+--- demands exactly zero -- became unsatisfiable for the rest of the run. Every
+--- beat behind it starved. In one traced run on seed 7 that cost the game both
+--- of its middle beats outright: nothing was said between 1:21 and 13:33.
+local function rooted(e)
+  return (e.def and e.def.holdsGround) or e.type == "scar"
+end
+
 local function blightNear(world, r)
   local p = world and world.player
   if not p then return 0 end
   local n = 0
   if world.hEnemy and world.hEnemy.each then
     world.hEnemy:each(p.x, p.y, r, function(e)
-      if e.alive and not e.fleeing and U.dist2(e.x, e.y, p.x, p.y) <= r * r then n = n + 1 end
+      if e.alive and not e.fleeing and not rooted(e)
+         and U.dist2(e.x, e.y, p.x, p.y) <= r * r then n = n + 1 end
     end)
   elseif world.enemies then
     for i = 1, #world.enemies do
       local e = world.enemies[i]
-      if e.alive and not e.fleeing and U.dist2(e.x, e.y, p.x, p.y) <= r * r then n = n + 1 end
+      if e.alive and not e.fleeing and not rooted(e)
+         and U.dist2(e.x, e.y, p.x, p.y) <= r * r then n = n + 1 end
     end
   end
   return n
+end
+
+--- Living machines standing within `r` of a point. The corpse is not one of
+--- them: it is what they are standing on.
+local function botsNear(world, x, y, r)
+  local list = world and world.bots
+  if not (list and x and y) then return 0 end
+  local n = 0
+  for i = 1, #list do
+    local b = list[i]
+    if b.alive and b.state ~= "dead" and U.dist2(b.x, b.y, x, y) <= r * r then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+--- Is this a shot of a funeral? Two things, and they pull against each other:
+--- nobody piled ON the body, and somebody standing near enough to be in the
+--- frame with it. One machine and a husk is the picture; six machines is a
+--- traffic jam and none at all is a voice off-screen.
+---
+--- `ready` is how long this beat has been holding a moment its own guard was
+--- happy with, and is the relief valve. A site that never settles must still
+--- get its funeral: a crowded one is a bad shot, and no funeral at all is a
+--- machine that died with nothing said over it.
+local function bodyClear(world, ctx, ready)
+  local x, y = ctx.lostX, ctx.lostY
+  local witness = botsNear(world, x, y, T.funeralWitness)
+  -- THE VALVE MAY NOT HAND BACK AN EMPTY CLEARING. It used to return true on
+  -- time alone, which produced precisely the shot the paragraph above forbids:
+  -- captured on seed 4242, the human says the dead machine's name over open
+  -- water and tree canopy with no body visible and nobody within four hundred
+  -- pixels. The same beat on seed 777 is six mourners in an arc around a lit
+  -- body. One relief valve, two completely different scenes, and the valve was
+  -- the normal path rather than the exception.
+  --
+  -- So the valve now only forgives the CROWD rule -- the thing it was written
+  -- for, a site that will not settle -- and never the witness rule. A beat that
+  -- cannot find anybody is dropped on its patience, which is a machine dying
+  -- with nothing said over it; that is a worse outcome than a good shot and a
+  -- better one than a voice talking to scenery.
+  if (ready or 0) >= T.funeralAlone and witness >= 1 then return true end
+  if botsNear(world, x, y, T.funeralNear) >= T.funeralCrowd then return false end
+  if witness >= 1 then return true end
+  -- Nobody in the frame. Ask for them, and keep asking: grief runs fourteen
+  -- seconds from the death and this beat's "calm" guard routinely holds it far
+  -- longer than that, so by the time the site is quiet enough to shoot, the
+  -- machines that mourned have been back at work for a minute. Convening once
+  -- was not enough when the body fell somewhere the crew had already left --
+  -- the crew moves, so ask again on a slow clock until somebody is close.
+  local now = world.time or 0
+  if world.mournAt and (not ctx.convenedAt or now - ctx.convenedAt >= T.funeralConvene) then
+    ctx.convenedAt = now
+    world:mournAt(x, y)
+  end
+  return false
+end
+
+--- ONE NAME OVER A FUNERAL. `Bot.plateOnly` is the ending's guest list, and it
+--- is exactly what these two beats want: the survivor doing the talking keeps
+--- its plate, the crew that happens to be in shot is anonymous, and the four
+--- de-collided nameplates that used to stack up over the body are gone.
+---
+--- Left set, this would silently delete every nameplate for the rest of the
+--- run, so the release is not optional and cannot depend on the scene ending
+--- tidily: `fire` clears it on every exit path there is -- watched, skipped,
+--- aborted, and the one where the beat cancelled before it opened -- and
+--- `resetState` clears it again for a restart. It only ever clears its OWN
+--- list, so it cannot pull the guest list out from under the ending.
+local function soloPlate(bot)
+  if not (Bot and bot) then return end
+  local only = { [bot] = true }
+  Story.plateHeld = only
+  Bot.plateOnly = only
+end
+
+--- ...and hand it back. Identified BY THE LIST, not by "is anything seated":
+--- a beat that shouldered in on top of another one runs the loser's release
+--- after the winner's prep has already seated its own machine, and a release
+--- that only asked "is there a guest list" would blank the scene that is
+--- actually playing.
+local function releasePlate(only)
+  if not Bot then return end
+  only = only or Story.plateHeld
+  if not only then return end
+  if Bot.plateOnly  == only then Bot.plateOnly  = nil end
+  if Story.plateHeld == only then Story.plateHeld = nil end
 end
 
 --- Is this a moment a cutscene can have?
@@ -151,10 +300,22 @@ local function guardOk(kind, world)
   if kind == "fight" then
     return hp >= 2 and blightNear(world, T.fightRadius) <= 3
   end
-  -- calm: daylight, nothing hunting you, and not mid-rescue
+  -- calm: daylight, nothing hunting you, not mid-rescue, and not in the
+  -- seconds after a hit.
   if world.phase == "night" or world.phase == "dusk" then return false end
   if world.phase == "extraction" or world.phase == "ending" then return false end
-  if hp < 2 then return false end
+  -- That last clause used to read `hp < 2`, and it was the second thing
+  -- starving the middle of the run. Hearts never come back except by going
+  -- down and rebooting, so a player who took two hits on cycle two and then
+  -- played well spent the rest of the game on one heart -- and every beat
+  -- behind this guard was unreachable for the whole of it. The better they
+  -- played, the less of the story they were told. Measured on seed 2: the
+  -- answer beat sat through both of its cycles at hp=1 with zero blight on
+  -- the screen and was dropped on its patience.
+  --
+  -- What the rule wants is "not while they are being killed", and that is a
+  -- clock, not a resource.
+  if (Story.hurtT or 0) > 0 then return false end
   if p.carrying then return false end
   return blightNear(world, T.calmRadius) == 0
 end
@@ -178,6 +339,10 @@ local BEATS = {
       if not b then return false end
       ctx.bot = b
       bind("botA", b)
+      -- The one the player heard say "oh". Not "the first bot built": the beat
+      -- can be cancelled and re-prepped against a different machine, and it is
+      -- the one that spoke that beats 7 and 10 are about.
+      Story.theFirstOne = b
       return true
     end,
   },
@@ -192,25 +357,123 @@ local BEATS = {
   },
   {
     id = "firstLoss", pri = 2, guard = "calm", delay = 2.2, patience = 300,
+    -- ...and the body has the ground to itself. See `bodyClear`.
+    require = bodyClear,
     prep = function(world, ctx)
       -- somebody has to be left to ask the question
       local b = pickBot(world, ctx.lostX, ctx.lostY)
       if not b then return false end
       ctx.bot = b
       bind("botB", b)
+      -- the one asking "can you fix it" is the only name in the frame
+      soloPlate(b)
       return true
     end,
   },
   {
-    id = "question", pri = 1, guard = "calm", delay = 4.0, patience = 420,
+    -- Cycle 3, not cycle 5. Three is the first dawn the player owns a real
+    -- wood and a real crew, which is when "what are the trees for" has
+    -- anything behind it -- and it is what opens cycle 6 for the answer, so
+    -- the middle of the run has two beats in it instead of one.
+    --
+    -- pri 2, not 1. At the bottom of the table it yielded to everything, and
+    -- in a traced run it slipped a cycle and a half past its own signal.
+    id = "question", pri = 2, guard = "calm", delay = 4.0, patience = 420,
     prep = function(world, ctx)
       local p = world.player
-      local b = pickBot(world, p and p.x, p and p.y, nil,
-                        function(bb) return bb.type == "planter" end)
-             or pickBot(world, p and p.x, p and p.y)
+      -- The one the player heard boot and say "oh", if it is still standing.
+      -- It used to pick the nearest planter, so at cycle 6 a machine the player
+      -- had never met said "i asked what the trees are for" -- a line whose
+      -- entire meaning is "i am the one who asked". `firstBot` binds
+      -- Story.theFirstOne on cycle 1 and this beat is queued from cycle 3, so
+      -- it is set unless that beat was dropped on its patience or the machine
+      -- is gone; both fall through to the old pick. Same test the `radio` and
+      -- `answer` preps already use.
+      local b = Story.theFirstOne
+      if not (b and b.alive and b.state ~= "dead" and b.state ~= "down") then
+        b = pickBot(world, p and p.x, p and p.y, nil,
+                    function(bb) return bb.type == "planter" end)
+         or pickBot(world, p and p.x, p and p.y)
+      end
       if not b then return false end
       ctx.bot = b
       bind("botA", b)
+      -- beat 6 opens on this machine quoting its own log back
+      Story.questionBot = b
+      return true
+    end,
+  },
+  {
+    -- Cycle 4. The only thing standing in the measured 4:13 -> 10:20 silence.
+    -- It has no geography: the subject is the rig's radio, which is a fixture,
+    -- the camera is on the bot, and the only cancel path is "no living bot",
+    -- which cancels the run's whole story anyway. It touches no relic and reads
+    -- no position, so it cannot starve on where the player happens to be.
+    id = "radio", pri = 2, guard = "calm", delay = 4.0, patience = 420,
+    -- It only exists between the two. Held behind the question; once the answer
+    -- has played it can never fire, and expires on its patience unplayed -- a
+    -- beat about the middle must not arrive after the end of the middle.
+    require = function() return Story.fired.question and not Story.fired.answer end,
+    prep = function(world, ctx)
+      local p = world.player
+      -- The machine that asked, if it is still standing. Same fallback as the
+      -- answer beat: cancelling here would reopen the dead zone this is for.
+      local b = Story.questionBot
+      if not (b and b.alive and b.state ~= "dead" and b.state ~= "down") then
+        b = pickBot(world, p and p.x, p and p.y, nil,
+                    function(bb) return bb.type == "planter" end)
+         or pickBot(world, p and p.x, p and p.y)
+      end
+      if not b then return false end
+      ctx.bot = b
+      bind("botA", b)
+      -- ...and promote the replacement, so the answer beat gets the machine the
+      -- player just heard rather than re-picking a third stranger.
+      Story.questionBot = b
+      return true
+    end,
+  },
+  {
+    -- The answer, three cycles later. It only exists as a reply, so it will
+    -- not play until the question has actually been asked: `require` is
+    -- checked at fire time, every frame, so a question still sitting in the
+    -- queue holds this one behind it instead of racing it.
+    id = "answer", pri = 1, guard = "calm", delay = 4.0, patience = 420,
+    require = function() return Story.fired.question end,
+    prep = function(world, ctx)
+      local p = world.player
+      -- Preferring the bot that asked is the beat: "i asked what the trees are
+      -- for" is a machine reading its own log. The fallback is not a nicety --
+      -- cancelling here would reopen the exact dead zone this beat is for.
+      local b = Story.questionBot
+      if not (b and b.alive and b.state ~= "dead" and b.state ~= "down") then
+        b = pickBot(world, p and p.x, p and p.y, nil,
+                    function(bb) return bb.type == "planter" end)
+         or pickBot(world, p and p.x, p and p.y)
+      end
+      if not b then return false end
+      ctx.bot = b
+      bind("botA", b)
+      return true
+    end,
+  },
+  {
+    -- The bot from beat 2 is gone. Queued only when it is NOT the run's first
+    -- loss -- if it is, firstLoss has the body, and two funerals over it would
+    -- be worse than none.
+    id = "firstBotLost", pri = 2, guard = "calm", delay = 2.2, patience = 300,
+    -- ...and the body has the ground to itself. See `bodyClear`.
+    require = bodyClear,
+    prep = function(world, ctx)
+      -- botB, not botA: botA is the machine that died, and the survivor
+      -- standing over it is somebody else. ctx.lostX/lostY stay put -- the
+      -- camera step reads them, and a husk is now left at exactly those
+      -- coordinates, so the funeral has a body in it rather than empty grass.
+      local b = pickBot(world, ctx.lostX, ctx.lostY)
+      if not b then return false end
+      ctx.bot = b
+      bind("botB", b)
+      soloPlate(b)
       return true
     end,
   },
@@ -229,13 +492,47 @@ local BEATS = {
     end,
   },
   {
+    -- THE LAST DUSK. Cycle 7 had nothing written for it: the scheduled beats
+    -- stop at 6, so the run's longest measured silence (210-245s across seeds)
+    -- sits exactly where it is climbing to the climax.
+    --
+    -- `guard = "now"` rather than "calm". Dusk is the quiet side of the night
+    -- and this beat has one dusk to happen on -- there is no cycle 8 to retry
+    -- from -- so a guard that can starve is a guard that deletes it. The short
+    -- patience is the honest version of that: if the last dusk is somehow a
+    -- firefight, the beat is dropped rather than played over one.
+    id = "lastNight", pri = 2, guard = "now", delay = 1.2, patience = 60,
+    prep = function(world, ctx)
+      local p = world.player
+      -- Deliberately NOT Story.theFirstOne. question, answer, rebellion and
+      -- ending all reserve that machine, and the promise here is better from
+      -- one of the ordinary ones: any of them, which is the whole point.
+      local a = pickBot(world, p and p.x, p and p.y)
+      if not a then return false end
+      ctx.bot = a
+      bind("botA", a)
+      return true
+    end,
+  },
+  {
     -- Never before the scene that introduced the thing they are charging.
     id = "rebellion", pri = 3, guard = "now", delay = 0.4,
     require = function() return Story.fired.extraction or not Story.armed.extraction end,
     prep = function(world, ctx)
       local p = world.player
       local a = ctx.bot
-      if not (a and a.alive) then a = pickBot(world, p and p.x, p and p.y) end
+      -- THE FIRST ONE SAYS IT, if it is still standing. This beat's own comment
+      -- -- "by then they are not disobeying an order, they are keeping a
+      -- decision they already made" -- only reads if it is the same machine
+      -- that made the decision, and `question`, `answer` and `ending` all
+      -- prefer it for exactly that reason. This one took the nearest survivor,
+      -- and across six seeds the untouchable line went to a stranger 6 times
+      -- out of 6 -- twice while the first one was alive and upright nearby.
+      if not (a and a.alive and a.state ~= "dead") then
+        local first = Story.theFirstOne
+        if first and first.alive and first.state ~= "dead" then a = first
+        else a = pickBot(world, p and p.x, p and p.y) end
+      end
       ctx.bot = a
       bind("botA", a)
       bind("botB", pickBot(world, p and p.x, p and p.y, a))
@@ -247,7 +544,14 @@ local BEATS = {
     -- fired by scenes/ending.lua, which owns the staging around it
     prep = function(world, ctx)
       local p = world.player
-      local a = pickBot(world, p and p.x, p and p.y)
+      -- The machine that said "oh / hello" gets "you can take it off now", if
+      -- it is still standing. The nearest survivor is whoever the ring happened
+      -- to seat closest, and in one traced capture that was a repulsor pylon
+      -- built four minutes earlier. scenes/ending.lua revives the downed before
+      -- it calls this, so `state == "down"` is not a reason to pass it over.
+      local first = Story.theFirstOne
+      if not (first and first.alive and first.state ~= "dead") then first = nil end
+      local a = first or pickBot(world, p and p.x, p and p.y)
       local b = pickBot(world, p and p.x, p and p.y, a)
       bind("botA", a)
       bind("botB", b)
@@ -441,6 +745,41 @@ local function react(phase, x, y)
 end
 Story.react = react
 
+--- The same thing, but from a bot we already have. Some lines belong to one
+--- machine and not to whoever happens to be standing nearest: the one in your
+--- arms is the one with an opinion about being carried, and `pickBot` skips
+--- downed bots anyway, so routing those through `react` would have put "put me
+--- by the light" in the mouth of a bystander.
+local function reactFrom(bot, phase)
+  local w = Story.world
+  if not w or w.cutscene or Dialogue.isActive() then return end
+  if Story.reactT > 0 then return end
+  if not bot or not bot.alive or not bot.say then return end
+  bot:say(phase)
+  Story.reactT = T.reactGap
+end
+Story.reactFrom = reactFrom
+
+--- Which long pool the world is in. Anything that can happen at any hour has
+--- to ask: a hit taken at noon used to answer with the night pool, so a bot
+--- would say "morning is not far" in broad daylight.
+---
+--- The extraction is not a daylight shift, and it used to be treated as one --
+--- everything that is not night mapped to `day`, so a hit taken with the
+--- Harvester Prime on screen and the sky draining answered "the ground is wet
+--- here". The `boss` pool exists for this and was only ever reached from the
+--- two or three `boss:phase` signals in the whole fight.
+---
+--- `ending` deliberately keeps falling through to `day`: the only two callers
+--- are a player hit and every fortieth tree, neither of which happens after
+--- the rig is down, and bot.lua silences ambient chatter outright in that phase.
+local function phasePool()
+  local w = Story.world
+  local ph = w and w.phase
+  if ph == "extraction" then return "boss" end
+  return (ph == "night" or ph == "dusk") and "night" or "day"
+end
+
 ------------------------------------------------------------------------- state
 local function resetState()
   Story.world    = nil
@@ -449,12 +788,30 @@ local function resetState()
   Story.armed    = {}
   Story.cooldown = 0
   Story.reactT   = 0
+  -- names.lua's two story overlays on the ambient pools -- see N.extraction and
+  -- N.lastNight there. Owned here, written nowhere else, and cleared with the
+  -- rest of the run state so a restart does not open on last-night dialogue.
+  Names.extraction = false
+  Names.lastNight  = false
+  Story.hurtT    = 0
+  Story.reinforceT = 0
   Story.time     = 0
   Story.moved    = 0
   Story.lastX, Story.lastY = nil, nil
   Story.did      = {}
+  -- Two machines the story keeps hold of by name. The first is the one the
+  -- player heard boot and speak; the second is the one that asked what the
+  -- trees are for, so the beat that answers can be the same voice.
+  Story.theFirstOne  = nil
+  -- "Good." is once a run. See the bot:revived handler.
+  Story.saidGood     = false
+  Story.questionBot  = nil
   Story.epitaphs = {}
   Story.sacrificed = {}
+  -- The funeral's one nameplate. Belt and braces: `fire` already releases it on
+  -- every exit path, and a list left set here would blank the crew's names for
+  -- the whole of the next run.
+  releasePlate()
   Story.watch    = nil
   Story.tut      = { active = nil, a = 0, t = 0, gap = 1.5, fading = false,
                      shown = {}, doneIds = {} }
@@ -482,8 +839,12 @@ local function fire(entry, force)
   if not beat then return true end
   local world = Story.world
   if entry.def.prep and entry.def.prep(world, entry.ctx) == false then
+    releasePlate()                    -- ...whatever a half-run prep seated
     return true                       -- cancel: the scene lost its cast
   end
+  -- The one nameplate this beat's prep seated, if it seated one. Held by value
+  -- so the release below is this beat's and not whoever is on screen later.
+  local held = Story.plateHeld
   refreshCast(world)
   local id = entry.def.id
   local h = Dialogue.play(beat.steps, {
@@ -493,11 +854,16 @@ local function fire(entry, force)
     id      = id,
     replace = force == true,
     onDone  = function()
+      -- Dialogue:finish runs this on EVERY exit -- watched, skipped from the
+      -- keyboard, and aborted by a scene teardown -- which is the whole reason
+      -- the plate release lives here rather than in the last step of a script.
+      releasePlate(held)
       Story.cooldown = T.beatGap
       Story.tut.gap = max(Story.tut.gap or 0, 1.6)
     end,
   })
-  if not h then return false end
+  -- ...and the path where the panel refused: prep has already run.
+  if not h then releasePlate(held) return false end
   Story.fired[id] = true
   Story.cooldown = T.beatGap
   return true
@@ -553,6 +919,12 @@ local function subscribe()
   -- last, so they are last on the list, which is where they belong.
   Signal.on("bot:sacrificed", function(bot)
     if not bot or not bot.name then return end
+    -- Reinforcements walked in off the treeline during the rebellion; world.lua
+    -- says in so many words that they are not in the ending's ledger, "because
+    -- the names in that ledger are the ones you built and lost". They leaked in
+    -- through here, and because they arrive with empty ledgers and live seconds
+    -- they filled twenty-two rows of one memorial with the same sentence.
+    if bot.offRoster then return end
     if bot.epitaph then Story.epitaphs[bot.name] = bot:epitaph() end
     Story.sacrificed[#Story.sacrificed + 1] = {
       name = bot.name, type = bot.type,
@@ -568,15 +940,42 @@ local function subscribe()
     local first = not (Story.fired.firstLoss or Story.armed.firstLoss)
     -- On the very first one, keep quiet: the cutscene opens on "it stopped",
     -- and an ambient bubble that got there first spends the line.
+    -- The name goes over first: the `loss` pool can say it, and "say the name"
+    -- is only a ritual if somebody then does.
+    Names.remember(bot.name)
     if not first then react("loss", bot.x, bot.y) end
+    -- The bot says the epitaph out loud, so it needs a subject -- but some
+    -- epitaphs already have one. "you carried it home once" prefixed with "it "
+    -- reads as a fault in the game, in the middle of the first funeral.
     local ep = bot.epitaph and bot:epitaph() or nil
+    local said = ep
+    if ep and ep:sub(1, 4) ~= "you " and ep:sub(1, 3) ~= "we " then
+      said = "it " .. ep
+    end
     queue("firstLoss", { lostName = bot.name, lostX = bot.x, lostY = bot.y,
                          lostType = bot.type,
-                         lostEpitaph = ep and ("it " .. ep) or nil })
+                         lostEpitaph = said })
+    -- ...and if the one that just stopped is the one that said hello, it gets
+    -- its own beat rather than a line in the toast feed. Only when it is not
+    -- also the first loss: that body already has a scene standing over it.
+    if not first and Story.theFirstOne and bot == Story.theFirstOne then
+      queue("firstBotLost", { lostX = bot.x, lostY = bot.y })
+    end
   end, Story)
 
+  -- The two scheduled beats, and the only two things in the table that are on
+  -- a clock rather than on an event. Everything else fires off something the
+  -- player did or something that happened to them, which is why the middle of
+  -- the run went quiet: nothing happens in the middle that the story is
+  -- listening for. Re-queued every cycle on purpose -- `armed` swallows the
+  -- duplicate, and if either is ever dropped on its patience the next dawn
+  -- puts it back.
   Signal.on("phase:day", function(cycle)
-    if cycle and cycle >= 5 then queue("question", {}) end
+    if not cycle then return end
+    if cycle >= 3 then queue("question", {}) end
+    -- re-queued every dawn from cycle 4; `armed` swallows the duplicate
+    if cycle >= 4 then queue("radio",    {}) end
+    if cycle >= 6 then queue("answer",   {}) end
   end, Story)
 
   Signal.on("phase:extraction", function(boss)
@@ -587,16 +986,73 @@ local function subscribe()
     queue("rebellion", {})
   end, Story)
 
+  Signal.on("phase:dusk", function(cycle)
+    if (cycle or 0) >= TU.cycle.count then queue("lastNight", {}) end
+  end, Story)
+
   -- reactions: the bots noticing their own lives
   Signal.on("phase:dusk", function() react("night") end, Story)
   Signal.on("phase:night", function() react("night") end, Story)
-  Signal.on("phase:dawn",  function() react("day") end, Story)
+  -- Dawn is not just "day again": the night pool spends itself asking to be
+  -- counted at first light, and this is the pool that counts.
+  -- First light. Once the radio beat has played, one machine in four reports
+  -- the readout instead of counting the crew -- the recurring half of that beat,
+  -- and the only thing that speaks in cycles 4 through 7 on most runs. The
+  -- number it reports has never changed and never will.
+  -- First light. There are only six or seven dawns in a run and each one is a
+  -- scheduled beat of its own, so this jumps the shared reaction gap the way
+  -- world:failed does -- measured, only two of six dawns were getting through
+  -- it, which is how a five-line pool can fire zero times in a campaign.
+  --
+  -- Alternating, not random: a coin flip can hand a whole run the counting pool
+  -- and the radio thread never appears. There are only three or four dawns left
+  -- after the beat fires and every one of them has to count -- that thread is
+  -- what "Or the radio." lands on at the end.
+  Signal.on("phase:dawn",  function()
+    Story.reactT = 0
+    -- EVERY dawn after the beat, not every other one. This alternated, and the
+    -- radio beat fires on cycle 4 -- so only four dawns were left and the whole
+    -- thread delivered TWO lines in a run, against the four the pool in
+    -- names.lua was written expecting ("i listened all night", "still zero").
+    -- The counting pool already owns the three mornings before the beat; after
+    -- it, the morning is the radio. Measured across three seeds before the
+    -- change: 2 radio lines per run.
+    react(Story.fired.radio and "radio" or "dawn")
+  end, Story)
   Signal.on("boss:phase",  function() react("boss") end, Story)
 
   -- The player traded a worse night for more daylight. Somebody who has to
   -- work through that night has an opinion about it.
   Signal.on("world:heldDawn", function() react("hold") end, Story)
+  -- Deliberately NOT routed through phasePool(). An oxygen milestone is an
+  -- event with a pool of its own, like `loss` and `boss` and `failed`, and
+  -- phasePool() only picks between the two long ambient pools -- sending this
+  -- through it would answer the best number in the game with "good dirt here".
+  -- The one line in `grown` that reads oddly after dark is "the sky changed
+  -- colour", one draw in five, and the cost of fixing it is a second five-line
+  -- pool for a moment that happens four times a run. Left as it is on purpose.
   Signal.on("o2:milestone",   function() react("grown") end, Story)
+
+  -- The island answers. A machine that was working somewhere else walks in off
+  -- the treeline, and it says where it came from rather than one of the crew's
+  -- rebellion lines -- which is what made the reinforcements read as the game
+  -- topping up the fight instead of as strangers arriving. It said a `rebel`
+  -- line inside Bot:rebel a tick ago; World:speak drops a bot's previous bubble
+  -- when it gets a new one, so this replaces that rather than stacking on it.
+  --
+  -- Its own clock, deliberately not the shared reaction gap: measured, the
+  -- shared gap is already spent by the fight these are arriving into, and
+  -- routing them through it gave one walk-in in ten its own line and left the
+  -- other nine sounding like crew. One every five seconds against an arrival a
+  -- second is a trickle of strangers rather than a chant.
+  Signal.on("bots:reinforce", function(b)
+    local w = Story.world
+    if not w or w.cutscene or Dialogue.isActive() then return end
+    if (Story.reinforceT or 0) > 0 then return end
+    if not b or not b.alive or not b.say then return end
+    b:say("reinforce")
+    Story.reinforceT = T.reinforceGap
+  end, Story)
 
   -- Deliberately NOT subscribed: "bots:cohort". Bot:rebel already says a rebel
   -- line for every bot that launches, so a cohort of eight arrives with its own
@@ -611,20 +1067,53 @@ local function subscribe()
   end, Story)
   Signal.on("player:hurt", function()
     local p = Story.world and Story.world.player
-    react("night", p and p.x, p and p.y)
+    -- ...and hold the quiet beats off for a few seconds. This is the whole of
+    -- what `guard = "calm"` used to try to say with `hp >= 2`.
+    Story.hurtT = T.hurtQuiet
+    react(phasePool(), p and p.x, p and p.y)
+  end, Story)
+  -- He is on the ground and the reboot clock is up. This one jumps the queue:
+  -- whatever a bot was about to say about the dirt matters less.
+  Signal.on("player:down", function(p)
+    Story.reactT = 0
+    react("downed", p and p.x, p and p.y)
   end, Story)
   Signal.on("tree:planted", function(t, by)
     if by == "player" then Story.did.handplant = true end
     local w = Story.world
-    if w and (w.treeCount or 0) % 40 == 0 then react("day", t and t.x, t and t.y) end
+    -- ...and not "day": the fortieth tree gets planted after dark as often as
+    -- not, and a bubble reading "more sun today" at 0:13 of a bad night is the
+    -- same mistake as answering a hit with the night pool.
+    if w and (w.treeCount or 0) % 40 == 0 then react(phasePool(), t and t.x, t and t.y) end
   end, Story)
-  Signal.on("bot:revived", function(b) react("rebel", b.x, b.y) end, Story)
+  -- This used to fire the REBELLION pool, so a routine daylight rescue on cycle
+  -- two had a bystander saying "save the human" and "goodbye" twenty minutes
+  -- before the scene that those belong to. It is the bot that just stood up
+  -- that has something to say, and what it has to say is about standing up.
+  Signal.on("bot:revived", function(b)
+    reactFrom(b, "saved")
+    -- The one thing he ever says about a rescue, once a run, on the first
+    -- machine the PLAYER carried home. Bot:revive sets `savedBy` before it
+    -- emits, and it is "player" only on a carry -- a beacon picking one up on
+    -- its own is not a thing he watched anybody do. Not a beat: a letterbox and
+    -- a held silence for four characters would be the game stopping itself to
+    -- be pleased. A bubble over his head, with the game still running.
+    if Story.saidGood or not b or b.savedBy ~= "player" then return end
+    local w = Story.world
+    local p = w and w.player
+    if not (w and p and w.speak) or w.cutscene or Dialogue.isActive() then return end
+    Story.saidGood = true
+    w:speak(p, Script.bark.rescued)
+  end, Story)
 
   -- tutorial acknowledgements
   Signal.on("player:shove", function() Story.did.shove = true end, Story)
   Signal.on("player:pulse", function() Story.did.pulse = true end, Story)
   Signal.on("player:dash",  function() Story.did.dash = true end, Story)
-  Signal.on("player:carry", function() Story.did.carry = true end, Story)
+  Signal.on("player:carry", function(bot)
+    Story.did.carry = true
+    reactFrom(bot, "carried")
+  end, Story)
   Signal.on("cobalt:gained", function() Story.did.cobalt = true end, Story)
 end
 
@@ -683,8 +1172,15 @@ local function updateBeats(dt, world)
     if e.def.patience and e.age > e.def.patience then
       e.expired = true
     elseif e.wait <= 0 and (Story.cooldown <= 0 or e.def.pri >= 3) then
-      if guardOk(e.def.guard, world) and (not e.def.require or e.def.require(world, e.ctx)) then
-        if not pick or e.def.pri > pick.def.pri then pick, pickI = e, i end
+      if guardOk(e.def.guard, world) then
+        -- How long this beat has had a moment its own guard was happy with and
+        -- has been held back by nothing but its `require`. Not `age`, which
+        -- also counts the night it was queued in: a relief valve wants to know
+        -- how long the beat has been THIS close, not how old it is.
+        e.ready = (e.ready or 0) + dt
+        if not e.def.require or e.def.require(world, e.ctx, e.ready) then
+          if not pick or e.def.pri > pick.def.pri then pick, pickI = e, i end
+        end
       end
     end
   end
@@ -766,6 +1262,8 @@ function Story.update(dt)
 
   Story.time = (Story.time or 0) + dt
   if Story.reactT > 0 then Story.reactT = Story.reactT - dt end
+  if Story.hurtT > 0 then Story.hurtT = Story.hurtT - dt end
+  if Story.reinforceT > 0 then Story.reinforceT = Story.reinforceT - dt end
 
   local p = world.player
   if p then
@@ -775,6 +1273,16 @@ function Story.update(dt)
     end
     Story.lastX, Story.lastY = p.x, p.y
   end
+
+  -- The two ambient overlays, derived rather than signalled. A bot's idle line
+  -- is drawn in bot.lua from the world's phase alone; these are the two things
+  -- that change what it should be saying and are not phases. Read off the world
+  -- each frame on purpose -- `extraction` has no closing signal to clear it on,
+  -- and a flag that latches would have the crew saying "why" over the ending.
+  local ph = world.phase
+  Names.extraction = (ph == "extraction")
+  Names.lastNight  = (ph == "dusk" or ph == "night")
+                     and (world.cycle or 1) >= TU.cycle.count
 
   refreshCast(world)
   pollFirstAttack(world)

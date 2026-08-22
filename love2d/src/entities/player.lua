@@ -8,7 +8,12 @@ local J        = require("src.engine.juice")
 local P        = require("src.engine.palette")
 local Signal   = require("src.core.signal")
 local Opt      = require("src.core.optional")
-local T        = require("src.game.tuning").player
+local TU       = require("src.game.tuning")
+local T        = TU.player
+local TI       = TU.idle
+local TN       = TU.notice
+local TH       = TU.helmet
+local TR       = TU.rescue
 
 local Draw  = Opt.require("src.engine.draw")
 local VFX   = Opt.require("src.engine.vfx")
@@ -21,6 +26,14 @@ local Player = Class("Player", Entity)
 -- constant options table is a constant, and building one per light per frame
 -- was pure garbage. Same idiom as `demo_light.lua`'s OPT_ tables.
 local OPT_LAMP = { flicker = 0.05 }
+
+-- The general idle pool, and the three "anything but the last one" variants of
+-- it. Hoisted because they are constants and `beginGesture` runs every few
+-- seconds for the whole run.
+local IDLE_ALL          = { "shoulder", "sky", "suit" }
+local IDLE_NOT_SHOULDER = { "sky", "suit" }
+local IDLE_NOT_SKY      = { "shoulder", "suit" }
+local IDLE_NOT_SUIT     = { "shoulder", "sky" }
 
 function Player:init(x, y, world)
   Player.super.init(self, x, y)
@@ -51,6 +64,30 @@ function Player:init(x, y, world)
   self.trail       = {}
   for i = 1, T.dash.trail do self.trail[i] = { x = x, y = y, a = 0, ang = 0 } end
   self.trailHead   = 1
+
+  -- What he does when nobody is asking him to do anything. See `updateIdle`.
+  self.idleT     = 0
+  self.idleNext  = TI.delay
+  self.gesture   = nil                 -- id of the gesture running, or nil
+  self.gestureT  = 0
+  self.lastGest  = nil
+  self.gestSide  = 1
+  self.swayT     = 0
+  -- Pose channels. Each one is a damped scalar a gesture writes a target into
+  -- and the body reads; nothing snaps, so a gesture cut short by the player
+  -- picking up the controller unwinds instead of popping.
+  self.pzRoll, self.pzChest, self.pzHead, self.pzLean = 0, 0, 0, 0
+  -- Where his head is pointed, which is not always where he is aiming.
+  self.gazeX, self.gazeY = 0, 1
+  self.headTurn  = 0
+  self.noticeT   = 0
+  self.noticeCd  = 0
+  self.noticeX, self.noticeY = 0, 0
+  -- Bodies he has already looked at, so he does not look twice. Weak keys: a
+  -- bot that expires must not be held alive by the fact he saw it fall.
+  self.seenDown  = setmetatable({}, { __mode = "k" })
+  self.fumbleT   = 0
+  self.idleRng   = U.rng(math.floor(x * 7 + y * 13) + 91)
 end
 
 ------------------------------------------------------------------------ helpers
@@ -73,7 +110,18 @@ function Player:speedMul()
 end
 
 ------------------------------------------------------------------------ update
-function Player:update(dt, camera)
+--- `realDt` is the wall clock, and it is here for one reason: the idle.
+---
+--- game.lua freezes the simulation while anybody is talking -- `world:update(
+--- talking and 0 or dt, realDt)` -- so during every cutscene this function ran
+--- with dt = 0 and the idle clock could not advance. That is the whole reason
+--- the prologue was a parked sprite, and dropping the `canAct()` gate in
+--- `updateIdle` (the obvious fix, and the one this was diagnosed as) does
+--- nothing on its own: measured before and after, the player region changed by
+--- the same 3,950 pixels either way. Ambient motion is not simulation, so it
+--- gets the real clock, exactly as `World:update` already does for the x-ray
+--- when the sim is stopped. With dt > 0 the two are the same number.
+function Player:update(dt, camera, realDt)
   self:updateCommon(dt)
 
   if self.state == "down" then
@@ -166,14 +214,19 @@ function Player:update(dt, camera)
   ------------------------------------------------------------------ shove
   self.shoveCd = math.max(0, self.shoveCd - dt)
   self.shoveAnim = math.max(0, self.shoveAnim - dt * 5)
-  if canAct and self:wants("shove") and self.shoveCd <= 0 and not self.charging then
+  -- Hands full. You cannot swing a blade with a machine over your shoulder, and
+  -- that is the whole of what a rescue costs: for the length of the walk you
+  -- are a man with no weapons and one dash.
+  if canAct and self:wants("shove") and self.shoveCd <= 0 and not self.charging
+     and not (TR.handsFull and self.carrying) then
     self:shove()
   end
 
   ------------------------------------------------------------------ pulse
   self.pulseCd = math.max(0, self.pulseCd - dt)
-  local wantPulse = self.agent and (auto and auto.pulse)
-                    or ((not self.agent) and Input.down("pulse"))
+  local wantPulse = (self.agent and (auto and auto.pulse)
+                    or ((not self.agent) and Input.down("pulse")))
+                    and not (TR.handsFull and self.carrying)
   if canAct and wantPulse and self.pulseCd <= 0 and self:cobalt() >= self:pulseCost() then
     if not self.charging then
       self.charging = true
@@ -211,6 +264,179 @@ function Player:update(dt, camera)
   self.lean = U.damp(self.lean, U.clamp(self.vx / T.maxSpeed, -1, 1) * 0.22, 9, dt)
   self.squash = U.damp(self.squash, 1, 10, dt)
   self.bob = self.bob + dt * (2 + sp * 5)
+  -- idle first: it is what decides where he is looking, and the gaze that
+  -- reads it is resolved in the same frame rather than the next one.
+  self:updateIdle(realDt or dt, mx, my)
+  self:updateNotice(dt)
+end
+
+--------------------------------------------------------------------- behaviour
+-- He speaks eight times in fifteen minutes. Everything else he feels arrives
+-- through this section, and none of it is a performance: no sighs, no slumps,
+-- nothing that tells the player how to take him. A tired competent man standing
+-- in a field, and the one thing he keeps checking that never says anything.
+--
+-- All of it is cosmetic. The aim vector, the shove cone, the blaster and the
+-- carry never read a single value written here, which is why it is allowed to
+-- happen while the player is busy doing something else.
+
+--- Hold-shaped envelope: up over `edge` of the gesture, flat, down over `edge`.
+local function hold(k, edge)
+  return U.saturate(math.min(k, 1 - k) / (edge or 0.25))
+end
+
+--- He notices the dead.
+---
+--- A machine goes down inside `range` and he turns his head to it for a second
+--- and a bit, and then goes back to what he was doing. It costs nothing, it
+--- interrupts nothing, and it is meant to be caught out of the corner of the
+--- eye rather than watched.
+function Player:updateNotice(dt)
+  self.noticeCd = math.max(0, self.noticeCd - dt)
+  if self.noticeT > 0 then self.noticeT = math.max(0, self.noticeT - dt) end
+
+  local w = self.world
+  if w and w.bots and self.state == "alive" and not w.cutscene then
+    local list, best, bestD = w.bots, nil, TN.range * TN.range
+    for i = 1, #list do
+      local b = list[i]
+      if b.alive and b.state == "down" then
+        if not self.seenDown[b] then
+          local dx, dy = b.x - self.x, b.y - self.y
+          local d2 = dx * dx + dy * dy
+          if d2 < bestD then best, bestD = b, d2 end
+        end
+      elseif self.seenDown[b] and b.state ~= "dead" then
+        -- back on its feet: the next time it falls is a new thing to see
+        self.seenDown[b] = nil
+      end
+    end
+    if best then
+      -- Marked seen whether or not he is free to look, so a body that fell
+      -- while he was mid-dash is not stared at ten seconds later.
+      self.seenDown[best] = true
+      if self.noticeCd <= 0 then
+        self.noticeT  = TN.dur
+        self.noticeCd = TN.cooldown
+        self.noticeX, self.noticeY = best.x, best.y
+      end
+    end
+  end
+
+  -- Gaze. Default is wherever he is aiming; a body he has just noticed wins,
+  -- and the radio wins over that (`updateIdle` sets `gazeAtX`).
+  local tx, ty, turn = self.aimX, self.aimY, 0
+  if self.noticeT > 0 then
+    local dx, dy = U.norm(self.noticeX - self.x, self.noticeY - self.y)
+    if dx ~= 0 or dy ~= 0 then
+      tx, ty = dx, dy
+      turn = hold(1 - self.noticeT / TN.dur, 0.22)
+    end
+  end
+  if self.gazeAtX then
+    local dx, dy = U.norm(self.gazeAtX - self.x, self.gazeAtY - self.y)
+    if dx ~= 0 or dy ~= 0 then tx, ty, turn = dx, dy, math.max(turn, self.gazeAtK or 1) end
+  end
+  self.gazeX = U.damp(self.gazeX, tx, TN.gaze, dt)
+  self.gazeY = U.damp(self.gazeY, ty, TN.gaze, dt)
+  self.headTurn = U.damp(self.headTurn, turn, TN.gaze, dt)
+end
+
+--- Standing still.
+---
+--- Under everything is a weight shift that never stops. On top of it, a gesture
+--- every few seconds: near the Home Rig it is always the radio, and anywhere
+--- else it is one of three small mechanical things a man does with his own body
+--- while he waits.
+function Player:updateIdle(dt, mx, my)
+  self.swayT = self.swayT + dt
+  self.gazeAtX, self.gazeAtY, self.gazeAtK = nil, nil, nil
+
+  local still = (mx == 0 and my == 0)
+                and self.dashTimer <= 0 and not self.charging and not self.carrying
+                and self.shoveAnim <= 0.02
+                and U.len(self.vx, self.vy) < TI.stillSpeed
+                -- NOT `canAct()`, which is false during any cutscene. He is the
+                -- SUBJECT of the cutscenes -- the prologue is the longest
+                -- uninterrupted look at him in the game before the ending -- and
+                -- gating stillness on it meant `idleT` reset every frame, so
+                -- `settle` stayed 0 and even the ambient weight shift was off.
+                -- Measured over the prologue: 5.3 seconds and three spoken
+                -- lines with ONE pixel in the whole 90x140 player region
+                -- differing by more than 10/255. He was a parked sprite.
+                and self.state == "alive"
+
+  if still then
+    self.idleT = self.idleT + dt
+    if not self.gesture and self.idleT >= self.idleNext then self:beginGesture() end
+  else
+    self.idleT = 0
+    self.idleNext = TI.delay
+    self.gesture = nil
+  end
+
+  local roll, chest, head, lean = 0, 0, 0, 0
+  local g = self.gesture
+  if g then
+    self.gestureT = self.gestureT + dt
+    local k = self.gestureT / (TI.dur[g] or 1.6)
+    if k >= 1 then
+      self.gesture = nil
+      self.idleT = 0
+      self.idleNext = self:rand(TI.gap[1], TI.gap[2])
+    elseif g == "shoulder" then
+      -- a hand up to the back of the neck and down again, once
+      roll = math.sin(k * math.pi) ^ 0.7
+    elseif g == "sky" then
+      -- looking up. There is nothing up there and he knows it.
+      head = hold(k, 0.28)
+    elseif g == "suit" then
+      -- a hand across to the chest, over the readout, which dips while he reads
+      chest = hold(k, 0.22)
+      roll = -chest
+    elseif g == "radio" then
+      -- the rig. He turns to it, leans in, and it says nothing.
+      local rig = self.world and self.world.rig
+      if rig then
+        self.gazeAtX, self.gazeAtY = rig.x, rig.y
+        self.gazeAtK = hold(k, 0.18)
+        lean = self.gazeAtK * TI.leanIn * ((rig.x < self.x) and -1 or 1)
+      end
+    end
+  end
+
+  local d = TI.damp
+  self.pzRoll  = U.damp(self.pzRoll,  roll,  d, dt)
+  self.pzChest = U.damp(self.pzChest, chest, d, dt)
+  self.pzHead  = U.damp(self.pzHead,  head,  d, dt)
+  self.pzLean  = U.damp(self.pzLean,  lean,  d, dt)
+end
+
+--- His own stream, never the world's. Which shoulder he rolls must not be able
+--- to move where a deposit spawns, or two balance traces of the same seed stop
+--- being the same run.
+function Player:rand(a, b)
+  return self.idleRng:range(a, b)
+end
+
+--- Pick the next one. Inside `rigRange` of the Home Rig it is never a choice.
+function Player:beginGesture()
+  local rig = self.world and self.world.rig
+  local g
+  if rig and U.dist(self.x, self.y, rig.x, rig.y) < TI.rigRange then
+    g = "radio"
+  else
+    -- never the same one twice running: three gestures on a loop is a tic
+    local pool = (self.lastGest == "shoulder") and IDLE_NOT_SHOULDER
+              or (self.lastGest == "sky") and IDLE_NOT_SKY
+              or (self.lastGest == "suit") and IDLE_NOT_SUIT
+              or IDLE_ALL
+    g = pool[math.floor(self:rand(1, #pool + 0.999))]
+  end
+  self.gesture  = g
+  self.gestureT = 0
+  self.lastGest = g
+  self.gestSide = (self:rand(0, 1) < 0.5) and -1 or 1
 end
 
 ------------------------------------------------------------------------ actions
@@ -327,21 +553,38 @@ function Player:updateCarry(dt)
   -- action a player presses; it cannot press a key. Rescuing is a third of what
   -- a good player does at night, and a stand-in that never does it makes every
   -- headless balance trace read as a much worse run than the game deserves.
+  self.fumbleT = math.max(0, self.fumbleT - dt)
   local press = self.agent and (self.autoAct and self.autoAct.carry == true)
                 or (not self.agent and Input.pressed("plant"))
   if self.carrying then
     local b = self.carrying
     b.x, b.y = self.x - self.faceX * 4, self.y - 26
     -- carrying is ended deliberately, on its own key, so a shove never fumbles
-    if press then self.world:dropCarried(self) end
+    if press then self:putDown() end
     return
   end
   local bot = self.world:nearestDownedBot(self.x, self.y, T.carry.pickupRange)
-  if bot and press then
+  if bot and press and self.fumbleT <= 0 then
     self.carrying = bot
     bot.carried = true
     Audio.play("bot_revive", { pitch = 0.85 })
     Signal.emit("player:carry", bot)
+  end
+end
+
+--- Put the body down. One place, so a deliberate put-down and a fumble go
+--- through the same code and the same accounting.
+function Player:putDown(reason)
+  local b = self.carrying
+  if not b then return end
+  self.world:dropCarried(self)
+  if reason == "hit" then
+    -- You have to stoop for them again, and the clock did not stop while you did
+    self.fumbleT = TR.fumble
+    if b.state ~= "work" then
+      Audio.play("bot_down", { pitch = 1.12, volume = 0.55, x = b.x, y = b.y })
+      Signal.emit("player:fumble", b)
+    end
   end
 end
 
@@ -355,6 +598,9 @@ end
 ------------------------------------------------------------------------- damage
 function Player:onDamage(n, sx, sy)
   self.invuln = T.invuln * self:chip("invuln", 1)
+  -- A hit puts them down where you stood. Two hearts and a hundred metres of
+  -- dark forest was a walk; it is a decision now.
+  if TR.dropOnHit and self.carrying then self:putDown("hit") end
   if sx then self:push(self.x - sx, self.y - sy, T.knockback) end
   J.shake(0.55) J.stop(0.07)
   J.flashScreen(0.3, P.danger[1], P.danger[2], P.danger[3])
@@ -369,7 +615,7 @@ function Player:onDeath()
   self.downTimer = T.reboot
   self.vx, self.vy = 0, 0
   self.charging = false
-  if self.carrying then self.world:dropCarried(self) end
+  if self.carrying then self:putDown("hit") end
   if self.world then self.world:loseCobaltFraction(T.rebootCostPct) end
   J.shake(0.9)
   J.dilate(0.35, 1.1)
@@ -456,8 +702,15 @@ function Player:draw()
   g.push()
   g.translate(self.x, self.y)
   local bobY = math.sin(self.bob) * 1.3
-  g.translate(0, bobY)
-  g.shear(self.lean * 0.4, 0)
+  -- The weight shift. It never stops and it is barely a pixel; it is the whole
+  -- difference between a man standing in a field and a sprite parked in one.
+  local sway = math.sin(self.swayT * U.TAU / TI.swayPeriod) * TI.sway
+  local settle = U.saturate(self.idleT / TI.delay)
+  g.translate(sway * settle, bobY)
+  -- the head turn takes the torso a little way with it
+  local gang = math.atan2(self.gazeY, self.gazeX)
+  local twist = self.headTurn * TN.lean * math.cos(gang)
+  g.shear(self.lean * 0.4 + self.pzLean + twist, 0)
   g.scale(1 / self.squash, self.squash)
 
   local ang = math.atan2(self.aimY, self.aimX)
@@ -486,10 +739,17 @@ function Player:draw()
 
   -- arms swing against the legs: two beats, opposite phase, and it is the
   -- motion rather than the shape that reads at thirty pixels
+  -- One arm does the idle, and it is drawn in front of the torso rather than
+  -- behind it. Behind, a hand brought across the chest to read the suit is a
+  -- hand you cannot see, and a shoulder worked back is four hidden pixels.
+  -- `pzRoll` positive is the shoulder; negative is the same hand on the chest.
+  local gestArm = math.abs(self.pzRoll) > 0.02 and self.gestSide or nil
   Draw.setColor(suit(1.9), flicker)
   for i = -1, 1, 2 do
-    local k = -step * i * 3.0
-    Draw.capsule("fill", i * r * 0.50, -r * 0.44, i * r * 0.56, r * 0.28 + k, r * 0.155)
+    if i ~= gestArm then
+      local k = -step * i * 3.0
+      Draw.capsule("fill", i * r * 0.50, -r * 0.44, i * r * 0.56, r * 0.28 + k, r * 0.155)
+    end
   end
 
   -- torso, narrower than the rig, with the two chest bars the dialogue portrait
@@ -498,10 +758,34 @@ function Player:draw()
   Draw.roundRect("fill", -r * 0.46, -r * 0.76, r * 0.92, r * 1.30, r * 0.36)
   Draw.setColor(suit(3.0), flicker * 0.95)
   Draw.roundRect("fill", -r * 0.36, -r * 0.70, r * 0.72, r * 0.44, r * 0.22)
-  Draw.setColor(P.accent, 0.9 * flicker)
+  -- The chest readout. It dips while he is reading it, which is the only tell
+  -- that the suit-check gesture is a check of anything.
+  local chestA = 1 - self.pzChest * TI.chestBlink
+  Draw.setColor(P.accent, 0.9 * flicker * chestA)
   Draw.roundRect("fill", -r * 0.26, -r * 0.16, r * 0.30, r * 0.10, r * 0.05)
   Draw.roundRect("fill", -r * 0.26, r * 0.04, r * 0.46, r * 0.10, r * 0.05)
-  Draw.glow(-r * 0.05, r * 0.04, r * 0.7, P.accent, 0.22 * flicker, 2)
+  Draw.glow(-r * 0.05, r * 0.04, r * 0.7, P.accent, 0.22 * flicker * chestA, 2)
+
+  -- ...and the idle arm, over all of it.
+  if gestArm then
+    local i, a = gestArm, self.pzRoll
+    local hx, hy = i * r * 0.56, r * 0.28
+    if a > 0 then
+      -- back of the neck: the hand comes up beside the helmet, which is the one
+      -- place on him where a hand is unmistakably a hand at thirty pixels
+      hx = hx + (i * r * 0.80 - hx) * a
+      hy = hy + (-r * 0.94 - hy) * a
+    else
+      -- over the chest readout, on top of the readout he is reading
+      local b = -a
+      hx = hx + (-i * r * 0.02 - hx) * b
+      hy = hy + (r * 0.06 - hy) * b
+    end
+    Draw.setColor(suit(2.0), flicker)
+    Draw.capsule("fill", i * r * 0.50, -r * 0.44, hx, hy, r * 0.14)
+    Draw.setColor(suit(1.2), flicker)
+    love.graphics.circle("fill", hx, hy, r * 0.13)
+  end
 
   -- shove arm sweep
   if self.shoveAnim > 0 then
@@ -513,34 +797,66 @@ function Player:draw()
   -- neck and helmet. He is a head taller than he was; the extra height is all
   -- above the shoulders, which is what makes a silhouette read as a person
   -- rather than as a bollard.
+  -- Where the head is. It rides the turn -- a machine goes down beside him and
+  -- he looks at it -- and the sky gesture lifts it. Both are a couple of pixels
+  -- and both are the only thing on him that moves while he is standing still.
+  local hox = math.cos(gang) * r * TN.turn * self.headTurn
+  local hoy = math.sin(gang) * r * TN.turn * 0.5 * self.headTurn
+              - r * TI.headLift * self.pzHead
+  local hcy = -r * 1.32 + hoy
+
   Draw.setColor(suit(1.4), flicker)
-  Draw.roundRect("fill", -r * 0.15, -r * 1.06, r * 0.30, r * 0.34, r * 0.10)
+  Draw.roundRect("fill", -r * 0.15 + hox * 0.5, -r * 1.06 + hoy * 0.5,
+                 r * 0.30, r * 0.34, r * 0.10)
   Draw.setColor(self.suit and suit(2.5) or bare(2.4), flicker)
-  g.circle("fill", 0, -r * 1.32, r * 0.53)
+  g.circle("fill", hox, hcy, r * 0.53)
 
   -- the rim. One light, upper-left, on the helmet and down the near edge of the
   -- torso. Hard and bright: a 40% rim is a rim you cannot see at play scale.
   Draw.setColor(P.accentCool, 0.95 * flicker)
   g.setLineWidth(r * 0.12)
-  g.arc("line", "open", 0, -r * 1.32, r * 0.53, math.pi * 0.80, math.pi * 1.66)
+  g.arc("line", "open", hox, hcy, r * 0.53, math.pi * 0.80, math.pi * 1.66)
   g.setLineWidth(1)
   Draw.capsule("fill", -r * 0.42, -r * 0.46, -r * 0.42, r * 0.30, r * 0.055)
 
   if self.suit then
-    -- visor: bright, glowing, and it turns to whatever he is aiming at, so the
-    -- brightest mark on him also tells you which way he is facing
-    local vx = math.cos(ang) * r * 0.16
-    local vy = math.sin(ang) * r * 0.12 - r * 1.34
+    -- visor: bright, glowing, and it turns to whatever he is LOOKING at, which
+    -- is where he is aiming except in the second after something of his falls
+    -- over, when it is that instead
+    local vox, voy = math.cos(gang) * r * 0.16, math.sin(gang) * r * 0.12
+    local vx, vy = hox + vox, hcy + voy - r * 0.02
     -- the glass sits in a dark recess, exactly the way a bot's eye plate does:
     -- the same device on both faces, which is most of the reason the crew are
     -- allowed to read as people
     Draw.setColor(suit(1.0), flicker)
-    Draw.blob(vx * 0.55, vy + r * 0.01, r * 0.44, 9, 12, 0.07, 0.72)
+    Draw.blob(hox + vox * 0.55, hcy + voy * 0.55 + r * 0.01, r * 0.44, 9, 12, 0.07, 0.72)
     Draw.glow(vx, vy, r * 0.95, P.accentCool, 0.28 * flicker, 2)
     Draw.setColor(P.accentCool, flicker)
     Draw.blob(vx, vy, r * 0.31, 9, 12, 0.10, 0.66)
     Draw.setColor(P.white, 0.85 * flicker)
     g.circle("fill", vx - r * 0.10, vy - r * 0.09, r * 0.068)
+  else
+    -- NO HELMET, AND STILL A FACE.
+    --
+    -- The visor was the only feature this head had and it is gated on the suit,
+    -- so the instant the ending sets the helmet down, his head became a bare
+    -- oval with a rim arc on it -- at the one moment in the game the camera
+    -- pushes in on the grounds that it is "close enough to read his face"
+    -- (scenes/ending.lua). It is also the silhouette the comment above the suit
+    -- palette calls out as the failure that rewrite existed to escape.
+    --
+    -- The portrait in game/dialogue.lua already proves the design at close
+    -- range: hair, brows, eyes. At world scale it is the hair and the eyes, and
+    -- the eyes take the same gaze offset the visor used, so the head still
+    -- turns to whatever he is looking at -- which through the whole last scene
+    -- is the machines standing around him.
+    local vox, voy = math.cos(gang) * r * 0.16, math.sin(gang) * r * 0.12
+    Draw.setColor(P.shade(P.ramp.bark, 2.0), flicker)
+    Draw.blob(hox, hcy - r * 0.20, r * 0.47, 11, 14, 0.09, 0.50)
+    for sd = -1, 1, 2 do
+      Draw.setColor(P.shade(P.ramp.bark, 1.1), 0.92 * flicker)
+      g.circle("fill", hox + vox + sd * r * 0.19, hcy + voy + r * 0.05, r * 0.072)
+    end
   end
 
   g.pop()
@@ -592,6 +908,82 @@ function Player:draw()
 
   -- carried bot rides on the shoulder
   if self.carrying and self.carrying.drawCarried then self.carrying:drawCarried() end
+
+  -- and the helmet, if it is off. Drawn last and in world space: it ends up in
+  -- front of his boots, and it is not part of the body that leans and squashes.
+  self:drawHelmet()
+end
+
+------------------------------------------------------------------- the helmet
+-- At the ending the suit comes off. In the portrait that reads beautifully; in
+-- the world he used to simply acquire a pale head, and a mechanic does not
+-- vanish a part -- he sets it down.
+--
+-- The scene that plays the ending does not tick the world, so this runs off
+-- wall-clock from the moment it is armed rather than off a dt. That also means
+-- it needs no hook at all: `Player:draw` arms it the first frame the suit is
+-- gone, so it works whether or not the ending ever calls anything.
+
+--- Take it off and set it on the grass. Idempotent, and there is no way back.
+--- `side` is -1 or 1 and picks which side of his boots it lands on.
+function Player:setHelmetDown(side)
+  if self.helmet then return end
+  self.suit = false
+  self.helmet = {
+    t0   = love.timer and love.timer.getTime() or 0,
+    side = (side == -1) and -1 or 1,
+    x    = self.x, y = self.y,        -- where he was standing when he did it
+  }
+  Signal.emit("player:helmetOff", self)
+  return self.helmet
+end
+
+function Player:drawHelmet()
+  if not self.suit and not self.helmet then self:setHelmetDown() end
+  local h = self.helmet
+  if not h then return end
+  local g = love.graphics
+  local r = self.radius
+  local now = love.timer and love.timer.getTime() or 0
+  local t = now - h.t0
+
+  -- Path. It sits on his head while he breaks the seal, then goes down and out
+  -- in one movement, and it stops.
+  local k = U.saturate((t - TH.seal) / TH.lower)
+  local u = k * k * (3 - 2 * k)
+  local x0, y0 = h.x, h.y - r * 1.32 - U.saturate(t / TH.seal) * r * 0.18
+  local x1, y1 = h.x + h.side * r * TH.side, h.y + r * TH.drop
+  local hx = x0 + (x1 - x0) * u
+  local hy = y0 + (y1 - y0) * u - math.sin(u * math.pi) * TH.arc
+
+  local down = (k >= 1)
+  if down then
+    -- it is a part, on the ground, with a part's shadow under it
+    Draw.softShadow(hx, hy + r * 0.14, r * 0.60, r * 0.24, 0.5)
+  end
+
+  -- the shell, foreshortened once it is lying down
+  local sq = down and 0.82 or 1
+  g.push()
+  g.translate(hx, hy)
+  g.scale(1, sq)
+  Draw.setColor(suit(2.5))
+  g.circle("fill", 0, 0, r * 0.53)
+  Draw.setColor(P.accentCool, down and 0.6 or 0.95)
+  g.setLineWidth(r * 0.12)
+  g.arc("line", "open", 0, 0, r * 0.53, math.pi * 0.80, math.pi * 1.66)
+  g.setLineWidth(1)
+  -- the glass. It goes out on the grass over the next few seconds, and that is
+  -- the last lit thing he owns.
+  local lit = down and U.saturate(1 - (t - TH.seal - TH.lower) / TH.fade) or 1
+  Draw.setColor(suit(1.0))
+  Draw.blob(0, r * 0.02, r * 0.42, 9, 12, 0.07, 0.72)
+  if lit > 0.01 then
+    Draw.setColor(P.accentCool, lit)
+    Draw.blob(0, 0, r * 0.29, 9, 12, 0.10, 0.66)
+  end
+  g.pop()
+  if lit > 0.01 then Draw.glow(hx, hy, r * 0.9, P.accentCool, 0.24 * lit, 2) end
 end
 
 function Player:drawDown()

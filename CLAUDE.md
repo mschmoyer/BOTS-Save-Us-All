@@ -131,10 +131,17 @@ committing the artifacts.
 `tools/shot.sh` only renders the frames it photographs, so a full 20-minute session captures in
 seconds. **Read the PNGs.** Nothing about this game can be judged from the source alone.
 
-**Three traps in that harness**, each of which has produced a confident wrong number:
+**Four traps in that harness**, each of which has produced a confident wrong number:
 
-- The autoplay **trace** is not reproducible run to run on a contended machine — two identical
-  runs ended at 466 and 250 trees. Do not A/B with it.
+- The autoplay **trace** *was* not reproducible — two identical runs ended at 466 and 250
+  trees — and this was diagnosed as machine contention for a long time. It was not. **LuaJIT
+  randomises its string hash seed per process**, so `pairs()` over a string-keyed table walks
+  in a different order in every run, and two such loops fed gameplay: the weather pool in
+  `world/weather.lua` and the wave composition and escort tie-break in `game/director.lua`.
+  Both now iterate a fixed order, and three parallel same-seed runs produce **byte-identical**
+  traces. A same-seed trace is now a valid A/B — but if you ever add a `pairs()` loop whose
+  iteration order can reach the RNG or a tie-break, you will silently break that again, and
+  nothing will fail loudly when you do.
 - The autoplay **capture** is not a valid pixel A/B: two runs of identical code differ on 96%
   of pixels by ±1, because the grade is wall-clock dependent, and after a few thousand frames
   the two runs are not even in the same game state.
@@ -152,9 +159,32 @@ seconds. **Read the PNGs.** Nothing about this game can be judged from the sourc
   Read the result as: ~66% of pixels differ by ±1 (the dither/grade floor, ignore it) and the
   signal is the count differing by **more than 10/255**. For reference, F1+F2+F4 against their
   baseline measured 0.022–0.045% over that threshold across three frames.
-- Headless capture only calls `love.draw()` on photographed frames, so `Tree.setViewFromCamera`
-  never runs and **every tree reports on-screen** — which silently invalidates any measurement
-  of view-culling or anything else that depends on the camera.
+- **The autoplay agent is a better rescuer than any person, so every loss number
+  a trace produces is a lower bound rather than a measurement.** `game/autoplay.lua`
+  scans 900 world units for a downed bot -- most of the island, and about the width of
+  the screen at ship zoom -- and drops whatever it is doing to go and fetch. A player has
+  a HUD pip, a countdown and one pair of eyes. Measured both ways on the same seeds:
+  the default agent finishes a run having lost **3** machines (seed 4242) and **10**
+  (777); `BOTS_NO_RESCUE=1` finishes the same runs having lost **11** and **34**. A
+  person is somewhere in that band. A whole critique pass once concluded from the low
+  figure that "the nights cost you almost nothing" and proposed rebalancing the loss
+  economy — against the instrument. **Bracket it: run both bounds before you touch a
+  difficulty number.** The same runs also show `stats.rescued` climbing while the agent
+  rescues nobody, because Beacons revive the downed on their own; the rescue economy has
+  two sources and only one of them is the player.
+- Headless capture only calls `love.draw()` on photographed frames. This used to mean far more
+  than "culling measurements are invalid", and the entry that said only that was hiding the
+  real problem: **photographing a frame changed the simulation.** `Tree:update` sets `onScreen`
+  from a module view rect that was only ever written inside `World:draw`, and two things in the
+  *update* path read it — the LOD scheduler, and `updateLeaves`, which gates every pollen and
+  firefly emit. So a run executed with every tree on-screen at full LOD and full emission until
+  its first photograph, and switched tracks at that frame. Same seed, same 5900 frames:
+  `shots=5900` ended at t=362 / cycle 3 / 187 trees; `shots=10,5900` ended at t=385 / cycle 4 /
+  237 trees. **Every balance number this repo ever took from a trace was measured on a game that
+  never culled — which is not the game that ships**, since a real session draws every frame.
+  `World:update` now sets the cull rect itself, three different shot lists produce byte-identical
+  traces, and headless matches the browser. If you ever move that back into the draw pass, you
+  will silently reintroduce all of it.
 
 ### Two things that have bitten repeatedly
 

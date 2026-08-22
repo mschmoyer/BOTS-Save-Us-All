@@ -62,8 +62,12 @@ end
 ---
 --- This used to apply the cost-cutting chips and nothing else, which meant the
 --- one number the whole economy turns on was a lie everywhere it was printed.
---- `World:botCost` is the real rule: the price of a type climbs by `costGrowth`
---- for every one of that type already standing, capped at `costGrowthMax`. At
+--- `World:botCost` is the real rule, and it is no longer about what is standing:
+--- the price of a type climbs by `costGrowth` for every one of that type you
+--- have ever fielded at once, capped at `costGrowthMax`, and that peak relaxes
+--- back toward the live count over `costMemory`. Losing a machine therefore
+--- does not discount its replacement, which it used to -- the game rewarded
+--- attrition. Do not reconstruct any of that here; ask the world. At
 --- cycle five with eighteen bots alive the bar read PLANTER 10 for a planter
 --- that cost 41 -- and, worse, `afford` was computed from the fake figure, so a
 --- slot lit up as buyable and then the world refused it. Ask the world.

@@ -237,12 +237,27 @@ for i = 1, #Script.order do
   local id = Script.order[i]
   SLOTS[#SLOTS + 1] = { kind = "beat", id = id, title = Script.titles[id] or id }
 end
-SLOTS[#SLOTS + 1] = { kind = "tut", title = "9  TUTORIAL  GROWTH",
+SLOTS[#SLOTS + 1] = { kind = "tut", title = "12  TUTORIAL  GROWTH",
                       ids = { "move", "cobalt", "planter" } }
-SLOTS[#SLOTS + 1] = { kind = "tut", title = "10  TUTORIAL  DANGER",
+SLOTS[#SLOTS + 1] = { kind = "tut", title = "13  TUTORIAL  DANGER",
                       ids = { "shove", "dash", "rescue" } }
 
 local D = {}
+
+--- The spine walks `Script.order`, but `Story.force` plays a beat by looking it
+--- up in the DIRECTOR's table -- so a beat that exists in the script and has not
+--- been wired into story.lua yet does not fail here, it renders a labelled slot
+--- with nothing in it, which reads as a broken cutscene rather than as missing
+--- wiring. Give any such beat a stand-in definition: play it now, no guard, no
+--- prep. Registering a real one in story.lua replaces this by name, so this line
+--- costs nothing once the director has caught up.
+for i = 1, #Script.order do
+  local id = Script.order[i]
+  if Script.beats[id] and not Story.beats[id] then
+    Story.beats[id] = { id = id, pri = 3, guard = "now", delay = 0 }
+    print("demo_story: no director entry for beat '" .. id .. "', using a stand-in")
+  end
+end
 
 --- Everything each beat's prep needs handed to it, since no world is running.
 local function ctxFor(w, id)
@@ -252,6 +267,15 @@ local function ctxFor(w, id)
                                        lostEpitaph = "it planted 41 trees",
                                        lostX = w.homeX - 90, lostY = w.homeY + 40 } end
   if id == "question"    then return { bot = w.bots[1] } end
+  -- The three beats that fill the middle of the run. `radio` and `answer` are
+  -- both the question's machine coming back -- in the real game all three prefer
+  -- `Story.questionBot`, so the harness hands all three the same bot rather than
+  -- three different ones, or the spine walk reads as three strangers.
+  -- `firstBotLost` is the death of the bot that said "oh / hello", and its
+  -- camera step reads lostX/lostY, so those have to be here.
+  if id == "radio"       then return { bot = w.bots[1] } end
+  if id == "answer"      then return { bot = w.bots[1] } end
+  if id == "firstBotLost" then return { lostX = w.homeX - 90, lostY = w.homeY + 40 } end
   if id == "extraction"  then return { boss = w.boss } end
   if id == "rebellion"   then return { bot = w.bots[2] } end
   return {}

@@ -10,6 +10,8 @@ local J        = require("src.engine.juice")
 local Opt      = require("src.core.optional")
 local TU       = require("src.game.tuning")
 local Chips    = require("src.game.chips")
+local Names    = require("src.game.names")
+local Save     = require("src.game.save")
 local Director = require("src.game.director")
 local Warmup   = require("src.game.warmup")
 
@@ -20,6 +22,7 @@ local CobaltE    = require("src.entities.cobalt")
 local Projectile = require("src.entities.projectile")
 local Boss       = require("src.entities.boss")
 local HomeRig    = require("src.entities.homerig")
+local Relic      = require("src.entities.relic")
 
 local Terrain  = Opt.require("src.world.terrain")
 local Tree     = Opt.require("src.entities.tree")
@@ -65,7 +68,13 @@ function World:init(seed, opts)
   -- of them is built once instead of twice a frame -- `World:draw` and
   -- `World:emitLights` each made their own, and a table a frame is a table a
   -- frame.
-  self.mobileLists = { self.bots, self.enemies, self.cobalts, self.projectiles }
+  -- Relics are static, non-interactive world objects (src/entities/relic.lua).
+  -- They ride the mobile lists purely for the draw and shadow passes and the
+  -- view cull those already do; they are never swept, never tick, and emit no
+  -- light, so nothing else in this file has to know about them.
+  self.relics = {}
+  self.mobileLists = { self.bots, self.enemies, self.cobalts, self.projectiles,
+                       self.relics }
   -- the same trees as `self.trees`, in depth order, and the slice of that the
   -- camera can see: see World:addTree
   self.treesZ, self.visTrees = {}, {}
@@ -90,6 +99,10 @@ function World:init(seed, opts)
   self.stats       = { planted = 0, lost = 0, botsLost = 0, botsBuilt = 0, killed = 0,
                        cobaltMined = 0, rescued = 0 }
   self.allLostNames = {}       -- never cleared: the ending reads the whole run
+  -- The largest crew of each type this run has fielded. It, and not the crew
+  -- standing right now, is what the price of the next one is read off; see
+  -- World:botCost for why.
+  self.peakBots    = {}
   self.dawnReport  = nil
 
   if Tree.prewarm and not opts.noPrewarm then pcall(Tree.prewarm) end
@@ -108,9 +121,16 @@ function World:init(seed, opts)
   self.centerX, self.centerY = TU.world.w / 2, TU.world.h / 2
 
   self:placeHome()
+  Relic.populate(self)
   if opts.restore then
     self:restore(opts.restore)
   else
+    -- Serials are module state on Bot and count for the life of the process,
+    -- not the life of a run: a second run started in the same session named
+    -- its first planter SEED-13, and at a hundred of a type the %02d wrapped
+    -- round to SEED-00. A restore does NOT reset them -- it takes the serials
+    -- off the save instead, and the crew that came back keeps its names.
+    if Bot.resetSerials then Bot.resetSerials() end
     self:seedCobalt()
   end
   Warmup.mark("home")
@@ -483,6 +503,10 @@ function World:plantTree(x, y, by)
   end
   local gap = TU.tree.spreadReject * 0.74
   if self.hTree:nearest(x, y, gap, fAlive) then return false end
+  -- Nothing roots on top of a relic, so the wood grows around the wreck, the
+  -- road and the pad instead of swallowing them, and they are still standing in
+  -- their clearings when the ending pulls the camera back over the canopy.
+  if Relic.blocksPlantingAt(self, x, y) then return false end
 
   local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000)) or nil
   if not t then return false end
@@ -500,13 +524,26 @@ end
 
 --- The plant chime climbs a pentatonic ladder with the forest. It has to be able
 --- to come back down, or a bad night leaves the sound lying about the world.
+--- Traits live in names.lua as tables; a save carries the id. Rebuilt into the
+--- same table the live game uses, so a restored record is shaped like one that
+--- was made this session.
+local traitById
+local function traitOf(id)
+  if not id or id == "" then return nil end
+  if not traitById then
+    traitById = {}
+    for i = 1, #Names.traits do traitById[Names.traits[i].id] = Names.traits[i] end
+  end
+  return traitById[id]
+end
+
 --- Rebuild a saved run in place. Called from init, so nothing has ticked yet
 --- and no signal has a listener: this writes state, it does not play the run
 --- forward. See src/game/save.lua for what is stored and why so little of it.
 function World:restore(d)
   local Tree_  = Tree
   local trees  = d.trees or {}
-  for i = 1, #trees, 5 do
+  for i = 1, #trees, Save.TREE_STRIDE do
     local x, y, seed, growth, elder = trees[i], trees[i + 1], trees[i + 2],
                                       trees[i + 3], trees[i + 4]
     local t = Tree_.new and Tree_.new(x, y, seed) or nil
@@ -525,23 +562,76 @@ function World:restore(d)
   for i = 1, #chips do self.chips:add(chips[i]) end
 
   local bots, types, names = d.bots or {}, d.botTypes or {}, d.botNames or {}
-  for i = 1, #bots, 4 do
-    local k = (i - 1) / 4 + 1
+  local traits = d.botTraits or {}
+  local BS = Save.BOT_STRIDE
+  -- The highest serial ever issued per type, gathered as the crew is rebuilt.
+  -- Bot's serial counter is module state and a restore restarts it at the
+  -- number of bots that came back, so without this a newly built machine takes
+  -- a dead one's name -- observed as two FRAME-04s collapsing into one row on a
+  -- memorial that dedupes by name. See Bot.resetSerials.
+  local topSerial = {}
+  for i = 1, #bots, BS do
+    local k = (i - 1) / BS + 1
     local botType = types[k]
     if botType and TU.bots[botType] then
       local b = Bot.new(bots[i], bots[i + 1], botType, self, self.rng)
       b.maxHp  = b.maxHp + self.chips:get("botHp", 0)
       b.hp     = math.min(bots[i + 2] or b.maxHp, b.maxHp)
       b.serial = bots[i + 3] or b.serial
+      if b.serial > (topSerial[botType] or 0) then topSerial[botType] = b.serial end
+      -- their own tally, not the world's: this is what Bot:epitaph reads, and
+      -- dropping it here memorialised six cycles of work as "was here"
+      b.planted = bots[i + 4] or 0
+      b.built   = bots[i + 5] or 0
+      b.log.planted, b.log.built = b.planted, b.built
+      -- The rest of the ledger rides the same row, once save.lua's BOT stride
+      -- grows to carry it (the comment there says exactly how). Read only when
+      -- the stride is actually wide enough -- at stride 6 these slots are the
+      -- NEXT machine's position, and a bot that inherited its neighbour's x as
+      -- a night count would be worse than one that forgot.
+      if BS >= 13 then
+        local L = b.log
+        L.nights    = bots[i + 6] or 0
+        L.downs     = bots[i + 7] or 0
+        L.saves     = bots[i + 8] or 0
+        L.carried   = bots[i + 9] or 0
+        L.mined     = bots[i + 10] or 0
+        L.shots     = bots[i + 11] or 0
+        L.bornCycle = bots[i + 12] or self.cycle
+      end
       if names[k] and names[k] ~= "" then b.name = names[k] end
+      b.trait = traitOf(traits[k]) or b.trait
+      -- the trait feeds the wear shade, and the ledger above feeds the patina,
+      -- so a restored veteran has to look like one before its first frame
+      b:refreshWear()
       -- they were already standing when you left; do not boot them all again
       b.state, b.stateT, b.bootT = "work", 0, 0
       self:addEntity(self.bots, self.hBot, b)
     end
   end
+  -- The dead count too. A machine that died before the save is still holding
+  -- its name on the memorial, and the memorial dedupes by name, so the counter
+  -- has to clear the highest serial ever ISSUED and not the highest still
+  -- standing. Names are written "%s-%02d", so a serial past ninety-nine comes
+  -- back wrapped and this is a floor rather than an exact recovery -- which is
+  -- still strictly better than restarting at the size of the surviving crew.
+  local prefixOf = {}
+  for i = 1, #TU.bots.order do
+    local kind = TU.bots.order[i]
+    prefixOf[TU.bots[kind].prefix] = kind
+  end
+  for i = 1, #(d.lostNames or {}) do
+    local pre, num = string.match(d.lostNames[i] or "", "^(%u+)%-(%d+)$")
+    local kind = pre and prefixOf[pre]
+    if kind then
+      num = tonumber(num) or 0
+      if num > (topSerial[kind] or 0) then topSerial[kind] = num end
+    end
+  end
+  if Bot.resetSerials and next(topSerial) then Bot.resetSerials(topSerial) end
 
   local nodes = d.nodes or {}
-  for i = 1, #nodes, 3 do
+  for i = 1, #nodes, Save.NODE_STRIDE do
     local c = CobaltE.new(nodes[i], nodes[i + 1], self, self.rng, true)
     c.left = nodes[i + 2] or c.left
     self:addEntity(self.cobalts, self.hCobalt, c)
@@ -549,11 +639,68 @@ function World:restore(d)
   -- an island that was mined out still gets its refills
   if #self.cobalts == 0 then self:seedCobalt() end
 
+  -- What the crew used to be, which is what the next one costs. Without this a
+  -- resumed run forgives every loss the saved run took, so closing the tab
+  -- after a bad night would be the cheapest way to undo it. Written in
+  -- TU.bots.order, one number per type; absent (an older file, or a type added
+  -- since) falls back to the crew that came back, which forgives nothing that
+  -- is still standing and nothing the file can prove.
+  local pk = d.peakBots or {}
+  for i = 1, #TU.bots.order do
+    local kind = TU.bots.order[i]
+    local v = tonumber(pk[i]) or 0
+    local owned = self:countBots(kind)
+    self.peakBots[kind] = (v > owned) and v or owned
+  end
+
+  -- The graves. Replayed through `Relic.addHusk` rather than reconstructed, so
+  -- the minimum gap, the cap and the retirement queue all apply exactly as they
+  -- did in the run that wrote them, and the hashed angle and flip come back off
+  -- the same floored coordinates. Written oldest-first, so laying them in order
+  -- leaves the queue retiring in the order it would have. Without this a
+  -- resumed run kept every name in the memorial and lost every body: the island
+  -- forgot its dead and the planters planted over the ground they died on.
+  local hu = d.husks or {}
+  local HS = Save.HUSK_STRIDE
+  if Relic.addHusk then
+    for i = 1, #hu - (HS - 1), HS do
+      local kind = TU.bots.order[hu[i + 2] or 1] or TU.bots.order[1]
+      Relic.addHusk(self, hu[i], hu[i + 1], kind)
+    end
+  end
+
   self.cycle  = math.max(1, math.floor(d.cycle or 1))
   self.cobalt = math.max(0, math.floor(d.cobalt or 0))
   self.time   = d.time or 0
   self.o2     = d.o2 or 0
-  self.allLostNames = d.lost or {}
+  -- The memorial reads records ({name, type, cycle, trait, planted, built}),
+  -- so they go out as parallel arrays and come back as records. They used to
+  -- go out through a string serialiser, which wrote each one as its own
+  -- address and printed "table: 0x7f21fcb071a8" on the ending screen.
+  self.allLostNames = {}
+  local lNames = d.lostNames or {}
+  local lTypes, lTraits, lFacts = d.lostTypes or {}, d.lostTraits or {}, d.lostFacts or {}
+  local LS = Save.LOST_STRIDE
+  for i = 1, #lNames do
+    local f = (i - 1) * LS
+    local rec = { name = lNames[i], type = lTypes[i],
+                  trait = traitOf(lTraits[i]),
+                  cycle = lFacts[f + 1] or 0,
+                  planted = lFacts[f + 2] or 0,
+                  built = lFacts[f + 3] or 0 }
+    -- ...and the rest of the ledger, when the LOST stride carries it. Same
+    -- gate and same reason as the BOT stride above.
+    if LS >= 10 then
+      rec.nights    = lFacts[f + 4] or 0
+      rec.downs     = lFacts[f + 5] or 0
+      rec.saves     = lFacts[f + 6] or 0
+      rec.carried   = lFacts[f + 7] or 0
+      rec.mined     = lFacts[f + 8] or 0
+      rec.shots     = lFacts[f + 9] or 0
+      rec.bornCycle = lFacts[f + 10] or rec.cycle
+    end
+    self.allLostNames[i] = rec
+  end
   self.rallyX, self.rallyY = d.rallyX, d.rallyY
 
   local st = d.stats or {}
@@ -598,13 +745,85 @@ function World:countBots(botType)
   return n
 end
 
+--- The largest crew of this type the run has fielded. Raised here as well as
+--- inside botCost, so the memory is a fact about the run rather than a fact
+--- about who last happened to ask the price.
+function World:notePeak(botType)
+  local owned = self:countBots(botType)
+  local p = self.peakBots
+  if owned > (p[botType] or 0) then p[botType] = owned end
+  return owned
+end
+
+--- The remembered crew fades back toward the crew actually standing.
+---
+--- Without this the peak is a wall. Lose twenty Planters on a bad cycle 3 and
+--- every replacement is priced as the twenty-first for the rest of the run,
+--- which turns one bad night into a dead run -- punished rather than bereaved,
+--- and a worse game than the one that rewarded attrition. With it the loss is
+--- expensive exactly while you are rebuilding from it, and a cycle or so later
+--- it is forgotten. `TU.bots.costMemory` is the half-life; 0 disables the fade.
+---
+--- Half a second of cadence and one pass over the crew: countBots per type
+--- every frame is six passes over the same array for nothing.
+function World:updatePeakBots(dt)
+  local hl = TU.bots.costMemory or 0
+  if hl <= 0 then return end
+  self.peakT = (self.peakT or 0) + dt
+  if self.peakT < 0.5 then return end
+  local elapsed = self.peakT
+  self.peakT = 0
+  local order = TU.bots.order
+  local live = self.peakLive
+  if not live then live = {} self.peakLive = live end
+  for i = 1, #order do live[order[i]] = 0 end
+  for i = 1, #self.bots do
+    local b = self.bots[i]
+    if b.alive and b.state ~= "dead" and live[b.type] then
+      live[b.type] = live[b.type] + 1
+    end
+  end
+  local keep = 0.5 ^ (elapsed / hl)
+  local p = self.peakBots
+  for i = 1, #order do
+    local k = order[i]
+    local pk, owned = p[k], live[k]
+    if pk then
+      if pk <= owned then p[k] = owned
+      else
+        local gap = (pk - owned) * keep
+        -- snap the last twentieth of a machine away, so the price of a crew
+        -- that has been whole for a while is an integer's worth again
+        p[k] = (gap < 0.05) and owned or (owned + gap)
+      end
+    end
+  end
+end
+
 --- The price of the next bot of this type, with escalation and chips applied.
+---
+--- The escalation is priced off the PEAK crew of this type, not the standing
+--- one. Off the standing one a death made the replacement CHEAPER: the only
+--- material consequence of losing a machine had the wrong sign, and a run that
+--- lost half its Planters was handed a discount on rebuilding them. Off the
+--- peak, the machine you lost is a machine you have to buy twice.
+---
+--- `TU.bots.costForgiveness` writes off part of the gap at once and
+--- `TU.bots.costMemory` fades the rest; at costForgiveness = 1 this is exactly
+--- the old behaviour, which is the one-line way back.
 function World:botCost(botType)
   local def = TU.bots[botType]
   if not def then return 0 end
   local owned = self:countBots(botType)
+  local peak = self.peakBots[botType] or 0
+  if owned > peak then peak = owned self.peakBots[botType] = owned end
+  -- Forgiveness is how much of the (peak - standing) gap is WRITTEN OFF, so it
+  -- subtracts. This read `* costForgiveness` and shipped with the value 0,
+  -- which collapsed the basis back to the standing count -- i.e. the whole
+  -- change was inert and a death still discounted its own replacement.
+  local basis = owned + (peak - owned) * (1 - (TU.bots.costForgiveness or 0))
   local growth = def.costGrowth or TU.bots.costGrowth
-  local mul = math.min(1 + owned * growth, TU.bots.costGrowthMax)
+  local mul = math.min(1 + basis * growth, TU.bots.costGrowthMax)
   return math.ceil(def.cost * mul * self.chips:get("botCost", 1))
 end
 
@@ -647,8 +866,17 @@ function World:spawnBot(x, y, botType, free, offRoster)
   local b = Bot.new(x, y, botType, self, self.rng)
   b.maxHp = b.maxHp + self.chips:get("botHp", 0)
   b.hp = b.maxHp
+  -- Not crew: a machine that was working somewhere else on the island when the
+  -- rebellion started and walked in for the rig. It matters on the memorial --
+  -- these arrive seconds before they die, so without knowing what they are the
+  -- epitaph can only report their age, and a dozen rows reading "lasted one
+  -- second" is a bug however true each one is. See Bot:epitaph.
+  b.offRoster = offRoster or nil
   self:addEntity(self.bots, self.hBot, b)
-  if not offRoster then self.stats.botsBuilt = self.stats.botsBuilt + 1 end
+  if not offRoster then
+    self.stats.botsBuilt = self.stats.botsBuilt + 1
+    self:notePeak(botType)
+  end
   if self.phase == "extraction" and self.boss and self.boss.alive and self.botsRebelled then
     b:rebel(self.boss)
   end
@@ -798,7 +1026,10 @@ function World:dropCarried(player)
   -- home is meant to be a real option, not one that needs prior planning.
   local atRig = self.homeX and U.dist(b.x, b.y, self.homeX, self.homeY) < TU.world.homeRadius
   if atRig or self:beaconAt(b.x, b.y) then
-    b:revive()
+    -- "player", not a bare revive: this is the one rescue the player made with
+    -- their own hands, and it is the only one that buys the machine a loyalty
+    -- timer and the rarest epitaph in the game.
+    b:revive("player")
     self.stats.rescued = self.stats.rescued + 1
   end
 end
@@ -833,9 +1064,18 @@ function World:speak(who, line)
     table.remove(self.speeches, worst)
   end
   self.speeches[#self.speeches + 1] = { who = who, line = line, t = 0, dur = 3.2 }
-  -- a stable variant per bot, so each one keeps its own voice all run
-  Audio.play("bot_chatter", { volume = 0.35, pitch = 0.9 + (who.serial % 7) * 0.04,
-                              variation = who.serial, x = who.x, y = who.y })
+  -- a stable variant per bot, so each one keeps its own voice all run.
+  -- The mechanic gets a bubble too now (his one acknowledgement of a rescue),
+  -- and he has no serial: `who.serial % 7` on the player was an arithmetic-on-
+  -- nil crash waiting for the first machine anyone carried home. He is also not
+  -- a bot, so he does not get the bot voice. The rest of this path is clean for
+  -- a non-bot speaker: `drawSpeech` wants `alive` (Entity sets it) and `radius`
+  -- (Player has it), and the furthest-speaker eviction above can never drop him
+  -- because he is the one at distance zero from himself.
+  local serial = who.serial or 0
+  Audio.play(who.kind == "player" and "ui_move" or "bot_chatter",
+             { volume = 0.35, pitch = who.serial and (0.9 + (serial % 7) * 0.04) or 1,
+               variation = serial, x = who.x, y = who.y })
 end
 
 --------------------------------------------------------------------- the clock
@@ -1146,8 +1386,11 @@ function World:beginExtraction()
   self.hEnemy:insert(self.boss)
   for i = 1, #self.bots do
     local b = self.bots[i]
-    -- everyone gets up for this, including the ones still on the ground
-    if b.state == "down" then b:revive() end
+    -- everyone gets up for this, including the ones still on the ground.
+    -- "rig", so it is not counted as a rescue: nobody came and got them, and
+    -- forty machines whose epitaph reads "the light brought it back" is the
+    -- mail merge this whole pass exists to delete.
+    if b.state == "down" then b:revive("rig") end
     if b.state == "work" then
       b.mood = "confused"
       -- nothing gets to take them from you before they choose it themselves
@@ -1196,9 +1439,52 @@ function World:update(dt, realDt)
 
   if self.rallyX then self.rallyT = (self.rallyT or 0) + dt end
   if self.rig then self.rig:update(dt) end
-  if self.player then self.player:update(dt, self.camera) end
+  if self.player then self.player:update(dt, self.camera, realDt) end
+  -- CULLING IS A SIMULATION INPUT, so it cannot be left to the draw pass.
+  --
+  -- `Tree:update` sets `onScreen` from the module view rect, and two things in
+  -- the update path read it: the LOD scheduler right below, and
+  -- `Tree:updateLeaves`, which gates every pollen and firefly emit on it. The
+  -- rect was only ever written from inside `World:draw`. In a real session that
+  -- is harmless -- every frame draws -- but headless only calls love.draw() on
+  -- photographed frames, so until the first photograph the rect was untouched
+  -- and EVERY tree reported on screen, at full LOD and full emission.
+  --
+  -- Two consequences, both measured. The shot list changed the run: seeds and
+  -- frame counts held, `shots=5900` and `shots=10,5900` diverged from the
+  -- photographed frame onward (t=362/cycle 3/187 trees against t=385/cycle
+  -- 4/237). And every balance number this repo ever took from a trace was
+  -- measured on a game that never culled, which is not the game that ships.
+  -- Setting the rect here makes headless match the browser and makes a trace
+  -- independent of where its shots fall; three shot lists now agree byte for
+  -- byte. Only the cull inputs -- the air, the rim and the x-ray focus are a
+  -- LOOK and stay in draw.
+  if self.camera and self.camera.viewRect and Tree.setView then
+    Tree.setView(self.camera:viewRect(0))
+  end
   sweep(self.trees, self.hTree, dt)
   self:refreshVisibleTrees()
+  -- THE X-RAY IS A CAMERA EFFECT, NOT A SIMULATION ONE, and this is the whole
+  -- of the "the cutscene subject is under a tree" bug.
+  --
+  -- game.lua passes `dt = 0` to this function while anybody is talking, so that
+  -- the Blight cannot eat the crew behind a page of dialogue. Every tree's
+  -- `updateXray` damps by that zero, which means the canopy is frozen in
+  -- whatever state it held at the instant the scene opened -- and a scene opens
+  -- by panning the camera somewhere NEW. The hole over the speaker never got a
+  -- frame to open in. Adding a focus for the subject (see `World:draw`) does
+  -- nothing at all until this runs.
+  --
+  -- So when the simulation is stopped, tick the x-ray on the real clock. Only
+  -- the visible slice, only while frozen, and `updateXray`'s own early-outs
+  -- still take almost every tree out in a couple of instructions.
+  if dt == 0 and realDt > 0 then
+    local vis = self.visTrees
+    for i = 1, #vis do
+      local t = vis[i]
+      if t.updateXray then t:updateXray(realDt) end
+    end
+  end
   sweep(self.bots, self.hBot, dt)
   sweep(self.enemies, self.hEnemy, dt)
   sweep(self.cobalts, self.hCobalt, dt)
@@ -1214,6 +1500,7 @@ function World:update(dt, realDt)
   end
 
   self:updateSpread(dt)
+  self:updatePeakBots(dt)
 
   -- speech bubbles
   for i = #self.speeches, 1, -1 do
@@ -1328,8 +1615,25 @@ function World:applyOxygen(dt)
 
   -- Filling the sky is the win condition, not surviving a fixed number of
   -- nights: the moment the air is breathable, they come to take it.
+  --
+  -- ...EXCEPT DURING THE LAST DAY, where "the moment" costs the game a scene.
+  -- On a fast run the air fills during cycle 7's DAY, the extraction starts
+  -- there, and cycle 7 never reaches a dusk -- so `S.lastNight`, which is
+  -- queued from the one `phase:dusk` handler in story.lua, is never queued at
+  -- all. Measured across ten seeds: 777 and 314 have no cycle-7 dusk sample in
+  -- the trace, the beat never plays, and the script runs from "i will plant
+  -- more" straight to "what is that" -- 198 and 213 seconds of silence, which
+  -- is the exact gap that beat was written to fill. The better the run, the
+  -- likelier it was lost, because filling the sky early is what deleted it.
+  --
+  -- The same day also carries the `lastnight` chatter pool and the dial's
+  -- THE LAST NIGHT state, so a cycle 7 without a night drops all of it. Holding
+  -- the rig until that dusk costs at most one day -- and the rig arriving at
+  -- nightfall is when everything else in this game arrives.
+  local lastDay = (self.cycle or 1) >= TU.cycle.count
+                  and (self.phase == "day" or self.phase == "dawn")
   if self.o2 >= TU.o2.target - 0.3 and self.phase ~= "extraction"
-     and self.phase ~= "ending" then
+     and self.phase ~= "ending" and not lastDay then
     self:beginExtraction()
   end
 
@@ -1434,6 +1738,20 @@ function World:draw(camera)
         Tree.addFocus(b.x, b.y, BP.xrayRadius)
         opened = opened + 1
       end
+    end
+    -- ...and a soft one on whatever a cutscene is framing. A captured `radio`
+    -- beat put the camera exactly on the speaking bot and the bot was under a
+    -- closed canopy for the whole scene: the shot was correct and the subject
+    -- was not in it. `Camera:focus()` is where the camera is actually looking,
+    -- offsets folded in, which during a beat is the entity Dialogue is panning
+    -- to -- so this needs nothing from the dialogue runtime and cannot
+    -- disagree with the framing. It is damped by the pan on the way in and by
+    -- `xrayRate` on the way out, so it cannot flicker, and a frame with no
+    -- cutscene running does not execute any of it.
+    if self.cutscene then
+      local CS = TU.cutscene
+      local fx, fy = camera:focus()
+      Tree.addFocus(fx, fy, CS.radius, CS.focus)
     end
   end
   if VFX.setViewport then
@@ -1609,7 +1927,14 @@ function World:drawSpeech()
     local who = s.who
     if who.alive and self.camera:visible(who.x, who.y, 60) then
       local rise = U.smoothstep(0, 0.35, s.t) * 6
-      self:drawBubble(who.x, who.y - (who.radius or 12) * 2.4 - rise, s.line, a)
+      -- ...with who is talking. `Bot:plateAlpha` returns 0 for the whole time a
+      -- machine holds a speech slot, so this is the only place its name can be
+      -- while it has something to say. THE HUMAN IS UNNAMED AND STAYS UNNAMED:
+      -- he speaks through this queue too, and a label over his one bark would
+      -- undo the thing the whole script protects.
+      local name = (who.kind ~= "player") and who.name or nil
+      self:drawBubble(who.x, who.y - (who.radius or 12) * 2.4 - rise, s.line, a,
+                      name)
     end
   end
 end
@@ -1633,9 +1958,21 @@ function World:emitLights(Light)
 end
 
 ------------------------------------------------------------------------ signals
+--- NEW: the loss record carries the machine's whole ledger, not two numbers.
+---
+--- The memorial is the only place a name is ever read again, and a field that
+--- exists only on the live bot is no use there -- `cycle` is the cycle the LOSS
+--- was recorded in, so without `bornCycle` and `nights` the ending cannot say
+--- how long anything lasted without inventing it. `epitaph` is the finished
+--- line as `Bot:epitaph` cut it at the moment of death, which is the only
+--- moment `age` and the machine's remaining charges are still true -- so
+--- scenes/ending.lua can take `rec.epitaph` verbatim and fall back to the
+--- fields only for a record that came back off a save.
 Signal.on("bot:lost", function(bot, peaceful)
   local w = bot.world
   if not w or peaceful then return end
+  local L = bot.log
+  local line = bot:epitaph()
   w.stats.botsLost = w.stats.botsLost + 1
   w.lostNames = w.lostNames or {}
   w.lostNames[#w.lostNames + 1] = bot.name
@@ -1643,8 +1980,119 @@ Signal.on("bot:lost", function(bot, peaceful)
   w.allLostNames[#w.allLostNames + 1] = { name = bot.name, type = bot.type,
                                           cycle = w.cycle, trait = bot.trait,
                                           planted = bot.planted or 0,
-                                          built = bot.built or 0 }
-  Signal.emit("bot:epitaph", bot.name, bot:epitaph())
+                                          built = bot.built or 0,
+                                          epitaph = line,
+                                          nights = L and L.nights or 0,
+                                          bornCycle = L and L.bornCycle or w.cycle,
+                                          downs = L and L.downs or 0,
+                                          saves = L and L.saves or 0,
+                                          carried = L and L.carried or 0,
+                                          mined = L and L.mined or 0,
+                                          shots = L and L.shots or 0,
+                                          lit = L and L.lit or 0,
+                                          walked = L and math.floor(L.walked) or 0,
+                                          age = math.floor(bot.age or 0) }
+  Signal.emit("bot:epitaph", bot.name, line)
+end)
+
+--- NEW: the one counter that makes a machine old.
+---
+--- Every bot still standing when the sun comes up has survived a night. That
+--- single number is what `Bot:refreshWear` turns into the patina and the tick
+--- marks a player can read off a crowd, and it is what `Bot:epitaph` falls back
+--- to for a machine that did no work of its own. One pass over at most
+--- forty-eight bots, once a cycle.
+Signal.on("phase:dawn", function()
+  local w = Signal._world
+  if not w or not w.bots then return end
+  for i = 1, #w.bots do
+    local b = w.bots[i]
+    if b.alive and b.state ~= "dead" and b.log then
+      b.log.nights = b.log.nights + 1
+      if b.refreshWear then b:refreshWear() end
+    end
+  end
+end)
+
+--- NEW: what a loss costs the crew.
+---
+--- A death used to change nothing in the world: a counter went up, two lists
+--- grew, and the other machines carried on planting. One spatial query over the
+--- neighbours now stops them working and sends them to the body for about
+--- fourteen seconds -- see `T.bots.grief`, `Bot:workRate` and `Bot:pickWander`.
+--- The player watches the crew put their work down and walk over, which is the
+--- story of a loss told entirely in movement and costs one query.
+---
+--- Hoisted, not a closure: `Spatial:each` is called with this on every loss and
+--- a five-upvalue closure per call was the single largest allocator in the game
+--- before PERFORMANCE.md item 7 went through it.
+local griefX, griefY = 0, 0
+local function grieve(b)
+  if not b.alive or b.state ~= "work" then return end
+  b.grief = TU.bots.grief.time
+  b.griefX, b.griefY = griefX, griefY
+  -- On the ring, not on the body: `Bot:pickWander` keeps them there for the
+  -- rest of the grief, but this first target is set directly and used to send
+  -- every mourner to the corpse's exact coordinates. See T.bots.grief.standOff.
+  local G = TU.bots.grief
+  local ang = b.rng and b.rng:angle() or 0
+  local dist = b.rng and b.rng:range(G.standOff, G.arrive) or G.standOff
+  b.wx, b.wy = griefX + math.cos(ang) * dist, griefY + math.sin(ang) * dist
+end
+
+local function crewMourns(bot)
+  local w = bot.world
+  if not w or not w.hBot then return end
+  if w.phase == "extraction" or w.phase == "ending" then return end
+  griefX, griefY = bot.x, bot.y
+  w.hBot:each(bot.x, bot.y, TU.bots.grief.radius, grieve)
+end
+
+--- Call the crew to a place, for a body that fell a while ago.
+---
+--- `crewMourns` runs on the death itself, and the grief it sets lasts
+--- `T.bots.grief.time` -- fourteen seconds. The funeral beat cannot use that
+--- window: a machine dies mid-fight, and the beat's "calm" guard then holds it
+--- until the fight is over. Measured on seed 4242, the beat sat for 82 seconds
+--- with zero bots within 240 units of the body for every one of them, and fired
+--- through its own relief valve onto an empty clearing. The crew had mourned
+--- properly, a minute earlier, and gone back to work.
+---
+--- So the funeral is CONVENED. The beat asks for the crew when it is otherwise
+--- ready, and waits for them to walk over -- which is what the scene is.
+function World:mournAt(x, y)
+  if not (self.hBot and x and y) then return end
+  if self.phase == "extraction" or self.phase == "ending" then return end
+  griefX, griefY = x, y
+  self.hBot:each(x, y, TU.bots.grief.radius, grieve)
+end
+
+Signal.on("bot:downed", crewMourns)
+Signal.on("bot:lost", function(bot, peaceful)
+  if not peaceful then crewMourns(bot) end
+end)
+
+--- NEW: and the body stays.
+---
+--- A loss used to leave nothing on the ground. The corpse is swept the frame it
+--- dies, so both of the script's funeral beats -- whose delay and patience are
+--- measured in minutes -- were playing over empty grass with a bot saying "yes"
+--- at a patch of meadow; story.lua's own comment admits it for one of the two.
+--- `Relic.addHusk` leaves a permanent, non-interactive, unlit husk at the spot:
+--- see the husk note at the top of src/entities/relic.lua for why that is worth
+--- more than a decal, and the `husk` block in tuning for what it costs.
+---
+--- Not on a peaceful shutdown. A machine that powered down at the extraction
+--- walked onto the ship; only the ones that were killed are left behind.
+Signal.on("bot:lost", function(bot, peaceful)
+  if peaceful or not Relic.addHusk then return end
+  local w = bot.world
+  if not w then return end
+  -- Nothing is left behind after the rig is down: the finale gathers the crew,
+  -- the camera is on the boss, and a body appearing under the ending's own
+  -- cutscene is a prop arriving during a curtain call.
+  if w.phase == "ending" then return end
+  Relic.addHusk(w, bot.x, bot.y, bot.type)
 end)
 
 -- Old Growth applies to what you plant next, not to the wood you already have:

@@ -25,12 +25,20 @@ local Opt      = require("src.core.optional")
 local Audio    = Opt.require("src.engine.audio")
 local HUD      = Opt.require("src.game.hud")
 local BuildMenu = Opt.require("src.game.buildmenu")
+local TU       = require("src.game.tuning")
 
 local lg = love.graphics
 local floor, min, max, abs = math.floor, math.min, math.max, math.abs
 local pi = math.pi
 
 local S = {}
+
+--------------------------------------------------------------------- the radio
+-- Every word the interface says lives in game/script.lua.
+local STR = require("src.game.script").dawn
+--- How wide the log's own little column is. Two micro rows, label left and
+--- number right, which is how every other pair of numbers in this game is set.
+local RADIO_W = 168
 
 --------------------------------------------------------------------- timing
 local SEQ = {
@@ -97,6 +105,11 @@ function S:enter(world, report)
   local names = self.report.names or {}
   self.names = names
   self.nameSpoken = 0
+
+  -- Composed once, here, because it is the one thing on this screen that has
+  -- to be identical every dawn except for the digit.
+  self.dayStr = string.format(STR.day,
+                              TU.radio.dayZero + (self.report.cycle or 1))
 end
 
 --- The HUD is the day's instrument panel, and dawn is not the day: it leaves
@@ -244,6 +257,32 @@ function S:drawTally(x, y, w, a)
           d >= 0 and P.accent or P.danger)
 end
 
+--- The radio log.
+---
+--- Seven dawns in a run, and nothing else in this game gets seven repetitions,
+--- so this is the only place in it where anything can actually accumulate. It
+--- accumulates by not changing: the wording is the same on the seventh dawn as
+--- on the first, and only the day advances.
+---
+--- Everything about it is deliberately inert. Smallest type on the screen, the
+--- faintest ink in the palette, no stagger, no chime, no colour change, no
+--- flourish on the last cycle -- it is instrument furniture, in the register of
+--- a panel light nobody looks at, and it is drawn before the heading so it is
+--- read once and then stopped being read. Nothing in the game ever remarks on
+--- it. That is the entire design: the ending switches the radio off, and what
+--- the player is supposed to feel there is that they stopped reading this.
+---
+--- It also carries the run's only honest date. The prologue says the sky has
+--- been that colour for eleven days and the HUD then counts cycles, so the
+--- eleven never became twelve anywhere; 11 + cycle does that, once a dawn.
+function S:drawRadio(x, y, w, a)
+  UI.caption(STR.radio, x, y, UI.ts.micro, UI.c(P.inkFaint, 0.6 * a), "left")
+  UI.caption(STR.noAnswer, x, y + 14, UI.ts.micro,
+             UI.c(P.inkFaint, 0.85 * a), "left")
+  UI.caption(self.dayStr or "", x + w, y + 14, UI.ts.micro,
+             UI.c(P.inkFaint, 0.85 * a), "right")
+end
+
 --- The names. This block is deliberately the quietest and the slowest thing on
 --- the screen, and it is the only place the display face is used at heading size
 --- for anything that is not a number or a title.
@@ -254,10 +293,15 @@ function S:drawNames(x, y, w, a)
   local k0 = UI.stagger(t, 1, SEQ.names - 0.16, 0, 0.4)
   if k0 <= 0.002 then return end
 
+  -- One slot, one caption, every dawn: the memorial in the credits is built
+  -- the same way -- WHO DID NOT COME BACK, and NONE under it -- and a player
+  -- who has learned where to look does not have to read a new sentence to find
+  -- out it was a good night. It said "EVERY BOT CAME BACK" over "ALL ACCOUNTED
+  -- FOR", which is one fact phrased twice.
   if n == 0 then
-    UI.caption("EVERY BOT CAME BACK", x + w, y, UI.ts.micro,
+    UI.caption("DID NOT COME BACK", x + w, y, UI.ts.micro,
                UI.c(P.accent, 0.9 * a * k0), "right")
-    UI.text("ALL ACCOUNTED FOR", x + w, y + 18, UI.ts.h3, UI.c(P.accent, a * k0),
+    UI.text("NONE", x + w, y + 18, UI.ts.h3, UI.c(P.accent, a * k0),
             "right", a * k0, 0.08)
     return
   end
@@ -365,6 +409,7 @@ function S:draw()
   local fw = w - fx * 2
   local headY = floor(h * 0.075 / UI.u) * UI.u
 
+  self:drawRadio(fx, max(UI.u, headY - 34), RADIO_W, a)
   self:drawTally(fx, headY, floor(fw * 0.58 / UI.u) * UI.u, a)
   self:drawNames(fx + fw - floor(fw * 0.30), headY + 4, floor(fw * 0.30), a)
 
