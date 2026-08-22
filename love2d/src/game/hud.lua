@@ -155,6 +155,12 @@ HUD.hidden    = false
 HUD.chrome    = 1
 HUD.holdK     = 0        -- 0..1 presence of the HOLD THE DAWN offer
 HUD.botCount  = 0
+-- Trees that have grown old. The only quantity in the game still rising through
+-- the last third -- trees, oxygen and crew are all flat from about cycle 5 --
+-- and until now `world.elderTrees` was read by exactly one line in the repo,
+-- the CSV telemetry in scenes/game.lua. The last three cycles had no number the
+-- player could watch go up.
+HUD.elders    = 0
 HUD.o2Rate    = 0        -- smoothed %/s, signed
 HUD.o2Cause   = nil      -- why it is moving, when it is moving down
 HUD.o2Lag     = 0        -- a slow copy of the reading, for the trend sign
@@ -463,6 +469,7 @@ function HUD.init(world)
   HUD.time = 0
   HUD.cob.v = world and world.cobalt or 0
   HUD.trees.v = world and world.treeCount or 0
+  HUD.elders  = world and world.elderTrees or 0
   HUD.o2Shown = world and world.o2 or 0
   HUD.o2Mile = 0
   HUD.duskK, HUD.threat = 0, 0
@@ -602,6 +609,7 @@ function HUD.update(dt, world)
 
   Text.odometer(HUD.cob, world.cobalt or 0, dt, 9)
   Text.odometer(HUD.trees, world.treeCount or 0, dt, 7)
+  HUD.elders = world.elderTrees or 0
   HUD.o2Shown = U.damp(HUD.o2Shown, world.o2 or 0, 5, dt)
 
   -- Under the bars, not sliced by them. Driven straight off the letterbox

@@ -643,6 +643,13 @@ function S:enter(world)
     self.fallen = fallenRecords(world)
     self.stats = {
       trees   = world.treeCount or 0,
+      -- How much of it got OLD. `world.elderTrees` was computed every frame and
+      -- read by exactly one line in the repo -- the CSV telemetry -- and it is
+      -- the only quantity still climbing through the last third of a run, when
+      -- trees, oxygen and crew have all levelled off. On this page it is also
+      -- the thing the ending is actually claiming: not that the forest survived,
+      -- but that some of it has been standing long enough to be old.
+      elders  = world.elderTrees or 0,
       lost    = (world.stats and world.stats.lost) or 0,
       planted = (world.stats and world.stats.planted) or 0,
       o2      = o2,
@@ -674,8 +681,8 @@ function S:enter(world)
     self.plateOnly = next(only) and only or nil
   else
     self.bots, self.fallen = {}, {}
-    self.stats = { trees = 0, lost = 0, planted = 0, o2 = 0, cycles = 0,
-                   built = 0, rescued = 0, theirs = 0 }
+    self.stats = { trees = 0, elders = 0, lost = 0, planted = 0, o2 = 0,
+                   cycles = 0, built = 0, rescued = 0, theirs = 0 }
   end
 
   if Bot then

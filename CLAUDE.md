@@ -159,9 +159,19 @@ seconds. **Read the PNGs.** Nothing about this game can be judged from the sourc
   Read the result as: ~66% of pixels differ by ±1 (the dither/grade floor, ignore it) and the
   signal is the count differing by **more than 10/255**. For reference, F1+F2+F4 against their
   baseline measured 0.022–0.045% over that threshold across three frames.
-- Headless capture only calls `love.draw()` on photographed frames, so `Tree.setViewFromCamera`
-  never runs and **every tree reports on-screen** — which silently invalidates any measurement
-  of view-culling or anything else that depends on the camera.
+- Headless capture only calls `love.draw()` on photographed frames. This used to mean far more
+  than "culling measurements are invalid", and the entry that said only that was hiding the
+  real problem: **photographing a frame changed the simulation.** `Tree:update` sets `onScreen`
+  from a module view rect that was only ever written inside `World:draw`, and two things in the
+  *update* path read it — the LOD scheduler, and `updateLeaves`, which gates every pollen and
+  firefly emit. So a run executed with every tree on-screen at full LOD and full emission until
+  its first photograph, and switched tracks at that frame. Same seed, same 5900 frames:
+  `shots=5900` ended at t=362 / cycle 3 / 187 trees; `shots=10,5900` ended at t=385 / cycle 4 /
+  237 trees. **Every balance number this repo ever took from a trace was measured on a game that
+  never culled — which is not the game that ships**, since a real session draws every frame.
+  `World:update` now sets the cull rect itself, three different shot lists produce byte-identical
+  traces, and headless matches the browser. If you ever move that back into the draw pass, you
+  will silently reintroduce all of it.
 
 ### Two things that have bitten repeatedly
 

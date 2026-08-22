@@ -561,6 +561,9 @@ S.credits = {
   -- like a bug in the one place the game cannot afford one.
   rows = {
     { key = "trees",   label = "STILL STANDING" },
+    -- A subset of the row above, and the only number on this page that says
+    -- how long the forest has been there rather than how big it is.
+    { key = "elders",  label = "OLD GROWTH" },
     { key = "lost",    label = "TREES LOST" },
     { key = "o2",      label = "OXYGEN RESTORED", suffix = "%" },
     { key = "cycles",  label = "NIGHTS HELD" },
