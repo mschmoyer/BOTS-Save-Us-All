@@ -9,14 +9,26 @@
 # parsing before the shell runs -- see tools/pack_web.js for the measurements.
 # The single file is kept because it still runs from a USB stick.
 set -euo pipefail
-cd "$(dirname "$0")/.." || exit 1
-
+# Resolve the output path against the caller's directory, before the cd below
+# moves us into the project -- otherwise a relative path lands somewhere the
+# caller did not name.
 MODE=multi
 if [ "${1:-}" = "--single" ]; then MODE=single; shift; fi
 if [ "$MODE" = single ]; then OUT="${1:-/tmp/bots_web/index.html}"
 else                           OUT="${1:-/tmp/bots_web}"; fi
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
+cd "$(dirname "$0")/.." || exit 1
 
-TC=/home/user/.toolchain/node_modules
+# love.js lives wherever this machine keeps it: an explicit LOVEJS, the
+# repo's own node_modules (what Vercel installs), or the original toolchain.
+LOVEJS="${LOVEJS:-}"
+if [ -z "$LOVEJS" ]; then
+  for c in node_modules/love.js/index.js ../node_modules/love.js/index.js \
+           /home/user/.toolchain/node_modules/love.js/index.js; do
+    if [ -f "$c" ]; then LOVEJS="$c"; break; fi
+  done
+fi
+[ -n "$LOVEJS" ] || { echo "love.js not found; npm install love.js" >&2; exit 1; }
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -46,7 +58,7 @@ zip -qr "$WORK/game.love" main.lua conf.lua src assets \
 #    needed). NOTE: -c is not an Asyncify build -- the release wasm is actually
 #    larger, and the difference is pthreads. Dropping -c does not recover
 #    interpreter speed; see docs/PERFORMANCE_SPEC.md.
-node "$TC/love.js/index.js" -t "BOTS: Save Us All" -c -m 335544320 \
+node "$LOVEJS" -t "BOTS: Save Us All" -c -m 335544320 \
   "$WORK/game.love" "$WORK/out" >/dev/null
 
 # 3. lay the runtime, the game data and the loaders out for the chosen shape

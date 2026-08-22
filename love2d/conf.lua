@@ -14,6 +14,22 @@ function love.conf(t)
   t.window.minwidth    = 854
   t.window.minheight   = 480
   t.window.resizable   = true
+  -- Fullscreen is the default shape of this game natively. Three cases keep a
+  -- plain window: the headless capture harness, anyone who names a size with
+  -- BOTS_W/BOTS_H, and the browser -- where the canvas is already sized to the
+  -- page by the shell, and asking SDL for fullscreen makes it size the canvas
+  -- to the *screen* instead, which overflows the viewport. The page has its
+  -- own fullscreen, and it is the browser's to give. F11 toggles either way.
+  local web = false
+  if type(_G.arg) == "table" then
+    for i = 1, #_G.arg do
+      if tostring(_G.arg[i]):match("^%-%-BOTS_WEB=") then web = true break end
+    end
+  end
+  local sized    = (os.getenv("BOTS_W") or "") ~= "" or (os.getenv("BOTS_H") or "") ~= ""
+  local headless = (os.getenv("BOTS_HEADLESS") or "") ~= ""
+  t.window.fullscreen     = not (sized or headless or web)
+  t.window.fullscreentype = "desktop"
   t.window.vsync       = 1
   t.window.msaa        = 0               -- we anti-alias in the post chain instead
   t.window.stencil     = true

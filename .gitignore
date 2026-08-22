@@ -6,6 +6,7 @@ love2d/build/
 love2d/src/bake/
 /.vercel
 /node_modules
+public/
 
 # Scratch: raw music masters land here; only the encoded assets/music ogg ships.
 love2d/tmp/

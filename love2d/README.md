@@ -32,6 +32,10 @@ all supported; the UI re-glyphs itself live when you change device.
 
 `F3` toggles the performance readout, `F5` restarts, `F11` is fullscreen.
 
+The native window opens fullscreen. Setting `BOTS_W`/`BOTS_H` (or running the headless
+harness) opens a plain window of that size instead. In the browser the canvas fills the page,
+and pressing **Begin** asks for browser fullscreen -- the bottom-right control toggles it.
+
 ## Building the web version
 
 LÖVE compiled to WebAssembly, in one of two shapes. Requires `node` with the `love.js`
@@ -76,6 +80,23 @@ costs an extra ~750 ms of JavaScript parsing on every load and re-downloads the 
 on every visit, so it is not what you point players at.
 
 See [`../docs/PERFORMANCE_SPEC.md`](../docs/PERFORMANCE_SPEC.md) for the measurements.
+
+`love.js` is found wherever this machine keeps it: `LOVEJS`, the repository's own
+`node_modules` (what Vercel installs -- `npm install` at the repository root), or the
+original toolchain path.
+
+### The hosted deploy
+
+From the repository root:
+
+```bash
+npm run build            # -> public/, the hosted build
+vercel deploy --prod     # https://bots-save-us-all.vercel.app
+```
+
+Vercel runs the same `npm run build`, so a git-connected deploy produces the same tree.
+Nothing else in this repository is hosted -- the 2019 GameMaker project is excluded by
+`.vercelignore`.
 
 ## Tools
 

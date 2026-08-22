@@ -119,6 +119,13 @@ NODE_PATH=/home/user/.toolchain/node_modules \
   node tools/webperf.js http://127.0.0.1:8123/index.html 20000 1280 720
 ```
 
+### Hosting
+
+The Love2D web build is the only thing this repository hosts. `vercel.json` at the root runs
+`npm run build` (which is `love2d/tools/build_web.sh public`, the hosted multi-file shape) and
+serves `public/`; `.vercelignore` keeps the GameMaker project out of the deployment. It is live at
+<https://bots-save-us-all.vercel.app>.
+
 `tools/shot.sh` only renders the frames it photographs, so a full 20-minute session captures in
 seconds. **Read the PNGs.** Nothing about this game can be judged from the source alone.
 

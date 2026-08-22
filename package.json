@@ -1,0 +1,11 @@
+{
+  "name": "bots-save-us-all-web",
+  "private": true,
+  "description": "Web build of BOTS: Save Us All - Reforest (love2d/), the only thing this repo hosts.",
+  "scripts": {
+    "build": "love2d/tools/build_web.sh public"
+  },
+  "dependencies": {
+    "love.js": "11.4.1"
+  }
+}
