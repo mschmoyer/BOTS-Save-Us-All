@@ -130,8 +130,93 @@ local TUNE = {
 
   lodPixels     = 52,     -- on-screen height under which the cheap mesh is used
   rimPixels     = 96,     -- ... above which the additive rim pass is worth it
-  shadowPixels  = 24,     -- ... under which shadows are skipped entirely
+  -- On-screen height under which a tree stops casting a contact shadow, and the
+  -- band above it over which the shadow fades in. This used to be 24px, which
+  -- is small enough that it never removed anything: measured on the 900-tree
+  -- night island, 479 of 479 visible trees drew a shadow, tree shadow alone was
+  -- 9.27 screens of overdraw a frame, and shadows were 479 of 1,628 draw calls.
+  -- Sweeping the threshold on that scene: 40px -> 477 draws, 56 -> 470, 72 ->
+  -- 457, 96 -> 406, 128 -> 363, 160 -> 309. 128 is where the curve has given up
+  -- a useful quarter of the draws (and 17% of the shadow fill) while the
+  -- picture is still the picture: against the 24px capture of a grown day
+  -- forest, 128 moves 798 pixels of 1.44 million by more than 10/255, all of
+  -- them inside canopy shade, and 160 starts visibly taking the shadow out from
+  -- under trees standing alone on bare rock, which is exactly the contact the
+  -- shadow is there to sell.
+  -- The fade band matters at this size. At 24px a tree crossing the threshold
+  -- gained a shadow nobody could see; at 128 it would pop one on, so a shadow
+  -- ramps in over 128..160px instead. It is free: those trees were drawing
+  -- anyway, the ramp only takes alpha off them.
+  -- One thing that WILL look like a bug and is not. This is a screen-space
+  -- LOD, and demo_tree's FOREST phase sits at zoom 0.62 -- half the game's
+  -- range, which is 1.16 at its widest and 1.25 at rest. So the flora test bed
+  -- renders almost no shadows at its default zoom while the game renders them
+  -- normally, and a demo_tree capture taken across this change moves ~8% of its
+  -- pixels against ~0.06% in the game. The tool is not lying; it is showing
+  -- what the game would show if the game ever pulled the camera back that far.
+  -- Press `]` to bring it into the game's range before judging shadow work.
+  -- If that trade is ever judged wrong, 96 is the fallback: it keeps ~15% of
+  -- the draw-call saving and moves 97 in-game pixels instead of 798.
+  shadowPixels  = 128,
+  shadowFade    = 1.25,   -- shadow reaches full strength at shadowPixels * this
   cullPad       = 90,
+  sleepFrames   = 4,      -- an off-screen tree runs its slow block 1 frame in N
+
+  -- ---------------------------------------------------------- sprite atlas
+  -- Item F6. OFF by default and it must stay that way until a human has looked
+  -- at the pictures: it trades the vertex-shader sway for a per-sprite shear,
+  -- and the sway is what the forest is for. The long argument for and against
+  -- lives above `atlasBuild` further down this file.
+  -- Measured on the standard 723-tree night island: draw calls 1263 -> 473,
+  -- tree fill 20.2 -> 44.1 screens a frame, and 5.6% of in-game pixels move by
+  -- more than 10/255 at atlasCell 256 (6.8% at 128). Every other item on the
+  -- performance list moved under 0.05%.
+  --   atlas        master switch. BOTS_TREE_ATLAS=0|1 overrides it.
+  --   atlasPixels  on-screen tree height AT OR BELOW which a tree is drawn from
+  --                the atlas. 1e9 = the whole forest; set it to a few hundred
+  --                for the hybrid (near trees keep the mesh and the real sway).
+  --                BOTS_TREE_ATLAS_PX overrides it.
+  --   atlasCell    atlas cell edge in pixels: the resolution a tree is baked
+  --                at, and therefore the size above which it goes soft.
+  --                BOTS_TREE_ATLAS_CELL overrides it.
+  --   atlasBands   depth slices the batch is flushed in. This is the whole
+  --                draw-call budget of the batched forest, and it is also how
+  --                far out of depth order a batched tree can land, so it trades
+  --                draw calls against sorting error.
+  --   atlasSwayLag how much of the crown's lagged sway the single per-sprite
+  --                transform uses. 1 = the crown's sway, 0 = the trunk's.
+  --   atlasSwayGain scales that. The mesh bends by `sway * h * h` and a sprite
+  --                can only be linear in h, so 1.0 matches the crown's travel
+  --                exactly and over-leans everything below it; 0.75 matches the
+  --                middle of the crown and leaves the trunk stiffer. There is
+  --                no value that is right for both - that IS the trade.
+  atlas         = false,
+  atlasPixels   = 1e9,
+  atlasCell     = 128,
+  --   atlasTall    cell HEIGHT as a multiple of atlasCell. Left at 1 because
+  --                it does not pay with ONE cell shape for every species: a
+  --                broadleaf crown is as wide as the tree is tall and its
+  --                width is what binds, so a tall cell buys it nothing while
+  --                costing the memory. A conifer would take 3.0 happily. The
+  --                obvious next move here is a per-species cell aspect, which
+  --                is a packing job nobody has done.
+  atlasTall     = 1.0,
+  atlasPad      = 3,      -- transparent gutter per cell, against linear bleed
+  atlasBands    = 8,
+  atlasSwayLag  = 0.75,
+  atlasSwayGain = 1.00,
+  -- Sway as a SHEAR about the root rather than a rotation. Both are linear in
+  -- height and neither can be the shader's quadratic, but the shader's bend is
+  -- a pure x displacement - `vp.x += sway * h * h` - and a shear is a pure x
+  -- displacement too, so it is the closer of the two: the crown's blobs stay
+  -- the shape they were baked, and the tree does not get shorter as it leans.
+  -- A rotation tips every leaf with the trunk. Set false to compare.
+  atlasSwayShear = true,
+  atlasSunStep  = 0.10,   -- sun/rim movement that forces a re-bake of the page
+  atlasShadow   = true,   -- project a baked silhouette for the shadow pass
+  atlasShadowCell = 0.5,  -- shadow page cell, as a fraction of atlasCell. Half
+                          -- was photographed against full and is the same
+                          -- picture at a quarter of the memory.
 }
 
 ---------------------------------------------------------------- the species
@@ -333,6 +418,51 @@ vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
 #endif
 ]]
 
+-- The two shaders the sprite-atlas path (item F6) draws its batches with. They
+-- are the tail of TREE_SHADER and SHADOW_SHADER respectively: everything those
+-- two do per *vertex* has already been baked into the atlas page, so all that
+-- is left to do per *pixel* is the part that cannot be baked because it is not
+-- a property of the tree's shape.
+--
+-- For the canopy that is the aerial perspective, which depends on how far up
+-- the screen the tree stands and so cannot live in a shared cell. The batch is
+-- flushed in depth bands and each band sends its own `uDepthA`, which is the
+-- same number `sendTreeUniform` puts in `uT.w` for a single tree, sampled at
+-- the middle of the band instead of at the tree.
+--
+-- Both read a PREMULTIPLIED page: a canvas drawn onto transparent black holds
+-- colour already multiplied by coverage, which is the only form that survives
+-- linear filtering without a dark halo round every leaf. So both return
+-- premultiplied too, and both batches are drawn in ("alpha", "premultiplied").
+-- Uniforms are qualified `mediump` in both stages for the reason SHARED_VS
+-- gives: an unqualified shared uniform links on desktop GL and fails under
+-- GLSL ES, which is a browser-only, silent, whole-forest failure.
+local ATLAS_SHADER = [[
+uniform mediump vec4 uAirA;     // rgb: atmosphere colour  a: how much depth buys
+uniform mediump float uDepthA;  // this band's depth up the screen: 0 near, 1 far
+#ifdef PIXEL
+vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+  vec4 c = Texel(tex, tc) * color;
+  float a = max(c.a, 0.0001);
+  vec3 u = c.rgb / a;                       // straighten, so the mix is a mix
+  float air = uDepthA * uAirA.a;
+  float gl = dot(u, vec3(0.2126, 0.7152, 0.0722));
+  u = mix(u, uAirA.rgb * (0.45 + 1.10 * gl), air);
+  return vec4(u * c.a, c.a);
+}
+#endif
+]]
+
+local ATLAS_SHADOW_SHADER = [[
+uniform mediump vec4 uShadowA;  // shadow colour, a = strength
+#ifdef PIXEL
+vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+  float a = Texel(tex, tc).a * color.a * uShadowA.a;
+  return vec4(uShadowA.rgb * a, a);
+}
+#endif
+]]
+
 local FORMAT = {
   { "VertexPosition", "float", 2 },
   { "VertexColor",    "float", 4 },
@@ -341,6 +471,7 @@ local FORMAT = {
 }
 
 local shTree, shShadow
+local shAtlas, shAtlasShadow
 local shadersOK = false
 
 local function initShaders()
@@ -350,6 +481,16 @@ local function initShaders()
   if ok1 and ok2 then
     shTree, shShadow = a, b
     shadersOK = true
+    -- The sprite-atlas pair is optional: if either fails to compile the atlas
+    -- switch simply never turns on and the mesh path is what draws.
+    local ok3, c = pcall(love.graphics.newShader, ATLAS_SHADER)
+    local ok4, d = pcall(love.graphics.newShader, ATLAS_SHADOW_SHADER)
+    if ok3 and ok4 then
+      shAtlas, shAtlasShadow = c, d
+    else
+      print("tree.lua: atlas shader compile failed, sprite atlas unavailable\n" ..
+            tostring(c) .. "\n" .. tostring(d))
+    end
   else
     shTree, shShadow = false, false
     shadersOK = false
@@ -608,9 +749,15 @@ local LAYER_ALPHA = { 1.00, 1.00, 1.00 }
 local LAYER_RIM   = { 0.06, 0.28, 0.55 }
 local LAYER_PUSH  = { -0.14, 0.0, 0.09 }   -- parallax: back layer up, front layer down
 
---- Lay the skeleton out at growth `g` and bake it into a mesh.
+--- Lay the skeleton out at growth `g` and tessellate it.
 --- `kind` is "full" | "lod" | "shadow".
-local function buildMesh(sk, g, kind)
+--- Returns the vertex list, the index list, the extents and the triangle area.
+--- This is the only place tree geometry is produced. `buildMesh` below turns
+--- the result into a GPU mesh; tools/bake_trees.sh writes the same result to
+--- disk so the browser does not have to run this at all. Both go through here,
+--- so the baked library can never disagree with the live one about anything
+--- except the cost of arriving at it.
+local function buildMeshData(sk, g, kind)
   local sp = sk.sp
   local sc = 1 / sk.normY      -- everything is laid out in units of adult height
   local invY = 1               -- ... so local y IS the height factor
@@ -747,7 +894,7 @@ local function buildMesh(sk, g, kind)
     for i = 1, #src do n = n + 1; I[n] = src[i] end
   end
 
-  if #V < 3 or n < 3 then return nil, maxY, maxR end
+  if #V < 3 or n < 3 then return nil, nil, maxY, maxR, 0 end
 
   -- Total triangle area, in the mesh's own unit-tall-adult space. A tree draw
   -- covers `area * (size * zoom)^2` fragments, so this is what lets the frame
@@ -760,6 +907,14 @@ local function buildMesh(sk, g, kind)
     area = area + abs((b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2])) * 0.5
   end
 
+  return V, I, maxY, maxR, area
+end
+
+--- The live tessellator's mesh. The reference implementation, and the fallback
+--- whenever there is no baked library to read one out of.
+local function buildMesh(sk, g, kind)
+  local V, I, maxY, maxR, area = buildMeshData(sk, g, kind)
+  if not V then return nil, maxY, maxR end
   local mesh = love.graphics.newMesh(FORMAT, V, "triangles", "static")
   mesh:setVertexMap(I)
   return mesh, maxY, maxR, area
@@ -775,22 +930,211 @@ end
 
 local function bucketGrowth(b) return b / (TUNE.buckets - 1) end
 
+local CELLS = #SPECIES * TUNE.variants * TUNE.buckets
+
+------------------------------------------------------------- baked library
+-- WHY THERE IS A CACHE IN FRONT OF THE TESSELLATOR
+--
+-- `ensure` keys on (species, variant, bucket) and on nothing else. The skeleton
+-- comes out of a PRNG seeded with the species and the variant, the growth is
+-- the bucket's, and no run seed reaches any of it: 5 species x 5 variants x
+-- 10 buckets is 250 cells and 750 meshes -- 247,897 vertices -- that are the
+-- same bytes on every machine and in every run. Today every browser tab
+-- tessellates all of them, in interpreted Lua, before the island appears.
+--
+-- The header of src/game/warmup measures that at 1.5 s in one uninterrupted
+-- burst and 26.4 s when it is sliced badly. So tools/bake_trees.sh runs the
+-- tessellator once at build time and writes the exact bytes the vertex buffers
+-- want; loading a cell becomes three newMesh calls and six memcpys.
+--
+-- This is a *cache*, not a replacement. `buildMeshData` above is how the
+-- geometry is authored, and it is the fallback for every case:
+--
+--   no manifest       -> tessellate, silently (a source checkout has no bake)
+--   stale fingerprint -> tessellate, loudly (the geometry moved, the bake did not)
+--   a cell that will not read -> tessellate that cell, keep the rest
+--
+-- BOTS_TREE_BAKE=0 forces the tessellator, which is how the two are compared;
+-- BOTS_TREE_BAKE=1 makes a missing or stale bake an error instead of a
+-- fallback, which is what a build script wants.
+--
+-- WHAT IT COSTS AND WHAT IT DOES NOT BUY
+--
+-- Measured. Natively `Tree.prewarm()` goes 325 ms -> 53 ms, min of five. In the
+-- hosted browser build (Chromium under SwiftShader, 1280x720, over HTTP) the
+-- same call goes 2,872 ms -> 1,274 ms, min of three, on a machine whose spread
+-- run to run is wider than the win -- so quote the minimum and say so.
+--
+-- The half that is left is not Lua. Timed inside the browser, a baked load of
+-- 3,399 ms is 1,723 ms in `newMesh` and 1,493 ms in `setVertexMap`: 750 GL
+-- buffer objects, created one at a time through emscripten. Reading the 12.5 MB
+-- blob out of the .love is 70 ms, slicing 1,500 ByteDatas out of it is 15 ms and
+-- `setVertices` is 7 ms -- the data was never the problem. Baking removes the
+-- tessellation and nothing else, and what remains is the same per-mesh GL cost
+-- that makes a visible tree a draw call. That is item F6's prize, not this one's.
+--
+-- It is not free either: the blob is 12.5 MB on disk, 4.7 MB gzipped, and the
+-- browser build's first visit goes from 4.17 MB to 8.71 MB compressed. It is
+-- content-hashed and served immutable, so it is a first-visit cost only, and
+-- BOTS_SKIP_TREE_BAKE=1 in tools/build_web.sh ships without it.
+local BAKE_DIR     = "src/bake/trees"
+local BAKE_VERSION = 1
+local bakeState    = nil    -- nil = not opened yet, false = unusable, table = open
+local bakeCount    = 0      -- cells that came out of the file rather than the tessellator
+
+-- Bytes per vertex, straight off FORMAT rather than written down twice: every
+-- attribute in it is a float, and the blob is the buffer contents verbatim.
+local BAKE_STRIDE = 0
+for i = 1, #FORMAT do BAKE_STRIDE = BAKE_STRIDE + FORMAT[i][3] * 4 end
+
+local function safe(f, ...)
+  if not f then return nil end
+  local ok, r = pcall(f, ...)
+  if ok then return r end
+  return nil
+end
+
+local function bakeCfg(name)
+  local f = _G.BOTS_CFG                    -- main.lua's env-or-argv reader
+  if f then return f(name) end
+  if os and os.getenv then
+    local v = os.getenv(name)
+    if v ~= nil and v ~= "" then return v end
+  end
+  return nil
+end
+
+--- What the geometry looks like is decided by this file, by the colour ramps it
+--- reads out of the palette, and by the handful of pure helpers in core/util it
+--- shapes growth with. Hash the three, store the hash in the manifest, and a
+--- bake that no longer matches the code that produced it is caught at load
+--- instead of shipped. love.data.hash is native in both runtimes, so this is a
+--- fraction of a millisecond rather than a byte loop over 100 KB of Lua.
+function Tree.bakeFingerprint()
+  if not (love and love.filesystem and love.data) then return "no-filesystem" end
+  local a = safe(love.filesystem.read, "src/entities/tree.lua")
+  local b = safe(love.filesystem.read, "src/engine/palette.lua")
+  local c = safe(love.filesystem.read, "src/core/util.lua")
+  if not (a and b and c) then return "no-source" end
+  local h = safe(love.data.hash, "md5", a .. b .. c)
+  if not h then return "no-hash" end
+  return safe(love.data.encode, "string", "hex", h) or "no-hex"
+end
+
+--- Open the baked library, or leave `bakeState` false and let the tessellator
+--- do what it has always done. Called once, from the first `ensure`.
+local function bakeOpen()
+  bakeState = false
+  local flag = bakeCfg("BOTS_TREE_BAKE")
+  if flag == "0" then return end
+  local required = (flag == "1")
+  local path = BAKE_DIR .. "/manifest.lua"
+  local function reject(why)
+    if required then error("baked tree library required but " .. why, 0) end
+    print("tree.lua: baked library ignored (" .. why .. "); tessellating instead")
+  end
+  if not (love and love.filesystem and love.graphics and love.data) then return end
+  if not love.filesystem.getInfo(path) then
+    if required then reject("there is no " .. path) end
+    return                                  -- a plain source checkout: not news
+  end
+  local chunk = safe(love.filesystem.load, path)
+  local m = chunk and safe(chunk)
+  if type(m) ~= "table" then return reject("the manifest would not load") end
+  if m.version ~= BAKE_VERSION then
+    return reject("it is layout v" .. tostring(m.version) .. ", this is v" .. BAKE_VERSION)
+  end
+  if m.stride ~= BAKE_STRIDE then
+    return reject("its vertices are " .. tostring(m.stride) .. " bytes, this format wants " ..
+                  BAKE_STRIDE)
+  end
+  if m.fingerprint ~= Tree.bakeFingerprint() then
+    return reject("the geometry or the palette changed since it was baked")
+  end
+  local blob = safe(love.filesystem.newFileData, BAKE_DIR .. "/" .. tostring(m.data))
+  if not blob then return reject("its data file is missing") end
+  if blob:getSize() ~= m.bytes then return reject("its data file is the wrong length") end
+  bakeState = { cells = m.cells, blob = blob, itype = m.itype,
+                isize = (m.itype == "uint32") and 4 or 2 }
+end
+
+--- The blob is 12 MB and every cell has been copied into a vertex buffer by the
+--- time the last one is read, so it goes back to the allocator the moment it is
+--- spent. In the browser that is 12 MB of a 320 MB heap.
+local function bakeRelease()
+  if type(bakeState) == "table" then
+    if bakeState.blob.release then safe(bakeState.blob.release, bakeState.blob) end
+    bakeState = false
+  end
+end
+
+--- One mesh out of a (byte offset, count) pair. The index data is raw 0-based
+--- GPU indices, which is what `Mesh:setVertexMap(Data, type)` takes -- the table
+--- form is the 1-based one.
+local function bakeMesh(st, vo, vc, io_, ic)
+  if vc <= 0 or ic <= 0 then return nil end
+  local vb = love.data.newByteData(st.blob, vo, vc * BAKE_STRIDE)
+  local ib = love.data.newByteData(st.blob, io_, ic * st.isize)
+  local mesh = love.graphics.newMesh(FORMAT, vc, "triangles", "static")
+  mesh:setVertices(vb)
+  mesh:setVertexMap(ib, st.itype)
+  if vb.release then vb:release() end
+  if ib.release then ib:release() end
+  return mesh
+end
+
+--- Fill one library cell from the bake. Returns the meta table, or nil to mean
+--- "read it from the tessellator instead" -- for a cell that is not in the file
+--- and for one that will not load, which are the same thing to the caller.
+local function bakeCellInto(key)
+  local st = bakeState
+  if type(st) ~= "table" then return nil end
+  local c = st.cells[key]
+  if not c then return nil end
+  local ok, m1, m2, m3 = pcall(function()
+    return bakeMesh(st, c[6], c[7], c[8], c[9]),
+           bakeMesh(st, c[10], c[11], c[12], c[13]),
+           bakeMesh(st, c[14], c[15], c[16], c[17])
+  end)
+  if not ok then
+    print("tree.lua: baked cell " .. key .. " would not load (" .. tostring(m1) ..
+          "); tessellating it")
+    return nil
+  end
+  LIB.full[key], LIB.lod[key], LIB.shadow[key] = m1, m2, m3
+  bakeCount = bakeCount + 1
+  return { extentY = c[1], extentR = c[2],
+           areaFull = c[3], areaLod = c[4], areaShadow = c[5] }
+end
+
 local function ensure(spi, variant, bucket)
   local key = libKey(spi, variant, bucket)
   local meta = LIB.meta[key]
   if meta then return key, meta end
   initShaders()
-  local sk = getSkeleton(spi, variant)
-  local g = bucketGrowth(bucket)
-  local m1, ey, er, a1 = buildMesh(sk, g, "full")
-  local m2, _, _, a2    = buildMesh(sk, g, "lod")
-  local m3, _, _, a3    = buildMesh(sk, g, "shadow")
-  LIB.full[key], LIB.lod[key], LIB.shadow[key] = m1, m2, m3
-  meta = { extentY = ey, extentR = er,
-           areaFull = a1 or 0, areaLod = a2 or 0, areaShadow = a3 or 0 }
+  if bakeState == nil then bakeOpen() end
+  meta = bakeCellInto(key)
+  if not meta then
+    local sk = getSkeleton(spi, variant)
+    local g = bucketGrowth(bucket)
+    local m1, ey, er, a1 = buildMesh(sk, g, "full")
+    local m2, _, _, a2    = buildMesh(sk, g, "lod")
+    local m3, _, _, a3    = buildMesh(sk, g, "shadow")
+    LIB.full[key], LIB.lod[key], LIB.shadow[key] = m1, m2, m3
+    meta = { extentY = ey, extentR = er,
+             areaFull = a1 or 0, areaLod = a2 or 0, areaShadow = a3 or 0 }
+  end
   LIB.meta[key] = meta
   libCount = libCount + 1
+  if libCount >= CELLS then bakeRelease() end
   return key, meta
+end
+
+--- Where the library came from, for the load-time report: how many cells were
+--- read out of the bake, and how many exist at all. A browser that quietly fell
+--- back to the tessellator reads 0 here and nowhere else.
+function Tree.libraryOrigin()
+  return bakeCount, libCount
 end
 
 --- Build the whole library up front so nothing hitches mid-run.
@@ -815,7 +1159,9 @@ end
 --- build each frame boundary crossed between two newMesh calls costs a
 --- pipeline stall: the same 1.5 s of work measured 26 s when it was sliced at
 --- 3 ms. Slice it at 80-120 ms and the stalls are amortised away while the
---- progress bar still moves.
+--- progress bar still moves. The baked library does not change this advice --
+--- what it removes is the tessellation, and the newMesh calls that the stalls
+--- attach to are still all 750 of them.
 --- Returns progress 0..1; call until it returns 1.
 local warmI, warmN = 0, nil
 function Tree.prewarmStep(budget)
@@ -832,6 +1178,39 @@ function Tree.prewarmStep(budget)
   return warmI / warmN
 end
 
+
+--- The offline half of the baked library: walk every cell in key order, run the
+--- tessellator, and hand `emit` the raw vertex and index lists plus the metadata
+--- that is not recoverable from them. tools/treebakescene.lua is the only
+--- caller; it turns all of this into bytes.
+---
+--- It deliberately does not touch LIB or create a single Mesh. A bake wants the
+--- geometry, not a GPU's copy of it, and the two must not be able to disagree
+--- about which cells exist.
+function Tree.bakeCells(emit)
+  for spi = 1, #SPECIES do
+    for v = 0, TUNE.variants - 1 do
+      for b = 0, TUNE.buckets - 1 do
+        local sk = getSkeleton(spi, v)
+        local g  = bucketGrowth(b)
+        local Vf, If, ey, er, af = buildMeshData(sk, g, "full")
+        local Vl, Il, _,  _,  al = buildMeshData(sk, g, "lod")
+        local Vs, Is, _,  _,  as = buildMeshData(sk, g, "shadow")
+        emit(libKey(spi, v, b),
+             { extentY = ey, extentR = er, areaFull = af, areaLod = al, areaShadow = as },
+             { { Vf, If }, { Vl, Il }, { Vs, Is } })
+      end
+    end
+  end
+end
+
+--- What the bake has to write into its manifest so that this file can decide,
+--- at load, whether to trust it.
+function Tree.bakeInfo()
+  return { version = BAKE_VERSION, stride = BAKE_STRIDE,
+           fingerprint = Tree.bakeFingerprint(),
+           cells = #SPECIES * TUNE.variants * TUNE.buckets }
+end
 
 function Tree.libraryStats()
   local verts = 0
@@ -851,6 +1230,7 @@ local cur = {
 }
 local uT   = { 0, 0, 0, 0 }
 local uAir = { 1, 1, 1, 0 }
+local uAirB = { 1, 1, 1, 0 }   -- scratch: the neutral air the atlas page bakes with
 local uSun = { 0, 0, 0, 0 }
 local uPrj = { 0, 0, 0, 0 }
 local uRimC = { 0, 0, 0, 0 }
@@ -948,8 +1328,15 @@ function Tree.resetFill()
   Tree.fill.shadow, Tree.fill.canopy, Tree.fill.backlight = 0, 0, 0
 end
 
+-- Forward slot for the sprite-atlas batch flush, which is defined further down
+-- (it needs the palette constants) but has to be reachable from `endPass`,
+-- which every pass already calls. When the atlas is off this stays nil and
+-- costs one comparison a pass.
+local atlasFlush = nil
+
 --- Call after a batch of tree draws to restore the default pipeline.
 function Tree.endPass()
+  if atlasFlush then atlasFlush() end
   if cur.shader ~= nil then
     love.graphics.setShader()
     cur.shader = nil
@@ -978,7 +1365,504 @@ local SHADOW_COL = P.ramp.rock[1]
 local STUMP_COL = P.ramp.bark[2]
 local STUMP_TOP = P.ramp.bark[3]
 
+-------------------------------------------------------------- sprite atlas
+-- ITEM F6, AND THE ONE THING IN THIS FILE THAT CHANGES HOW THE GAME LOOKS.
+--
+-- WHY. A tree is a `Mesh`, and a `Mesh` is never batched: it is its own GL
+-- draw call and it flushes whatever was accumulating. On top of that every
+-- tree sends its own `uT`, so even if meshes did batch, the uniform would
+-- break the run. Visible tree count IS the draw-call count, twice over -
+-- canopy and shadow - and on the shipping target (interpreted Lua over
+-- emscripten's WebGL) a draw call costs about 26 us. Four hundred trees is
+-- most of a 60 fps frame before a pixel is rasterised.
+--
+-- WHAT THIS DOES. Every cell of the mesh library - 5 species x 5 variants x 10
+-- growth buckets = 250 of them - is rendered ONCE, through the real tree
+-- shader, into one cell of one canvas. A tree then becomes a quad in a
+-- `SpriteBatch`, and the whole batched forest is one draw call per depth band.
+--
+-- WHAT IT COSTS, HONESTLY, BECAUSE THIS IS THE PART SOMEBODY HAS TO JUDGE:
+--
+--   * Sway stops being a bend and becomes a lean, and THIS IS THE ITEM. The
+--     mesh shader displaces each vertex by `sway * h * h`: the foot of the
+--     trunk does not move at all, the bend accumulates up the tree, and the
+--     canopy trails the trunk by `canopyLag` seconds because each vertex mixes
+--     two different samples of the wind field. A sprite gets ONE transform, and
+--     any transform is linear in height, so the trunk becomes a straight
+--     slanting pole and the crown and the trunk are locked to one phase.
+--     Two things take the edge off it and neither removes it. The transform is
+--     a SHEAR about the root rather than a rotation (`atlasSwayShear`), because
+--     the shader's bend is a pure sideways displacement and so is a shear -
+--     a rotation would additionally tip every leaf and shorten the tree.
+--     And `atlasSwayLag` picks which of the two wind samples the one shear
+--     follows, so the crown can still be the thing that reads as moving.
+--   * Leaf loss goes. A chewed tree folds its foliage along the per-vertex
+--     blob offsets, which a sprite has no way to express, so any tree with
+--     `death` on it is sent back to the mesh path (there are never many).
+--   * Sun shading, rim and backlight are baked, so they are shared by every
+--     tree in a cell rather than being per-vertex - which they already were,
+--     the sun term is a function of the blob normal alone. What is lost is
+--     that they now go stale as the sun turns: the page is re-baked when the
+--     sun or the rim colour moves past `atlasSunStep`, which on a full day
+--     cycle is a few hundred re-bakes, each 250 mesh draws in one frame.
+--   * Elders lose their gold rim: it is a per-tree uniform in the mesh path
+--     and there is one page here, baked with the common cool rim.
+--   * Resolution, and it is the other half of the bill. A cell is `atlasCell`
+--     pixels and a tree drawn bigger than that is a magnified bitmap. At the
+--     game's zoom a grown tree is 250-300 px, so a 128 px cell is a 2x blow-up
+--     and it reads as blur; 256 is where a near tree stops looking soft. That
+--     costs memory and only memory: one page is `atlasCell * 16` square, and
+--     the browser has to hold it in `rgba16f` at eight bytes a pixel because
+--     love.js has no `rgba8`. 128 -> 42 MB of VRAM, 192 -> 94 MB, 256 -> 168 MB.
+--   * Fill goes UP, which is the one number that moves the wrong way. A mesh
+--     rasterises its own triangles; a sprite rasterises its whole rectangle,
+--     transparent corners included. Measured on the 723-tree night island,
+--     tree fill went 20.2 -> 44.1 screens a frame. Free on a desktop GPU and
+--     first in line on a phone.
+--   * Depth. A batch draws all at once, so a batched tree can sort up to one
+--     band out of order against a mesh tree or a bot in the same band.
+--
+-- What it does NOT lose: per-tree tint, fade, x-ray, squash-and-stretch, lean,
+-- chew sag, topple and the impact recoil, all of which are per-sprite colour
+-- and per-sprite transform; and the aerial perspective, which is banded in the
+-- batch shader rather than dropped.
+local atlas = {
+  canvas = nil, scanvas = nil, batch = nil, sbatch = nil,
+  quad = {}, scale = {}, baseY = {},
+  squad = {}, sscale = {}, sbaseY = {},
+  cell = 0, cellH = 0, cols = 0, pad = 0, ox = 0, page = 0, pageH = 0,
+  scell = 0, scellH = 0, sox = 0, spage = 0, spageH = 0,
+  format = nil, ready = false, failed = false,
+  key = nil, rebuilds = 0, n = 0, sn = 0, band = -1,
+  buildMs = 0, sunX = 0, sunY = -1,
+}
+Tree.atlas = atlas
+
+--- The switch. `TUNE.atlas` is the default and `BOTS_TREE_ATLAS=0|1` overrides
+--- it, so an A/B is an environment variable rather than an edit.
+local atlasWant = nil
+local atlasPx, atlasCellPx = nil, nil
+-- The shadow pass gets its own switch. It is the half of the atlas that costs
+-- the most FILL - a shadow silhouette is a sparse shape inside a quad that the
+-- sun's shear then stretches - so canopy-only is a real operating point, not a
+-- debug flag: it keeps 462 of the 798 tree draw calls saved and adds 7.6
+-- screens of overdraw instead of 26.
+local atlasShadowOn = nil
+local function atlasEnabled()
+  if atlasWant == nil then
+    local v = bakeCfg("BOTS_TREE_ATLAS")
+    if v ~= nil then
+      atlasWant = (v ~= "0" and v ~= "false" and v ~= "off")
+    else
+      atlasWant = TUNE.atlas and true or false
+    end
+    atlasPx = tonumber(bakeCfg("BOTS_TREE_ATLAS_PX") or "") or TUNE.atlasPixels
+    atlasCellPx = floor(tonumber(bakeCfg("BOTS_TREE_ATLAS_CELL") or "") or TUNE.atlasCell)
+    local sh = bakeCfg("BOTS_TREE_ATLAS_SHADOW")
+    if sh ~= nil then
+      atlasShadowOn = (sh ~= "0" and sh ~= "false" and sh ~= "off")
+    else
+      atlasShadowOn = TUNE.atlasShadow and true or false
+    end
+  end
+  return atlasWant and not atlas.failed
+end
+Tree.atlasEnabled = atlasEnabled
+
+--- Same shape as postfx's `pickFormat`, and for the same reason: under love.js
+--- there is NO `rgba8`. `getCanvasFormats()` there offers rgba16f, srgba8,
+--- rgb565, rgba4 and friends, and `normal` resolves to `rgba4` - four bits a
+--- channel, which would band a canopy visibly. `rgba16f` is asked for first so
+--- that the browser and the desktop get the same page: it is also the only one
+--- of them that holds the >1 values a sunlit crown reaches before the shader's
+--- soft shoulder brings them back. Requesting a format the driver does not have
+--- does not fail softly inside love.js - the error escapes `pcall` - so the
+--- list is filtered against `getCanvasFormats` first and only then tried.
+local function atlasFormats()
+  local out = {}
+  local fmts = love.graphics.getCanvasFormats and love.graphics.getCanvasFormats()
+  local want = { "rgba16f", "rgba8", "normal" }
+  for i = 1, #want do
+    local f = want[i]
+    if f == "normal" or (fmts and fmts[f]) then out[#out + 1] = f end
+  end
+  if #out == 0 then out[1] = "normal" end
+  return out
+end
+
+--- Everything baked into a page that is NOT a property of the tree's shape:
+--- the sun direction the shading was lit by and the rim colour it was rimmed
+--- with. Quantised, so the page is re-baked when the sky has actually moved
+--- rather than every frame. `rimEpoch` is useless for this - `setKeyRim` bumps
+--- it once a frame whether or not the colour changed - so the colour itself is
+--- what gets quantised.
+local function atlasSkyKey(sunX, sunY)
+  local q = 1 / max(TUNE.atlasSunStep, 0.001)
+  local function s(v) return floor((U.clamp(v, -2, 2) + 2) * q) % 67 end
+  local k = s(sunX)
+  k = k * 67 + s(sunY)
+  k = k * 67 + floor(U.saturate(RIM_KEY[1]) * 32)
+  k = k * 67 + floor(U.saturate(RIM_KEY[2]) * 32)
+  k = k * 67 + floor(U.saturate(RIM_KEY[3]) * 32)
+  k = k * 67 + floor(U.clamp(rimGain, 0, 2) * 32)
+  return k
+end
+
+--- Render (or re-render) every library cell into the page. One `setCanvas`, one
+--- shader bind, 250 mesh draws; the trees are drawn with no sway, no leaf loss,
+--- no death tint and no aerial perspective, because all four of those are still
+--- applied per tree at draw time.
+local function atlasBuild(sunX, sunY)
+  local lg = love.graphics
+  if not (lg.newCanvas and lg.newSpriteBatch and lg.setCanvas) then
+    atlas.failed = true; return false
+  end
+  initShaders()
+  if not shadersOK or not shAtlas then atlas.failed = true; return false end
+  local t0 = love.timer and love.timer.getTime() or 0
+
+  if not atlas.canvas then
+    local cw = max(16, atlasCellPx or TUNE.atlasCell)
+    local ch = max(16, floor(cw * (TUNE.atlasTall or 1)))
+    local cols = 1
+    while cols * cols < CELLS do cols = cols + 1 end
+    -- One page keeps the whole forest on one texture, which is the whole point:
+    -- two pages would be two batches and two draw calls a band. Shrink rather
+    -- than split if the driver's maximum will not take it.
+    while cols * cw > 4096 or cols * ch > 4096 do
+      cw = floor(cw / 2); ch = floor(ch / 2)
+    end
+    local pw, ph = cols * cw, cols * ch
+    local cands = atlasFormats()
+    for i = 1, #cands do
+      local ok, c = pcall(lg.newCanvas, pw, ph, { format = cands[i] })
+      if ok and c then atlas.canvas, atlas.format = c, cands[i] break end
+    end
+    if not atlas.canvas then atlas.failed = true; return false end
+    atlas.canvas:setFilter("linear", "linear")
+    atlas.canvas:setWrap("clamp", "clamp")
+    atlas.cell, atlas.cellH, atlas.cols, atlas.pad = cw, ch, cols, TUNE.atlasPad
+    atlas.ox, atlas.page, atlas.pageH = cw * 0.5, pw, ph
+    atlas.batch  = lg.newSpriteBatch(atlas.canvas, 1024, "stream")
+    -- The shadow silhouette is its own page. It has to be: the shadow mesh is
+    -- its own geometry - a coarser, part-transparent tree PLUS the soft
+    -- ground-contact ellipse the canopy mesh does not have - and reusing the
+    -- canopy's alpha for it, which the first version of this did, paints a
+    -- hard, opaque, full-detail crown on the ground where a soft blur belongs.
+    -- It sits at half the canopy's cell (`atlasShadowCell`) because a shadow
+    -- is a blur and full resolution was tried against it and photographed no
+    -- differently, at a quarter of the memory. What a batched shadow does lose
+    -- is not resolution: the page pre-composites the shadow mesh's own
+    -- part-transparent blobs, so the places where three of them overlapped and
+    -- went nearly black now cap at one alpha, and the branch structure inside
+    -- the crown shadow goes flat.
+    local k = TUNE.atlasShadowCell or 1
+    local sw = max(16, floor(cw * k))
+    local sh = max(16, floor(ch * k))
+    for i = 1, #cands do
+      local ok, c = pcall(lg.newCanvas, cols * sw, cols * sh, { format = cands[i] })
+      if ok and c then atlas.scanvas = c break end
+    end
+    if not atlas.scanvas then atlas.failed = true; return false end
+    atlas.scanvas:setFilter("linear", "linear")
+    atlas.scanvas:setWrap("clamp", "clamp")
+    atlas.scell, atlas.scellH = sw, sh
+    atlas.sox, atlas.spage, atlas.spageH = sw * 0.5, cols * sw, cols * sh
+    atlas.sbatch = lg.newSpriteBatch(atlas.scanvas, 1024, "stream")
+  end
+
+  local cell, cellH, cols, pad = atlas.cell, atlas.cellH, atlas.cols, atlas.pad
+  local prevCanvas = lg.getCanvas()
+  local prevBlend, prevAlpha = lg.getBlendMode()
+  local sx, sy, sw, sh = lg.getScissor()
+  -- This runs from inside `Tree:draw`, which is inside the camera's push/scale
+  -- and inside whatever canvas the post chain has bound. Both have to go: a
+  -- page baked through the camera transform is a page of shredded offcuts,
+  -- which is exactly what the first run of this produced.
+  lg.push("all")
+  lg.origin()
+  lg.setScissor()
+  lg.setCanvas(atlas.canvas)
+  lg.clear(0, 0, 0, 0)
+  -- Onto transparent black with the ordinary alpha mode: what lands in the
+  -- canvas is colour times coverage, i.e. premultiplied, which is exactly what
+  -- the batch shaders above expect to sample.
+  lg.setBlendMode("alpha", "alphamultiply")
+  lg.setShader(shTree)
+  uSun[1], uSun[2] = sunX or 0, sunY or -1
+  uSun[3], uSun[4] = TUNE.sunContrast, TUNE.rimPower
+  shTree:send("uSun", uSun)
+  uAirB[1], uAirB[2], uAirB[3], uAirB[4] = 1, 1, 1, 0
+  shTree:send("uAir", uAirB)                 -- air is per tree; applied at draw
+  uRimC[1], uRimC[2], uRimC[3] = RIM_KEY[1], RIM_KEY[2], RIM_KEY[3]
+  uRimC[4] = TUNE.rimAlpha * rimGain
+  shTree:send("uRim", uRimC)
+  uBack[1], uBack[2], uBack[3] = RIM_WARM[1], RIM_WARM[2], RIM_WARM[3]
+  uBack[4] = TUNE.backAlpha
+  shTree:send("uBack", uBack)
+  uDth[1], uDth[2], uDth[3], uDth[4] = DEAD_TINT[1], DEAD_TINT[2], DEAD_TINT[3], 0
+  shTree:send("uDeath", uDth)
+  uT[1], uT[2], uT[3], uT[4] = 0, 0, 0, 0    -- no sway, no leaf loss, no depth
+  shTree:send("uT", uT)
+  lg.setColor(1, 1, 1, 1)
+
+  local i = 0
+  for spi = 1, #SPECIES do
+    for v = 0, TUNE.variants - 1 do
+      for b = 0, TUNE.buckets - 1 do
+        local key = libKey(spi, v, b)
+        if not LIB.meta[key] then ensure(spi, v, b) end
+        local m, meta = LIB.full[key], LIB.meta[key]
+        if m and meta then
+          local ey = max(meta.extentY or 1, 0.001)
+          local er = max(meta.extentR or 0.4, 0.001)
+          -- A cell holds the tree plus a tenth of its height below the root,
+          -- because a drooping conifer skirt hangs below y = 0 and `extentY`
+          -- only ever measured upwards.
+          local s = min((cell - pad * 2) / (er * 2), (cellH - pad * 2) / (ey * 1.10))
+          local col, row = i % cols, floor(i / cols)
+          local cx = col * cell + cell * 0.5
+          local by = row * cellH + pad + ey * s
+          -- The cell layout never changes once the page exists, so the Quads
+          -- are made once and re-used: a re-bake at dusk must not hand the
+          -- collector five hundred fresh ones.
+          atlas.quad[key]  = atlas.quad[key]
+                          or lg.newQuad(col * cell, row * cellH, cell, cellH,
+                                        atlas.page, atlas.pageH)
+          atlas.scale[key] = s
+          atlas.baseY[key] = by - row * cellH
+          -- Scissored per cell: a crown that overruns its cell would otherwise
+          -- smear into its neighbour and every tree of that variant would wear
+          -- a piece of another species.
+          lg.setScissor(col * cell + 1, row * cellH + 1, cell - 2, cellH - 2)
+          lg.draw(m, cx, by, 0, s, s)
+        end
+        i = i + 1
+      end
+    end
+  end
+
+  -- ... and the shadow page, from the shadow meshes, with the projection left
+  -- at identity: the projection is a shear and a y-scale, and both are applied
+  -- per sprite at draw time so the sun can move without a re-bake.
+  local scell, scellH = atlas.scell, atlas.scellH
+  lg.setCanvas(atlas.scanvas)
+  lg.clear(0, 0, 0, 0)
+  lg.setShader(shShadow)
+  uPrj[1], uPrj[2], uPrj[3], uPrj[4] = 0, 0, 0, 1
+  shShadow:send("uProj", uPrj)
+  uShd[1], uShd[2], uShd[3], uShd[4] = 1, 1, 1, 1   -- a white silhouette; the
+  shShadow:send("uShadow", uShd)                    -- colour is sent at draw
+  shShadow:send("uT", uT)
+  i = 0
+  for spi = 1, #SPECIES do
+    for v = 0, TUNE.variants - 1 do
+      for b = 0, TUNE.buckets - 1 do
+        local key = libKey(spi, v, b)
+        local m, meta = LIB.shadow[key], LIB.meta[key]
+        if m and meta then
+          local ey = max(meta.extentY or 1, 0.001)
+          local er = max(meta.extentR or 0.4, 0.001)
+          -- the contact ellipse is wider at the root than the crown is, and
+          -- `extentR` was measured off the canopy mesh, so leave it room
+          local sc = min((scell - pad * 2) / (er * 2.30), (scellH - pad * 2) / (ey * 1.15))
+          local col, row = i % cols, floor(i / cols)
+          atlas.squad[key]  = atlas.squad[key]
+                           or lg.newQuad(col * scell, row * scellH, scell, scellH,
+                                         atlas.spage, atlas.spageH)
+          atlas.sscale[key] = sc
+          atlas.sbaseY[key] = pad + ey * sc
+          lg.setScissor(col * scell + 1, row * scellH + 1, scell - 2, scellH - 2)
+          lg.draw(m, col * scell + scell * 0.5, row * scellH + pad + ey * sc, 0, sc, sc)
+        end
+        i = i + 1
+      end
+    end
+  end
+  cur.sunAngle, cur.sunLen, cur.ambient = nil, nil, nil
+  cur.shadKey = nil
+
+  lg.setScissor()
+  lg.setCanvas(prevCanvas)
+  lg.pop()
+  lg.setBlendMode(prevBlend, prevAlpha)
+  if sw then lg.setScissor(sx, sy, sw, sh) else lg.setScissor() end
+  lg.setShader()
+  -- Every uniform the pass-state cache thought it knew about shTree has just
+  -- been overwritten behind its back.
+  cur.shader, cur.mode, cur.sunX, cur.sunY = nil, nil, nil, nil
+  cur.rimKey, cur.deathKey, cur.backKey, cur.airKey = nil, nil, nil, nil
+  atlas.ready = true
+  atlas.sunX, atlas.sunY = sunX or 0, sunY or -1
+  atlas.rebuilds = atlas.rebuilds + 1
+  atlas.buildMs = ((love.timer and love.timer.getTime() or 0) - t0) * 1000
+  return true
+end
+
+--- Called once at the top of each tree pass. Builds the page on first use and
+--- re-bakes it when the sky has moved far enough to make the baked shading a
+--- lie. Returns false if the atlas is off or unavailable, which is the mesh
+--- path's cue to do what it always did.
+local function atlasReady(sunX, sunY)
+  if not atlasEnabled() then return false end
+  local k = atlasSkyKey(sunX or 0, sunY or -1)
+  if atlas.key ~= k then
+    if not atlasBuild(sunX, sunY) then return false end
+    atlas.key = k
+  end
+  return atlas.ready
+end
+Tree.atlasReady = atlasReady
+
+--- The shadow pass's version. The shadow page holds an unprojected silhouette
+--- and does not care where the sun is - the projection is per sprite - so this
+--- must NOT re-key on the shadow direction. `demo_tree` hands the shadow pass
+--- `sunAngle` and the canopy pass `sunDir`, which point OPPOSITE ways, and the
+--- first version of this re-baked both pages twice a frame because of it.
+local function atlasReadyShadow()
+  if not atlasEnabled() then return false end
+  if atlas.key == nil then
+    if not atlasBuild(atlas.sunX, atlas.sunY) then return false end
+    atlas.key = atlasSkyKey(atlas.sunX, atlas.sunY)
+  end
+  return atlas.ready
+end
+
+--- Which depth band a tree at world y falls in. `visTrees` arrives in depth
+--- order, so this only ever increases inside a pass and one comparison catches
+--- the boundary.
+local function atlasBandOf(y)
+  local n = TUNE.atlasBands
+  local i = floor(U.saturate((y - view.y) / max(view.h, 1)) * n)
+  if i >= n then i = n - 1 end
+  return i
+end
+
+--- Draw everything queued for the current band, in one call per non-empty
+--- batch, and reset. This is the only place the batched forest reaches the GPU.
+atlasFlush = function()
+  if atlas.n == 0 and atlas.sn == 0 then return end
+  local lg = love.graphics
+  local band = atlas.band
+  if band < 0 then band = 0 end
+  lg.setColor(1, 1, 1, 1)
+  lg.setBlendMode("alpha", "premultiplied")
+  if atlas.n > 0 then
+    -- the same number `sendTreeUniform` puts in uT.w, taken at the band centre
+    local yc = view.y + view.h * ((band + 0.5) / TUNE.atlasBands)
+    shAtlas:send("uAirA", uAir)
+    shAtlas:send("uDepthA", U.saturate((view.y + view.h - yc) / view.h) ^ 1.6)
+    lg.setShader(shAtlas)
+    lg.draw(atlas.batch)
+    atlas.batch:clear()
+    atlas.n = 0
+  end
+  if atlas.sn > 0 then
+    lg.setShader(shAtlasShadow)
+    lg.draw(atlas.sbatch)
+    atlas.sbatch:clear()
+    atlas.sn = 0
+  end
+  lg.setBlendMode("alpha")
+  lg.setShader()
+  cur.shader = nil
+end
+
+--- Queue one tree's canopy. Returns false if there is no cell for it, in which
+--- case the caller falls back to the mesh.
+local function atlasAdd(tr)
+  local q = atlas.quad[tr.key]
+  if not q then return false end
+  local band = atlasBandOf(tr.y)
+  if band ~= atlas.band then atlasFlush() atlas.band = band end
+  local s = atlas.scale[tr.key]
+  local a = tr.fade * (1 - (tr.xray or 0) * TUNE.xrayAlpha)
+  local w = TUNE.atlasSwayLag
+  local sway = (tr.swayNow * (1 - w) + tr.swayLag * w) * TUNE.atlasSwayGain
+  local b = atlas.batch
+  -- premultiplied: the tint and the fade go into the colour together
+  b:setColor(tr.tintR * a, tr.tintG * a, tr.tintB * a, a)
+  if TUNE.atlasSwayShear then
+    -- kx shears x by y, and the cell's y runs negative upward from the root, so
+    -- a NEGATIVE kx pushes the crown the way a positive sway does. The mesh is
+    -- normalised to a unit-tall adult, so one unit of sway is one shear unit.
+    b:add(q, tr.x, tr.y, tr.drot, tr.dsx / s, tr.dsy / s,
+          atlas.ox, atlas.baseY[tr.key], -sway, 0)
+  else
+    b:add(q, tr.x, tr.y, tr.drot + sway, tr.dsx / s, tr.dsy / s,
+          atlas.ox, atlas.baseY[tr.key])
+  end
+  atlas.n = atlas.n + 1
+  return true
+end
+
+--- Queue one tree's shadow, off the shadow page.
+---
+--- SHADOW_SHADER's projection is linear in the vertex position - x picks up
+--- `h * dir.x * len` and y is scaled by `squash - dir.y * len`, with h = -y -
+--- so the same projection is exactly a shear and a y-scale on the sprite, and
+--- the sun can move without a re-bake. What it is not is a *bend*: the mesh
+--- projects the swayed tree, this projects the tree and then leans it, so a
+--- shadow's sway is a lean here for the same reason the canopy's is.
+---
+--- One real difference. In the mesh the contact ellipse is pinned at h = 0 and
+--- so keeps the full `shadowSquash` while everything above it is thrown away
+--- from the sun; here it takes the same y-scale as the crown, which flattens it
+--- and slants it. It is a soft disc either way, but it is not the same disc.
+local function atlasAddShadow(tr, dirX, dirY, len, fade)
+  local q = atlas.squad[tr.key]
+  if not q then return false end
+  local band = atlasBandOf(tr.y)
+  if band ~= atlas.band then atlasFlush() atlas.band = band end
+  local s = atlas.sscale[tr.key]
+  local w = TUNE.atlasSwayLag
+  local sway = (tr.swayNow * (1 - w) + tr.swayLag * w) * TUNE.atlasSwayGain
+  local b = atlas.sbatch
+  b:setColor(1, 1, 1, fade)
+  -- The sun's shear and the wind's shear are both shears about the root in the
+  -- same axis, so they simply add.
+  if TUNE.atlasSwayShear then
+    b:add(q, tr.x, tr.y, tr.drot,
+          tr.dsx / s, (tr.dsy / s) * (TUNE.shadowSquash - dirY * len),
+          atlas.sox, atlas.sbaseY[tr.key], -dirX * len - sway, 0)
+  else
+    b:add(q, tr.x, tr.y, tr.drot + sway,
+          tr.dsx / s, (tr.dsy / s) * (TUNE.shadowSquash - dirY * len),
+          atlas.sox, atlas.sbaseY[tr.key], -dirX * len, 0)
+  end
+  atlas.sn = atlas.sn + 1
+  return true
+end
+
+--- Bytes of GPU memory the two pages hold, which is the cost nobody sees in a
+--- draw-call count. rgba16f is 8 bytes a pixel and it is what the browser has
+--- to use, because love.js has no `rgba8`.
+local function atlasBytes()
+  local per = (atlas.format == "rgba16f" and 8) or 4
+  local a = (atlas.page or 0) * (atlas.pageH or 0)
+  local b = (atlas.spage or 0) * (atlas.spageH or 0)
+  return (a + b) * per
+end
+
+--- Page geometry and the run's re-bake count, for the report.
+function Tree.atlasStats()
+  return { on = atlasEnabled(), ready = atlas.ready, failed = atlas.failed,
+           format = atlas.format, page = atlas.page, pageH = atlas.pageH,
+           spage = atlas.spage, spageH = atlas.spageH, cell = atlas.cell,
+           cellH = atlas.cellH,
+           cells = CELLS, rebuilds = atlas.rebuilds, buildMs = atlas.buildMs,
+           bytes = atlasBytes(),
+           pixels = atlasPx or TUNE.atlasPixels }
+end
+
 --------------------------------------------------------------------- Tree
+-- The off-screen rota's slot, dealt round-robin rather than drawn from the
+-- tree's own PRNG: taking one more number out of that stream would shift every
+-- tree's height, lean, tint and variant, and the forest would be a different
+-- forest. Round-robin also spreads better than random - exactly a quarter of
+-- the trees land on each frame instead of a quarter on average.
+local nextSlot = 0
+
 local function pickSpecies(r)
   local x = r:next() * totalWeight
   for i = 1, #SPECIES do
@@ -1043,6 +1927,8 @@ function Tree:init(x, y, seed, opts)
 
   self.bucket = -1
   self.onScreen = true
+  nextSlot = nextSlot % TUNE.sleepFrames + 1
+  self.slowT, self.slowN = 0, nextSlot
   self:refreshStage(true)
   self:refreshMesh()
   return self
@@ -1125,10 +2011,11 @@ end
 -- instead of sixty times.
 local ELDER_STEP = 1 / 512
 
-function Tree:update(dt)
-  local on = self:visible()
-  self.onScreen = on
-
+--- Growth, ageing, chewing and the topple clock: the half of the tick whose
+--- only output is state, none of which anybody can see on the frame it happens.
+--- Split out of `update` so a tree the camera cannot see can run it on a rota -
+--- see the comment on `Tree:update` for why, and for why that is not a cheat.
+function Tree:tickSlow(dt)
   -- `dirty` tracks whether anything that feeds refreshStage actually moved.
   -- For a mature, unbothered tree -- which is nearly the whole forest for
   -- nearly the whole run -- the answer is no, and the stage/oxygen recompute
@@ -1199,6 +2086,51 @@ function Tree:update(dt)
     self:refreshStage()
   elseif dirty or self.death ~= deathWas then
     self:refreshStage()
+  end
+end
+
+--- Wind, leaves, x-ray and pose have always been view-culled; the slow block
+--- above was not, and ran for all 722 trees whether or not anyone could see
+--- them. An off-screen tree now runs it one frame in `TUNE.sleepFrames`,
+--- carrying the skipped frames' `dt` in `slowT` and handing it over whole.
+---
+--- That is not an approximation. Every term in `tickSlow` is a plain
+--- `+ dt * rate`, so four steps of `dt` and one step of `4*dt` reach the same
+--- number: driving 240 trees off screen for 2,400 frames, total growth and
+--- total elder time accumulate at rates that agree to six figures between
+--- sleepFrames 1 and 4, and felled/faded counts come out identical. The only
+--- difference is read phase - three quarters of the forest is up to three
+--- frames stale when something asks - and nothing reads it but the oxygen
+--- census, which is already amortised over four frames itself. The two springs
+--- below stay on the per-frame path where they belong, because they are the
+--- only integrators on a tree and a spring does not survive being stepped 4x.
+--- Slots are dealt round-robin at birth, so a quarter of the forest ticks on
+--- each frame rather than the whole forest on every fourth one, and coming back
+--- into view flushes the carry on the spot.
+---
+--- Be honest about the size of this. `PERFORMANCE.md` costs the block at 3.5 ms
+--- of the browser's 17 ms of Lua, but on the standard 723-tree perf scene the
+--- rota measures inside the noise, because that scene's forest is fully grown
+--- and a grown, unbothered tree falls out of the block after a handful of
+--- instructions. What it buys is the case the profile does not hold still for:
+--- a forest that is still growing (every tree in it re-buckets a mesh and
+--- recomputes a stage), and the 1,900-tree ceiling, where most of the island is
+--- off screen. It costs nothing to keep, and it stops the block scaling with
+--- the forest instead of with the view.
+function Tree:update(dt)
+  local on = self:visible()
+  self.onScreen = on
+
+  if on then
+    self:tickSlow(dt + self.slowT)
+    self.slowT = 0
+  else
+    self.slowT = self.slowT + dt
+    self.slowN = self.slowN - 1
+    if self.slowN <= 0 then
+      self:tickSlow(self.slowT)
+      self.slowT, self.slowN = 0, TUNE.sleepFrames
+    end
   end
 
   -- squash & stretch spring after a stage change
@@ -1481,7 +2413,40 @@ end
 ---   ambient   - 0..1, how much fill light there is; softens/lightens shadows
 function Tree:drawShadow(sunAngle, sunLength, ambient)
   if not self.onScreen or self.fade <= 0 then return end
-  if self.height * (Tree.zoom or 1) < TUNE.shadowPixels then return end
+  -- Small trees keep no shadow, and the ones just above the line ramp into
+  -- theirs rather than switching it on - see TUNE.shadowPixels for the sweep
+  -- that picked the number.
+  local px = self.height * (Tree.zoom or 1)
+  if px < TUNE.shadowPixels then return end
+  local fade = self.fade
+  local band = TUNE.shadowPixels * (TUNE.shadowFade - 1)
+  if band > 0 and px < TUNE.shadowPixels + band then
+    fade = fade * (px - TUNE.shadowPixels) / band
+  end
+  -- Sprite-atlas path (item F6, off by default). The shadow silhouette is the
+  -- canopy cell projected by a shear and a y-scale; see `atlasAddShadow`.
+  if atlasShadowOn ~= false and px <= (atlasPx or TUNE.atlasPixels) and self.alive
+     and self.death < 0.02 and atlasReadyShadow() then
+    if fillOn then
+      -- A sprite rasterises its whole cell, transparent corners included, not
+      -- just the triangles the mesh had. That is the fill side of this trade
+      -- and it goes the wrong way, so the profiler is told the truth about it.
+      local k = self.size * (Tree.zoom or 1)
+      local sc = atlas.sscale[self.key] or 1
+      Tree.fill.shadow = Tree.fill.shadow
+        + (atlas.scell / sc) * (atlas.scellH / sc) * k * k
+    end
+    if cur.shadKey ~= (ambient or 0.3) then
+      cur.shadKey = ambient or 0.3
+      uShd[1], uShd[2], uShd[3] = SHADOW_COL[1], SHADOW_COL[2], SHADOW_COL[3]
+      uShd[4] = TUNE.shadowAlpha * (1 - (ambient or 0.3) * 0.55)
+      shAtlasShadow:send("uShadowA", uShd)
+    end
+    if atlasAddShadow(self, cos(sunAngle), sin(sunAngle), sunLength or 1.0, fade) then
+      return
+    end
+  end
+
   local mesh = LIB.shadow[self.key]
   if not mesh then return end
 
@@ -1504,13 +2469,13 @@ function Tree:drawShadow(sunAngle, sunLength, ambient)
       local k = self.size * (Tree.zoom or 1)
       Tree.fill.shadow = Tree.fill.shadow + (self.meta.areaShadow or 0) * k * k
     end
-    love.graphics.setColor(1, 1, 1, self.fade)
+    love.graphics.setColor(1, 1, 1, fade)
     love.graphics.draw(mesh, self.x, self.y, self.drot, self.dsx, self.dsy)
   else
     -- no-shader fallback: a flat contact ellipse
     bind(nil)
     love.graphics.setColor(SHADOW_COL[1], SHADOW_COL[2], SHADOW_COL[3],
-                           TUNE.shadowAlpha * self.fade)
+                           TUNE.shadowAlpha * fade)
     love.graphics.ellipse("fill", self.x + cos(sunAngle) * self.height * (sunLength or 1) * 0.4,
                           self.y + sin(sunAngle) * self.height * (sunLength or 1) * 0.4,
                           self.canopyR * 0.9, self.canopyR * 0.36)
@@ -1562,6 +2527,25 @@ function Tree:draw(sunDirX, sunDirY)
   local zoom = Tree.zoom or 1
   local px = self.height * zoom
   local big = px >= TUNE.rimPixels
+
+  -- Sprite-atlas path (item F6, off by default). A tree that is small enough on
+  -- screen, alive, and not part-way through being eaten - leaf loss is the one
+  -- per-vertex effect a sprite cannot carry - becomes a quad in the batch and
+  -- issues no draw call of its own.
+  if px <= (atlasPx or TUNE.atlasPixels) and self.death < 0.02 and self.alive
+     and atlasReady(sunDirX, sunDirY) then
+    if atlasAdd(self) then
+      if fillOn then
+        local k = self.size * zoom
+        local sc = atlas.scale[self.key] or 1
+        Tree.fill.canopy = Tree.fill.canopy
+          + (atlas.cell / sc) * (atlas.cellH / sc) * k * k
+      end
+      if self.lpn > 0 then self:drawLeaves() end
+      return
+    end
+  end
+
   local mesh = (px < TUNE.lodPixels) and LIB.lod[self.key] or LIB.full[self.key]
   if not mesh then mesh = LIB.full[self.key] end
   if not mesh then return end

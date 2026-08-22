@@ -60,6 +60,15 @@ function World:init(seed, opts)
   self.cobalts, self.projectiles = {}, {}
   self.speeches = {}
   self.drawList = {}
+  -- Everything that moves, in the order the draw passes want it. The four
+  -- lists are created here and compacted in place forever after, so this array
+  -- of them is built once instead of twice a frame -- `World:draw` and
+  -- `World:emitLights` each made their own, and a table a frame is a table a
+  -- frame.
+  self.mobileLists = { self.bots, self.enemies, self.cobalts, self.projectiles }
+  -- the same trees as `self.trees`, in depth order, and the slice of that the
+  -- camera can see: see World:addTree
+  self.treesZ, self.visTrees = {}, {}
 
   self.hTree   = Spatial.new(140)
   self.hBot    = Spatial.new(140)
@@ -105,6 +114,10 @@ function World:init(seed, opts)
     self:seedCobalt()
   end
   Warmup.mark("home")
+  -- A restored forest has to be in the visible list before anything draws:
+  -- `World:draw` reads the list rather than sweeping `self.trees`, and the
+  -- loading screen and the ending both paint a world nobody has updated yet.
+  self:refreshVisibleTrees()
 
   Signal._world = self
   Signal.emit("world:ready", self)
@@ -191,39 +204,183 @@ local function sweep(list, hash, dt)
   for i = w, total do list[i] = nil end
 end
 
+--- Depth key. Entities may supply `sortKey`; anything else sorts on its feet.
+--- It lives up here with the entity bookkeeping rather than down in the draw
+--- section because the forest's keys are now assigned once when a tree is
+--- planted and never touched again - see World:addTree.
+local function depthOf(e)
+  if e.sortKey then return e:sortKey() end
+  local z = e.z
+  return e.y + (type(z) == "number" and z or 0)
+end
+
+--- The key is stashed when the list is built, not recomputed inside the
+--- comparator. table.sort calls its comparator O(n log n) times, so a
+--- five-hundred entity frame was making about nine thousand dynamic dispatches
+--- through depthOf -- 1.3 to 1.8 ms of interpreted Lua, every frame, to answer
+--- five hundred questions.
+local function addDraw(list, e)
+  e._dz = depthOf(e)
+  list[#list + 1] = e
+end
+local function bySortKey(a, b) return a._dz < b._dz end
+
+--- Plant a tree into the world's bookkeeping.
+---
+--- A tree is the one thing on this island that never moves, so its depth key is
+--- fixed for its whole life and a list held in depth order stays in depth order
+--- for free. `treesZ` is that list. It costs one binary-search insert per
+--- planting - a few a second at the busiest - and it buys the removal of the
+--- ~450-entry `table.sort` through a Lua comparator that `World:draw` was
+--- running every single frame to re-discover an order that had not changed.
+---
+--- `self.trees` deliberately keeps its own insertion order: the update sweep,
+--- the spread cursor and the save file all read it, and the spread cursor draws
+--- from the shared RNG, so reordering it would quietly move the whole run.
+function World:addTree(t)
+  self:addEntity(self.trees, self.hTree, t)
+  t._dz = depthOf(t)
+  local z = self.treesZ
+  local lo, hi = 1, #z
+  while lo <= hi do
+    local mid = math.floor((lo + hi) / 2)
+    if z[mid]._dz <= t._dz then lo = mid + 1 else hi = mid - 1 end
+  end
+  table.insert(z, lo, t)
+  self.treeCount = self.treeCount + 1
+  return t
+end
+
+--- Refresh the depth-ordered list of trees the camera can see, and compact the
+--- dead out of `treesZ` on the same walk. Called straight after the tree sweep,
+--- because `Tree:update` has just computed `onScreen` for its own culling and
+--- both draw passes want exactly that answer: the old code re-derived it with
+--- two more full walks of the 722-tree array inside `World:draw`.
+---
+--- Nothing in this loop can call back into the world, so nothing can append to
+--- either list while it is being compacted. If that ever stops being true it
+--- needs the same slide-down `sweep` does, for the same reason.
+---
+--- The live branch is written to ask `t.alive` first and stop there. Asking
+--- `t:isDone()` of every tree instead is a metatable lookup and a call per tree
+--- per frame: at 825 trees that alone measured around 0.5 ms, which ate most of
+--- the 0.73 ms the two removed draw sweeps and the sort give back. A dead tree
+--- still gets the call, and there are never many of those at once.
+function World:refreshVisibleTrees()
+  local z, vis = self.treesZ, self.visTrees
+  local n, w, v = #z, 0, 0
+  for i = 1, n do
+    local t = z[i]
+    if t.alive then
+      w = w + 1
+      z[w] = t
+      if t.onScreen then v = v + 1 vis[v] = t end
+    elseif not (t.isDone and t:isDone()) then
+      w = w + 1
+      z[w] = t
+    end
+  end
+  for i = w + 1, n do z[i] = nil end
+  for i = v + 1, #vis do vis[i] = nil end
+end
+
 ------------------------------------------------------------------------ queries
+--- The query filters live up here, one shared function each, rather than being
+--- built fresh at every call.
+---
+--- A filter closure is not free: LOVE's Lua boxes every upvalue as its own heap
+--- object, so `function(b) ... filter ... end` is a function plus a box per
+--- captured local. The spatial queries below run about a hundred times a frame
+--- between the bots, the enemies and the spread cursor, and rebuilding their
+--- filters was the second-largest allocator in the game after `Spatial:nearest`
+--- built one of its own.
+---
+--- What a filter needs to know goes in the slots below. A query that hands a
+--- *caller-supplied* filter through -- `nearestBot`, `nearestEnemy` -- saves the
+--- slot it borrows and puts it back afterwards, because that filter may query
+--- the world itself (a bot's "is this one mine?" test asking for the nearest
+--- tree) and the inner query would otherwise walk off with the outer one's
+--- state. Two stores against a hundred closures a frame. The counting filters
+--- do not need that: nothing they touch can re-enter a query, and their reader
+--- is the statement after the walk.
+local qUnmarked          -- nearestTree: skip trees another bot has claimed
+local qFilter            -- the caller's own extra test, if it passed one
+local qX, qY             -- the query point, where the test needs it
+local qSelf              -- an entity to exclude from its own neighbourhood
+local qCount             -- counting filters accumulate here
+
+local function fTree(t)
+  if not t.alive or t.stage == "dead" then return false end
+  if qUnmarked and t.markedBy and t.markedBy.alive then return false end
+  return true
+end
+
+local function fBot(b)
+  if b.state == "dead" or b.state == "down" or not b.alive then return false end
+  if qFilter and not qFilter(b) then return false end
+  return true
+end
+
+local function fBotDowned(b)
+  return b.alive and b.state == "down" and not b.carried
+end
+
+local function fEnemy(e)
+  if not e.alive or e.fleeing then return false end
+  if qFilter and not qFilter(e) then return false end
+  return true
+end
+
+local function fCobaltNode(c) return c.alive and c.node end
+local function fAlive(e) return e.alive end
+local function fBeacon(b) return b.type == "beacon" and b.state == "work" end
+local function fEnemyHittable(e) return e.alive and not e.fleeing end
+
+--- Blight creep is a radius per scar, so this one has to know where it is being
+--- asked about.
+local function fScarCreep(e)
+  return e.alive and e.type == "scar" and U.dist(e.x, e.y, qX, qY) < (e.creep or 0)
+end
+
+--- Neighbour counting: `qSelf` is the tree asking, and never counts itself.
+local function fCountNeighbours(o)
+  if o ~= qSelf and o.alive then qCount = qCount + 1 end
+end
+
+local function fCountAlive(e)
+  if e.alive then qCount = qCount + 1 end
+end
+
 function World:nearestTree(x, y, r, unmarkedOnly)
-  return self.hTree:nearest(x, y, r, function(t)
-    if not t.alive or t.stage == "dead" then return false end
-    if unmarkedOnly and t.markedBy and t.markedBy.alive then return false end
-    return true
-  end)
+  local prev = qUnmarked
+  qUnmarked = unmarkedOnly
+  local t, d = self.hTree:nearest(x, y, r, fTree)
+  qUnmarked = prev
+  return t, d
 end
 
 function World:nearestBot(x, y, r, filter)
-  return self.hBot:nearest(x, y, r, function(b)
-    if b.state == "dead" or b.state == "down" or not b.alive then return false end
-    if filter and not filter(b) then return false end
-    return true
-  end)
+  local prev = qFilter
+  qFilter = filter
+  local b, d = self.hBot:nearest(x, y, r, fBot)
+  qFilter = prev
+  return b, d
 end
 
 function World:nearestDownedBot(x, y, r)
-  return self.hBot:nearest(x, y, r, function(b)
-    return b.alive and b.state == "down" and not b.carried
-  end)
+  return self.hBot:nearest(x, y, r, fBotDowned)
 end
 
 function World:nearestEnemy(x, y, r, filter)
-  return self.hEnemy:nearest(x, y, r, function(e)
-    if not e.alive or e.fleeing then return false end
-    if filter and not filter(e) then return false end
-    return true
-  end)
+  local prev = qFilter
+  qFilter = filter
+  local e, d = self.hEnemy:nearest(x, y, r, fEnemy)
+  qFilter = prev
+  return e, d
 end
 
 function World:nearestCobalt(x, y, r)
-  return self.hCobalt:nearest(x, y, r, function(c) return c.alive and c.node end)
+  return self.hCobalt:nearest(x, y, r, fCobaltNode)
 end
 
 function World:enemyCount() return #self.enemies end
@@ -242,7 +399,7 @@ end
 --- Beacon field helpers, used by bots and enemies.
 function World:beaconAt(x, y)
   local b = self.hBot:nearest(x, y, TU.bots.beacon.radius_field * self.chips:get("beaconRadius", 1),
-    function(bb) return bb.type == "beacon" and bb.state == "work" end)
+    fBeacon)
   return b
 end
 
@@ -287,7 +444,7 @@ end
 --- (which keep the chunk themselves) and by the player, who gets a loose chunk
 --- that flies back to them.
 function World:consumeCobaltNear(x, y, r, dropLoose)
-  local c = self.hCobalt:nearest(x, y, r, function(cc) return cc.alive and cc.node end)
+  local c = self.hCobalt:nearest(x, y, r, fCobaltNode)
   if not c or not c:mine() then return false end
   if dropLoose then
     local loose = CobaltE.new(c.x, c.y, self, self.rng, false)
@@ -302,9 +459,11 @@ end
 function World:blightedAt(x, y)
   local r = TU.enemy.scar and TU.enemy.scar.creepMax or 0
   if r <= 0 then return false end
-  return self.hEnemy:nearest(x, y, r, function(e)
-    return e.alive and e.type == "scar" and U.dist(e.x, e.y, x, y) < (e.creep or 0)
-  end) ~= nil
+  local px, py = qX, qY
+  qX, qY = x, y
+  local e = self.hEnemy:nearest(x, y, r, fScarCreep)
+  qX, qY = px, py
+  return e ~= nil
 end
 
 function World:plantTree(x, y, by)
@@ -323,14 +482,13 @@ function World:plantTree(x, y, by)
     end
   end
   local gap = TU.tree.spreadReject * 0.74
-  if self.hTree:nearest(x, y, gap, function(t) return t.alive end) then return false end
+  if self.hTree:nearest(x, y, gap, fAlive) then return false end
 
   local t = Tree.new and Tree.new(x, y, self.rng:int(1, 100000)) or nil
   if not t then return false end
   t.world = self
   t.canElder = true
-  self:addEntity(self.trees, self.hTree, t)
-  self.treeCount = self.treeCount + 1
+  self:addTree(t)
   self.stats.planted = self.stats.planted + 1
 
   VFX.emit("plant_burst", x, y)
@@ -359,8 +517,7 @@ function World:restore(d)
       if elder == 1 then t.elder = true end
       if t.refreshMesh  then t:refreshMesh() end
       if t.refreshStage then t:refreshStage(true) end
-      self:addEntity(self.trees, self.hTree, t)
-      self.treeCount = self.treeCount + 1
+      self:addTree(t)
     end
   end
 
@@ -588,7 +745,7 @@ function World:areaShove(x, y, radius, force, damage, stun, includeBots)
 end
 
 function World:hitEnemyAt(x, y, r, damage, vx, vy)
-  local e = self.hEnemy:nearest(x, y, r, function(ee) return ee.alive and not ee.fleeing end)
+  local e = self.hEnemy:nearest(x, y, r, fEnemyHittable)
   if not e then return false end
   local dmg = damage
   if self.chips:has("brittle") and (e.stun or 0) > 0 then dmg = dmg * 2 end
@@ -1041,6 +1198,7 @@ function World:update(dt, realDt)
   if self.rig then self.rig:update(dt) end
   if self.player then self.player:update(dt, self.camera) end
   sweep(self.trees, self.hTree, dt)
+  self:refreshVisibleTrees()
   sweep(self.bots, self.hBot, dt)
   sweep(self.enemies, self.hEnemy, dt)
   sweep(self.cobalts, self.hCobalt, dt)
@@ -1204,9 +1362,9 @@ function World:updateSpread(dt)
       -- growth speed: beacons, rain and chips all feed the same multiplier
       local m = growMul * rainMul * (1 + self:beaconBoostAt(t.x, t.y))
       if self.chips:has("canopy") then
-        local near = 0
-        self.hTree:each(t.x, t.y, 90, function(o) if o ~= t and o.alive then near = near + 1 end end)
-        if near >= 3 then m = m * 1.35 end
+        qSelf, qCount = t, 0
+        self.hTree:each(t.x, t.y, 90, fCountNeighbours)
+        if qCount >= 3 then m = m * 1.35 end
       end
       -- eldering rides the same multiplier, with its own chip on top
       if t.stage == "mature" or t.stage == "elder" then
@@ -1219,11 +1377,9 @@ function World:updateSpread(dt)
       -- what turned the island into a uniform mat.
       local onFrontier = true
       if t.stage == "mature" or t.stage == "elder" then
-        local near = 0
-        self.hTree:each(t.x, t.y, TU.tree.frontierRadius, function(o)
-          if o ~= t and o.alive then near = near + 1 end
-        end)
-        onFrontier = near < self.chips:get("frontierMax", TU.tree.frontierMax)
+        qSelf, qCount = t, 0
+        self.hTree:each(t.x, t.y, TU.tree.frontierRadius, fCountNeighbours)
+        onFrontier = qCount < self.chips:get("frontierMax", TU.tree.frontierMax)
       end
       if onFrontier and (t.stage == "mature" or t.stage == "elder") then
         if not t.nextSpread then
@@ -1248,30 +1404,14 @@ function World:threat()
   local close = 0
   local p = self.player
   if p then
-    self.hEnemy:each(p.x, p.y, 420, function(e) if e.alive then close = close + 1 end end)
+    qCount = 0
+    self.hEnemy:each(p.x, p.y, 420, fCountAlive)
+    close = qCount
   end
   return U.saturate(n / 22 * 0.6 + close / 8 * 0.4)
 end
 
 -------------------------------------------------------------------------- draw
---- Depth key. Entities may supply `sortKey`; anything else sorts on its feet.
-local function depthOf(e)
-  if e.sortKey then return e:sortKey() end
-  local z = e.z
-  return e.y + (type(z) == "number" and z or 0)
-end
-
---- The key is stashed when the list is built, not recomputed inside the
---- comparator. table.sort calls its comparator O(n log n) times, so a
---- five-hundred entity frame was making about nine thousand dynamic dispatches
---- through depthOf -- 1.3 to 1.8 ms of interpreted Lua, every frame, to answer
---- five hundred questions.
-local function addDraw(list, e)
-  e._dz = depthOf(e)
-  list[#list + 1] = e
-end
-local function bySortKey(a, b) return a._dz < b._dz end
-
 function World:draw(camera)
   self.camera = camera
   local g = love.graphics
@@ -1314,15 +1454,17 @@ function World:draw(camera)
   -- shadow pass: everything's contact shadow lands on the ground, under all art
   local sunA = DayNight.sunAngle or 0.9
   local sunL = DayNight.sunLength or 0.6
-  for i = 1, #self.trees do
-    local t = self.trees[i]
-    -- t.onScreen is computed once in Tree:update and both draw paths early-out
-    -- on it anyway; re-asking the camera here was fourteen hundred redundant
-    -- visibility tests a frame.
-    if t.alive and t.onScreen and t.drawShadow then t:drawShadow(sunA, sunL) end
+  -- `visTrees` is the forest the camera can see, in depth order, built by the
+  -- update sweep that had already worked out `onScreen` for its own culling.
+  -- Both tree passes read it: this one used to walk all 722 trees to find the
+  -- 442 that draw, and the entity pass below used to walk them all again.
+  local vis = self.visTrees
+  for i = 1, #vis do
+    local t = vis[i]
+    if t.drawShadow then t:drawShadow(sunA, sunL) end
   end
   if Tree.endPass then Tree.endPass() end
-  local lists = { self.bots, self.enemies, self.cobalts, self.projectiles }
+  local lists = self.mobileLists
   for l = 1, #lists do
     local list = lists[l]
     for i = 1, #list do
@@ -1336,13 +1478,14 @@ function World:draw(camera)
 
   if VFX.draw then VFX.draw("ground") end
 
-  -- depth-sorted entity pass
+  -- Depth-sorted entity pass. Only the things that actually move are sorted -
+  -- fifty-odd entries rather than five hundred - because the forest arrives
+  -- already in depth order and the two lists are merged as they are drawn. A
+  -- Lua comparator called nine thousand times a frame to re-establish an order
+  -- that had not changed since the last planting was the single most expensive
+  -- thing left in `World:draw`.
   local dl = self.drawList
   for i = #dl, 1, -1 do dl[i] = nil end
-  for i = 1, #self.trees do
-    local t = self.trees[i]
-    if t.alive and t.onScreen then t.isTree = true addDraw(dl, t) end
-  end
   for l = 1, #lists do
     local list = lists[l]
     for i = 1, #list do
@@ -1355,10 +1498,16 @@ function World:draw(camera)
   table.sort(dl, bySortKey)
 
   local sx, sy = math.cos(sunA), math.sin(sunA)
-  for i = 1, #dl do
-    local e = dl[i]
-    if e.isTree then e:draw(sx, sy) else e:draw() end
+  local ei, en = 1, #dl
+  for ti = 1, #vis do
+    local t = vis[ti]
+    local tz = t._dz
+    while ei <= en and dl[ei]._dz < tz do
+      dl[ei]:draw() ei = ei + 1
+    end
+    t:draw(sx, sy)
   end
+  while ei <= en do dl[ei]:draw() ei = ei + 1 end
   if Tree.endPass then Tree.endPass() end
 
   -- The canopy's backlight used to be a third additive pass over every crown
@@ -1470,7 +1619,7 @@ function World:emitLights(Light)
   if self.player and self.player.emitLight then self.player:emitLight(Light) end
   if self.rig then self.rig:emitLight(Light) end
   local cam = self.camera
-  local lists = { self.bots, self.enemies, self.cobalts, self.projectiles }
+  local lists = self.mobileLists
   for l = 1, #lists do
     local list = lists[l]
     for i = 1, #list do

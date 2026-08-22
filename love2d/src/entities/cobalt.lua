@@ -12,6 +12,23 @@ local Audio = Opt.require("src.engine.audio")
 
 local Cobalt = Class("Cobalt", Entity)
 
+-- Light options, hoisted. `Lighting.addLight` reads the table and copies what
+-- it needs into its parallel arrays -- it never keeps a reference -- so a
+-- constant options table is a constant, and building one per light per frame
+-- was pure garbage. Same idiom as `demo_light.lua`'s OPT_ table.
+local OPT_SHIMMER = { flicker = 0.06 }
+
+-- The crystal's three fixed facet colours, resolved once. `P.shade` blends two
+-- ramp stops into a *fresh table* on every call, and a deposit draws five
+-- shards of four facets each: twenty tables per deposit per frame, which
+-- measured 1.8 KB a frame for a single node and was the second-largest
+-- allocator in `World:draw`. The fourth facet is the one that moves with the
+-- shimmer, so it is resolved once per deposit just above the shard loop
+-- instead of once per shard.
+local FACET_BASE = P.shade(P.ramp.cobalt, 1.15)
+local FACET_BODY = P.shade(P.ramp.cobalt, 1.9)
+local FACET_TIP  = P.shade(P.ramp.cobalt, 4)
+
 function Cobalt:init(x, y, world, rng, isNode)
   Cobalt.super.init(self, x, y)
   self.kind   = "cobalt"
@@ -97,6 +114,7 @@ function Cobalt:draw()
     if self.hitAnim <= 0 then self.hitAnim = nil end
   end
   local shimmer = 0.5 + math.sin(self.age * 2.2 + self.bob) * 0.5
+  local facetLit = P.shade(P.ramp.cobalt, 2.9 + shimmer * 0.5)
   g.push()
   g.translate(self.x, self.y + (self.node and 0 or math.sin(self.age * 4 + self.bob) * 2))
   g.scale(pop)
@@ -108,15 +126,15 @@ function Cobalt:draw()
     -- four-vertex polygons with one flat fill each, and read as pixel art
     -- pasted into a different game. Same silhouette, but given a shadowed
     -- flank, a lit flank and a rim, so it turns in the light.
-    Draw.setColor(P.shade(P.ramp.cobalt, 1.15))
+    Draw.setColor(FACET_BASE)
     Draw.diamond(x, y + s.s * 0.42, s.s * 1.02, s.s * 0.62, "fill")
-    Draw.setColor(P.shade(P.ramp.cobalt, 1.9))
+    Draw.setColor(FACET_BODY)
     Draw.diamond(x, y, s.s, s.s * 1.5, "fill")
     -- lit half: a slimmer diamond pushed to the key side, so the body splits
     -- into two facets down the vertical axis instead of reading as one slab
-    Draw.setColor(P.shade(P.ramp.cobalt, 2.9 + shimmer * 0.5))
+    Draw.setColor(facetLit)
     Draw.diamond(x + s.s * 0.30, y - s.s * 0.04, s.s * 0.70, s.s * 1.40, "fill")
-    Draw.setColor(P.shade(P.ramp.cobalt, 4), 0.50 + shimmer * 0.40)
+    Draw.setColor(FACET_TIP, 0.50 + shimmer * 0.40)
     Draw.diamond(x - s.s * 0.16, y - s.s * 0.30, s.s * 0.34, s.s * 0.60, "fill")
     -- a thin bright edge along the top facets: the one line that stops it
     -- dissolving into grass at play scale
@@ -137,7 +155,7 @@ function Cobalt:ambient(dt)
 end
 
 function Cobalt:emitLight(Lighting)
-  Lighting.addLight(self.x, self.y, self.radius * 3.2, P.ramp.cobalt[3], 0.3, { flicker = 0.06 })
+  Lighting.addLight(self.x, self.y, self.radius * 3.2, P.ramp.cobalt[3], 0.3, OPT_SHIMMER)
 end
 
 return Cobalt

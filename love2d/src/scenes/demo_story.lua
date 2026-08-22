@@ -190,6 +190,11 @@ function Stub:draw(cam)
     if b.drawShadow then b:drawShadow() end
   end
   if self.player and self.player.drawShadow then self.player:drawShadow() end
+  -- Close the shadow pass before anything stands up in front of it, the way
+  -- World:draw does. It costs nothing on the mesh path and it is required by
+  -- the sprite-atlas path, where the tree shadows are still sitting in a batch
+  -- until something flushes them.
+  if Tree.endPass then Tree.endPass() end
 
   local list = {}
   for i = 1, #self.trees do list[#list + 1] = self.trees[i] end

@@ -195,6 +195,141 @@ function Draw.fillFan(cx, cy, pts, n)
   lg.draw(m)
 end
 
+------------------------------------------------------------------ baked shapes
+--- Tessellate a drawing function once and replay it as batched fans.
+---
+--- `Draw.glow` above bakes N concentric quads into one falloff; this is the
+--- same argument for a *composite* shape. A bot chassis is about twenty
+--- roundRects, capsules and blobs, each running cos/sin per vertex in
+--- interpreted Lua, rebuilt every frame for geometry that never changes.
+--- `Draw.bake` runs the drawing function once with the drawing sinks swapped
+--- for recorders and keeps the point lists that come out of it; `Draw.replay`
+--- puts them back on screen.
+---
+--- WHAT IT MUST NOT DO IS PUT THEM IN A MESH, and that is the part worth
+--- writing down. LOVE batches consecutive stream primitives -- polygon,
+--- circle, line -- into one GL draw call, folding the colour into the
+--- vertices, so twenty fills in a row are already *one* call and their
+--- tessellation is all they cost. A Mesh is never batched: it is its own draw
+--- call and it flushes whatever was accumulating behind it. Baking the six bot
+--- hulls to Meshes measured 222 -> 288 draw calls over twenty-four bots --
+--- worse in the exact currency it was supposed to save. Replayed as polygons
+--- over point lists that are already computed, the batching survives and the
+--- cos/sin does not happen twice.
+---
+--- Recording rather than re-implementing is the other half of it: the shape is
+--- tessellated by the very code that used to draw it, at the same size, with
+--- the same segment counts and corner rounding, so a baked picture cannot
+--- drift from the drawn one it replaces. LOVE fills a polygon as a triangle
+--- FAN from its first vertex, so each primitive is stored the way its own code
+--- built it -- a roundRect or a capsule from its first corner, a blob or a
+--- star around its centre -- and comes back out as the same triangles.
+---
+--- Only the fills a baked shape can be made of are recorded. Anything else --
+--- a stroked line, an arc, another Mesh -- raises rather than silently drawing
+--- nothing, because a hole in a chassis is not something a syntax check or a
+--- capture can be relied on to notice.
+local bakeList = nil
+local bakeR, bakeG, bakeB, bakeA = 1, 1, 1, 1
+
+--- Keep one primitive: its colour, and a point list ready for lg.polygon.
+--- With (cx, cy) the list is wrapped into a fan around that centre -- centre
+--- first, first point repeated last -- which is exactly the triangles
+--- Draw.fillFan draws and exactly what a polygon fill makes of it.
+local function keep(pts, n, cx, cy)
+  local out, k = {}, 0
+  if cx then out[1], out[2], k = cx, cy, 2 end
+  for i = 1, n do out[k + i] = pts[i] end
+  if cx then out[k + n + 1], out[k + n + 2] = pts[1], pts[2] end
+  bakeList[#bakeList + 1] = { bakeR, bakeG, bakeB, bakeA, out }
+end
+
+--- LOVE's own segment count for a circle (Graphics::calculateEllipsePoints):
+--- the square root of twenty times the mean radius, never fewer than eight.
+--- Mirrored so a baked disc has the silhouette of the one it stands in for.
+--- LOVE scales that count with the current transform and a baked one cannot,
+--- so a disc baked for a 13-unit chassis and then blown up on a portrait is a
+--- polygon or two coarser than it would have been. Nothing this draws is.
+local function circleSegs(r) return max(8, floor(sqrt(r * 20))) end
+
+local function recColor(r, g, b, a)
+  if type(r) == "table" then r, g, b, a = r[1], r[2], r[3], r[4] end
+  bakeR, bakeG, bakeB, bakeA = r or 1, g or 1, b or 1, a or 1
+end
+
+local function recPolygon(mode, a, ...)
+  if mode ~= "fill" then error("Draw.bake: polygon '" .. tostring(mode) .. "' cannot be baked", 2) end
+  if type(a) == "table" then
+    keep(a, #a)
+  else
+    local pts = { a, ... }
+    keep(pts, #pts)
+  end
+end
+
+local function recCircle(mode, x, y, r, segs)
+  if mode ~= "fill" then error("Draw.bake: circle '" .. tostring(mode) .. "' cannot be baked", 2) end
+  segs = segs or circleSegs(r)
+  local n = 0
+  for i = 0, segs - 1 do
+    local a = i / segs * TAU
+    n = n + 1; SPOLY2[n] = x + cos(a) * r
+    n = n + 1; SPOLY2[n] = y + sin(a) * r
+  end
+  trim(SPOLY2, n)
+  -- LOVE's own circle fans from the first point on the rim, not from the
+  -- centre, so this one does too.
+  keep(SPOLY2, n)
+end
+
+local function recFillFan(cx, cy, pts, n)
+  keep(pts, n, cx, cy)
+end
+
+-- Everything else that could put pixels somewhere, refused by name.
+local BAKE_REFUSE = { "line", "arc", "rectangle", "ellipse", "points", "draw", "print", "printf" }
+
+--- Record `fn(...)` and return the baked shape: an ordered list of primitives.
+function Draw.bake(fn, ...)
+  local saved = { polygon = lg.polygon, circle = lg.circle, setColor = lg.setColor }
+  for i = 1, #BAKE_REFUSE do
+    local name = BAKE_REFUSE[i]
+    saved[name] = lg[name]
+    lg[name] = function() error("Draw.bake: " .. name .. " cannot be baked", 2) end
+  end
+  local fill = Draw.fillFan
+  lg.polygon, lg.circle, lg.setColor = recPolygon, recCircle, recColor
+  Draw.fillFan = recFillFan
+  bakeList, bakeR, bakeG, bakeB, bakeA = {}, 1, 1, 1, 1
+  local ok, err = pcall(fn, ...)
+  for name, f in pairs(saved) do lg[name] = f end
+  Draw.fillFan = fill
+  local shape = bakeList
+  bakeList = nil
+  if not ok then error(err, 0) end
+  if #shape == 0 then return nil end
+  return shape
+end
+
+--- Draw a baked shape. `first`/`last` limit it to a run of its primitives,
+--- which is how a row of pips draws its lit ones and its empty ones in two
+--- passes without either being composited over the other. `scale` is for a
+--- shape baked at one size and drawn at another.
+function Draw.replay(shape, first, last, scale)
+  if scale and scale ~= 1 then
+    lg.push()
+    lg.scale(scale)
+    Draw.replay(shape, first, last)
+    lg.pop()
+    return
+  end
+  for i = first or 1, last or #shape do
+    local p = shape[i]
+    lg.setColor(p[1], p[2], p[3], p[4])
+    lg.polygon("fill", p[5])
+  end
+end
+
 local function setV(i, x, y, c, aMul)
   local v = SVERT[i]
   v[1], v[2], v[3], v[4] = x, y, 0, 0

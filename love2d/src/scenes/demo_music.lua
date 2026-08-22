@@ -14,7 +14,7 @@
 local U     = require("src.core.util")
 local P     = require("src.engine.palette")
 local Audio = require("src.engine.audio")
-local Music = require("src.engine.music")
+local Music = require("src.engine.music_procedural")
 
 local S = {}
 local g = love.graphics

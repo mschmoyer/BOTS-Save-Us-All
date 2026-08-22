@@ -70,9 +70,18 @@ const fs = require('fs');
   page.on('console', m => logs.push(`[${m.type()}] ${m.text()}`));
   page.on('pageerror', e => logs.push(`[pageerror] ${e.message}`));
 
-  const url = 'file://' + path.resolve(html) + (dev ? '?dev=' + dev : '');
+  // Accepts a path or an http(s) URL. The hosted build must be measured over
+  // HTTP: emscripten refuses its instantiateStreaming path for a file:// URI,
+  // so a file:// run of a multi-file build under-reports it.
+  const isURL = /^https?:\/\//.test(html);
+  const url = (isURL ? html : 'file://' + path.resolve(html)) + (dev ? '?dev=' + dev : '');
+  // The webfont stylesheet is a third-party request this page deliberately no
+  // longer blocks on (see web_shell.html). Waiting for 'load' here would put
+  // that wait back inside every number below -- on a machine with no route to
+  // fonts.googleapis.com it reads as a 13 s boot that is not happening.
+  // 'commit' starts the clock when the document does.
   const tNav = Date.now();
-  await page.goto(url);
+  await page.goto(url, { waitUntil: 'commit' });
   await page.waitForSelector('#start', { state: 'visible', timeout: 180000 });
   const tGate = Date.now() - tNav;
   const clickAt = await page.evaluate(() => performance.now());
@@ -110,7 +119,7 @@ const fs = require('fs');
   }, clickAt);
 
   if (process.env.OUT) await page.screenshot({ path: process.env.OUT });
-  const size = fs.statSync(path.resolve(html)).size;
+  const size = isURL ? 0 : fs.statSync(path.resolve(html)).size;
   console.log('WEBPERF ' + JSON.stringify({
     file: path.basename(html), bytes: size, mb: +(size / 1048576).toFixed(2),
     msToClickGate: tGate, viewport: [+W, +H], mobile, dev, ...r,

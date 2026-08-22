@@ -100,10 +100,17 @@ local STREAM_MIN, STREAM_MAX = 0.002, 0.050
 local STREAM = (cfg("BOTS_AUDIO_STREAM") ~= nil) or not H.on
 
 -------------------------------------------------------------- boot reporting
--- The single-file web build spends thirteen seconds decoding a base64 wasm blob
--- before LOVE exists at all, and the shell draws a real boot panel over that.
--- Everything after it used to happen inside one main-loop tick with no way for
--- the page to say so. These two calls are the game talking back to the panel.
+-- The web build has a stretch before LOVE exists at all -- fetching and
+-- compiling the runtime, unpacking the game data -- and the shell draws a real
+-- boot panel over it. Everything after it used to happen inside one main-loop
+-- tick with no way for the page to say so. These two calls are the game talking
+-- back to the panel.
+--
+-- This comment used to claim that stretch was "thirteen seconds decoding a
+-- base64 wasm blob". It was not. Decoding the blobs is ~150 ms; the thirteen
+-- seconds was a render-blocking webfont stylesheet timing out, and it is fixed
+-- in the shell. The hosted build now reaches its first frame in well under a
+-- second of pre-LOVE time. See docs/PERFORMANCE_SPEC.md.
 --
 -- The channel is `print`. The shell already routes stdout through Module.print
 -- (see tools/web_shell.html), it costs one string per update, it cannot fail,
@@ -142,7 +149,10 @@ function Boot.applyQuality()
     ps.vignette = Settings.get("fxVignette", true)
     ps.distort  = Settings.get("fxDistortion", true)
   end
-  local q = Settings.get("quality", "high")
+  -- BOTS_QUALITY forces a detail level for a capture: the render scale that
+  -- comes with "low" is the only way to exercise the scene-canvas path
+  -- headlessly, and it is not reachable from the options screen without a human.
+  local q = cfg("BOTS_QUALITY") or Settings.get("quality", "high")
   local level = (q == "low" and 0) or (q == "medium" and 1) or 2
   local ok, Lighting = pcall(require, "src.engine.lighting")
   if ok and Lighting.setQuality then Lighting.setQuality(level) end

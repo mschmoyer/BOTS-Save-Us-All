@@ -26,4 +26,4 @@ BOTS_IDENTITY="$ID" BOTS_HEADLESS=1 BOTS_DRAW_ALL=1 \
   BOTS_PERF_TAG="$TAG" BOTS_PERF_FRAMES="$FR" BOTS_PERF_WARM="$WARM" \
   SDL_AUDIODRIVER=dummy \
   xvfb-run -a -s "-screen 0 ${BOTS_W:-1600}x${BOTS_H:-900}x24" \
-  love . 2>&1 | grep -E '^PERF|ERROR|Error' | grep -viE 'alsa'
+  love . 2>&1 | grep -E "^PERF|ERROR|Error" | grep -viE 'alsa'

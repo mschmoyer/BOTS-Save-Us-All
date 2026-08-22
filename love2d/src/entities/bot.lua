@@ -515,11 +515,99 @@ end
 -- antenna with a lit tip, a mouth that answers the voice -- carried down onto
 -- the thirty-pixel version of the same character.
 local metalRamp = P.ramp.metal
-local function metal(t, a) return P.shade(metalRamp, t, a) end
+-- P.shade builds a fresh table per call, and a bot draws ~20 of them: at 48
+-- bots that measured 26 KB a frame, the largest remaining allocator in the game
+-- once the containers were cleaned up. Every call site here passes a literal
+-- ramp position, so memoise on it -- the same shape player.lua's suit()/bare()
+-- already use. Calls that pass an alpha still allocate; they are the rare ones
+-- and the alpha genuinely varies.
+local METAL_C = {}
+local function metal(t, a)
+  if a then return P.shade(metalRamp, t, a) end
+  local c = METAL_C[t]
+  if not c then c = P.shade(metalRamp, t); METAL_C[t] = c end
+  return c
+end
 -- The lit edge. `metal`'s own top stop, so the crew's rim is cool white and the
 -- player's is `accentCool` blue: at a glance, across a busy frame, that one
 -- difference is how you find yourself among your own machines.
 local RIM = metalRamp[4]
+
+------------------------------------------------------------------ baked hulls
+-- WHY A CHASSIS IS TESSELLATED ONCE.
+--
+-- Every bot used to rebuild about twenty procedural primitives a frame --
+-- roundRect, capsule, blob, each running cos/sin per vertex in interpreted Lua
+-- -- at full detail whatever size it was on screen, for geometry that never
+-- changes: the hull of a Planter is a pure function of its radius, and that
+-- radius is a constant of its type.
+--
+-- So each type's static hull is recorded once, the first time one of them is
+-- drawn, and is replayed from its point lists for the rest of the session.
+-- *Measured with the GPU nulled and the JIT off -- the closest thing here to
+-- the browser's interpreter -- `world.entities` went 3.19 ms to 1.59 ms a
+-- frame at 48 bots and 735 trees, and the whole frame 12.3 to 10.6.*
+--
+-- See `Draw.bake`: it records the hull by running the very code that used to
+-- draw it live, so the baked picture cannot drift from the drawn one, and it
+-- replays through `polygon` rather than a Mesh so that LOVE goes on batching
+-- the whole chassis into one GL draw call -- which, measured, it was already
+-- doing and a Mesh per hull would have undone. The draw calls that do go are
+-- the Planter's four seedling blobs, which each drew their own unbatchable
+-- fan Mesh: 465 to 420 entity draw calls on that same scene.
+--
+-- What actually moves stays live: the eye, the antenna, the load pips, the
+-- jib's hook, the Sentry's barrel, the Harvester's spokes, the Beacon's lamp.
+-- The boot unfold, the bob and the squash never touched geometry in the first
+-- place -- they are transforms wrapped around the whole body -- so they come
+-- through untouched.
+--
+-- A layer is `function(r)` and nothing else -- no `self`, nothing from the
+-- world, nothing that ticks. Where a live part has to sit *between* two static
+-- ones (the Beacon's lamp inside its housing, the Harvester's spokes over its
+-- hubs) the type gets a second layer and draws the live part in between, so
+-- what lands on top of what is exactly what it was.
+local HULL  = {}   -- type -> { layer(r), ..., plate = layer(r) }
+local baked = {}   -- type -> { slot -> baked shape or false }, on first draw
+
+local function bakeSlots(self)
+  local b = baked[self.type]
+  if not b then b = {} baked[self.type] = b end
+  return b
+end
+
+--- Draw one baked layer of this machine's hull, in the body's own local space.
+function Bot:hull(r, slot)
+  local b = bakeSlots(self)
+  local shape = b[slot]
+  if shape == nil then
+    shape = Draw.bake(HULL[self.type][slot], self.def.radius) or false
+    b[slot] = shape
+  end
+  if shape then Draw.replay(shape, 1, nil, r / self.def.radius) end
+end
+
+--- A row of pips: `count` identical little shapes of which the first `n` are
+--- lit. Each state bakes as a shape of its own, and because the lit ones are
+--- always the leading run, each draws as one contiguous range of it -- nothing
+--- composited over anything, so the colours stay the ones that were always
+--- there. A Builder carries six and a Harvester five, and every pip used to
+--- cost a fresh colour table and a fresh tessellation, per bot, per frame.
+local function pipRow(count, emit, unlit)
+  local lit = Draw.bake(function() for i = 1, count do emit(i, true) end end)
+  local dim = unlit and Draw.bake(function() for i = 1, count do emit(i, false) end end) or nil
+  return { lit = lit, dim = dim, count = count, per = lit and #lit / count or 0 }
+end
+
+function Bot:pips(r, row, n)
+  if row.per <= 0 then return end
+  local s = r / self.def.radius
+  n = U.clamp(n, 0, row.count)
+  if n > 0 then Draw.replay(row.lit, 1, n * row.per, s) end
+  if row.dim and n < row.count then
+    Draw.replay(row.dim, n * row.per + 1, row.count * row.per, s)
+  end
+end
 
 -- Nameplates. Not balance numbers: how near you have to be before a bot tells
 -- you who it is, and how large it says so, in world units.
@@ -616,15 +704,39 @@ function Bot:drawAntenna(x, y, len, r)
   Draw.glow(x + sway, y - len, r * 0.7, c, 0.3, 2)
 end
 
---- The eye plate: a dark recess, a lit eye that looks where the bot is looking,
---- and -- while it is talking -- the three-bar vocoder mouth off the portrait.
-function Bot:drawEye(x, y, w, h)
-  local c = self:eyeColor()
-  local down = self.state == "down"
+--- Where each of the six wears its face: x, y, width and height in radii. The
+--- recess is baked into the hull and the eye that moves inside it is not, so
+--- the two of them have to be reading the same four numbers.
+local EYE = {
+  planter   = { 0, -0.20, 0.98, 0.50 },
+  builder   = { 0, -0.36, 1.02, 0.46 },
+  repulsor  = { 0,  0.06, 0.92, 0.34 },
+  sentry    = { 0, -0.56, 0.70, 0.34 },
+  harvester = { 0, -0.16, 0.90, 0.40 },
+  beacon    = { 0, -0.58, 0.58, 0.30 },
+}
+
+--- The recess itself, which is a hull layer of its own rather than part of the
+--- chassis layer: every one of the six draws its face *last*, and folding the
+--- plate in with the chassis would put it underneath every additive glow
+--- issued in between -- the antenna's, the load's -- which is not what any of
+--- these machines look like.
+local function eyePlate(r, e)
+  local x, y, w, h = e[1] * r, e[2] * r, e[3] * r, e[4] * r
   Draw.setColor(metal(1.0))
   Draw.roundRect("fill", x - w * 0.5, y - h * 0.5, w, h, h * 0.42)
   Draw.setColor(RIM, 0.30)
   Draw.capsule("fill", x - w * 0.32, y - h * 0.44, x + w * 0.32, y - h * 0.44, h * 0.055)
+end
+
+--- The eye plate: a dark recess, a lit eye that looks where the bot is looking,
+--- and -- while it is talking -- the three-bar vocoder mouth off the portrait.
+function Bot:drawEye(r)
+  local e = EYE[self.type]
+  local x, y, w, h = e[1] * r, e[2] * r, e[3] * r, e[4] * r
+  local c = self:eyeColor()
+  local down = self.state == "down"
+  self:hull(r, "plate")
 
   local a = 1
   local boot = self:bootP()
@@ -668,18 +780,45 @@ end
 --- The carrying tell. A pip row that fills, and -- the part that actually reads
 --- at play scale -- a cobalt glow on the machine itself, so "that one is
 --- bringing something home" is answerable from across the clearing.
-function Bot:drawLoad(r, y, w)
+-- Constant light options. Lighting.addLight only reads these, so one table per
+-- distinct value serves every bot: at 48 bots the two literals below were 5 KB
+-- a frame. This is the pair PERFORMANCE.md item 7 named by name.
+local OPT_FLICK3 = { flicker = 0.03 }
+local OPT_FLICK4 = { flicker = 0.04 }
+
+local HOT = P.shade(P.ramp.cobalt, 3.4)
+
+-- The rest of the constant shades this file draws with, resolved once. Same
+-- reason as METAL_C above; these had literal arguments and were rebuilding the
+-- identical table every frame.
+local LEAF_STALK = P.shade(P.ramp.leaf, 1.2)
+local LEAF_HI    = P.shade(P.ramp.leafHi, 4)
+local COBALT_3   = P.shade(P.ramp.cobalt, 3)
+local LEAF_LOAD  = P.shade(P.ramp.leaf, 3.2)
+local LEAF_GLOW  = P.shade(P.ramp.leaf, 3.6)
+-- the charge pips alternate between two stops, so it is two constants, not a
+-- computed one
+local COBALT_PIP = { P.shade(P.ramp.cobalt, 2.6), P.shade(P.ramp.cobalt, 3.2) }
+
+--- `fy` and `fw` are in radii rather than pixels, because the row is baked at
+--- the type's own radius and drawn scaled: the two sizes have to be derived
+--- from the same number and not from whatever `r` the first one was drawn at.
+function Bot:drawLoad(r, fy, fw)
   local n, cap = self:load()
   if cap <= 0 then return end
-  local hot = P.shade(P.ramp.cobalt, 3.4)
-  for i = 1, cap do
-    local lit = i <= n
-    local px = -w * 0.5 + (i - 0.5) * (w / cap)
-    Draw.setColor(lit and hot or metal(1.2), lit and 1 or 0.5)
-    Draw.diamond(px, y, r * 0.085, r * 0.12, "fill")
+  local b = bakeSlots(self)
+  if not b.load then
+    local R = self.def.radius
+    local y, w = fy * R, fw * R
+    b.load = pipRow(cap, function(i, lit)
+      local px = -w * 0.5 + (i - 0.5) * (w / cap)
+      Draw.setColor(lit and HOT or metal(1.2), lit and 1 or 0.5)
+      Draw.diamond(px, y, R * 0.085, R * 0.12, "fill")
+    end, true)
   end
+  self:pips(r, b.load, n)
   if n > 0 then
-    Draw.glow(0, y, r * (0.8 + 0.7 * n / cap), hot, 0.30 + 0.35 * n / cap, 2)
+    Draw.glow(0, fy * r, r * (0.8 + 0.7 * n / cap), HOT, 0.30 + 0.35 * n / cap, 2)
   end
 end
 
@@ -716,58 +855,114 @@ end
 -- Six classes of outline: you can name any of them from the shape alone.
 
 function Bot:body_planter(r)
-  Draw.setColor(metal(1.4))
-  Draw.roundRect("fill", -r * 0.92, r * 0.10, r * 1.84, r * 0.64, r * 0.28)   -- treads
-  Draw.setColor(metal(1.0))
-  for i = -1, 1 do
-    Draw.roundRect("fill", i * r * 0.48 - r * 0.06, r * 0.16, r * 0.12, r * 0.52, r * 0.05)
-  end
-  Draw.setColor(metal(2.4))
-  Draw.roundRect("fill", -r * 0.70, -r * 0.66, r * 1.40, r * 1.00, r * 0.32)  -- chassis
-  Draw.setColor(RIM, 0.55)
-  Draw.capsule("fill", -r * 0.44, -r * 0.60, r * 0.44, -r * 0.60, r * 0.07)
+  self:hull(r, 1)
   -- the seedling it is carrying, swaying: a stalk and two leaves. Nothing else
-  -- on the island has a plant growing out of its head.
+  -- on the island has a plant growing out of its head. It is baked standing
+  -- straight up and leaned over with a shear about its own root, so the stalk
+  -- stays welded to the chassis exactly where it was. A shear is not quite the
+  -- transform this had: it leans the leaves rather than sliding them, which
+  -- lands them a tenth of their own sway short of where they were and slants
+  -- them by up to half a pixel at full lean, on a leaf three pixels across. In
+  -- exchange the four blobs and the stalk are tessellated once instead of five
+  -- times a frame per Planter, and the blobs stop drawing four unbatchable
+  -- Meshes while they are at it.
+  local g = love.graphics
   local sway = math.sin(self.age * 1.6 + self.bob) * r * 0.11
-  -- dark stalk, bright leaves: a Planter is very often standing under a canopy,
-  -- and a mid-green sprout against mid-green foliage is no sprout at all
-  Draw.setColor(P.shade(P.ramp.leaf, 1.2))
-  Draw.capsule("fill", 0, -r * 0.62, sway, -r * 1.30, r * 0.09)
-  Draw.setColor(P.shade(P.ramp.leaf, 1.2))
-  Draw.blob(sway - r * 0.28, -r * 1.24, r * 0.30, 7, 3, 0.2, 0.62)
-  Draw.blob(sway + r * 0.27, -r * 1.40, r * 0.27, 7, 8, 0.2, 0.62)
-  Draw.setColor(P.shade(P.ramp.leafHi, 4))
-  Draw.blob(sway - r * 0.28, -r * 1.25, r * 0.24, 7, 3, 0.2, 0.60)
-  Draw.blob(sway + r * 0.27, -r * 1.41, r * 0.21, 7, 8, 0.2, 0.60)
+  g.push()
+  g.translate(0, -r * 0.62)
+  g.shear(-sway / (r * 0.68), 0)
+  self:hull(r, 2)
+  g.pop()
   self:drawAntenna(-r * 0.60, -r * 0.56, r * 0.60, r)
-  self:drawEye(0, -r * 0.20, r * 0.98, r * 0.50)
+  self:drawEye(r)
 end
 
+HULL.planter = {
+  function(r)
+    Draw.setColor(metal(1.4))
+    Draw.roundRect("fill", -r * 0.92, r * 0.10, r * 1.84, r * 0.64, r * 0.28)   -- treads
+    Draw.setColor(metal(1.0))
+    for i = -1, 1 do
+      Draw.roundRect("fill", i * r * 0.48 - r * 0.06, r * 0.16, r * 0.12, r * 0.52, r * 0.05)
+    end
+    Draw.setColor(metal(2.4))
+    Draw.roundRect("fill", -r * 0.70, -r * 0.66, r * 1.40, r * 1.00, r * 0.32)  -- chassis
+    Draw.setColor(RIM, 0.55)
+    Draw.capsule("fill", -r * 0.44, -r * 0.60, r * 0.44, -r * 0.60, r * 0.07)
+  end,
+  -- The seedling, in a frame of its own: root at the origin, tip up the
+  -- negative y axis, which is what lets the body lean it with one shear.
+  function(r)
+    -- dark stalk, bright leaves: a Planter is very often standing under a canopy,
+    -- and a mid-green sprout against mid-green foliage is no sprout at all
+    Draw.setColor(LEAF_STALK)
+    Draw.capsule("fill", 0, 0, 0, -r * 0.68, r * 0.09)
+    Draw.setColor(LEAF_STALK)
+    Draw.blob(-r * 0.28, -r * 0.62, r * 0.30, 7, 3, 0.2, 0.62)
+    Draw.blob(r * 0.27, -r * 0.78, r * 0.27, 7, 8, 0.2, 0.62)
+    Draw.setColor(LEAF_HI)
+    Draw.blob(-r * 0.28, -r * 0.63, r * 0.24, 7, 3, 0.2, 0.60)
+    Draw.blob(r * 0.27, -r * 0.79, r * 0.21, 7, 8, 0.2, 0.60)
+  end,
+}
+
 function Bot:body_builder(r)
+  self:hull(r, 1)
+  -- the block swinging on its line: the one part of the jib that moves, and
+  -- the line's length is what moves, so neither of them bakes
+  local hang = r * (0.40 + math.sin(self.age * 1.5 + self.bob) * 0.12)
+  Draw.setColor(metal(2.0))
+  Draw.capsule("fill", r * 0.92, -r * 1.48, r * 0.92, -r * 1.48 + hang, r * 0.035)
+  Draw.setColor(COBALT_3)
+  Draw.diamond(r * 0.92, -r * 1.48 + hang + r * 0.17, r * 0.15, r * 0.20, "fill")
+  self:drawLoad(r, 0.02, 1.02)
+  self:drawAntenna(-r * 0.62, -r * 0.76, r * 0.54, r)
+  self:drawEye(r)
+end
+
+HULL.builder = { function(r)
   Draw.setColor(metal(1.3))
   Draw.roundRect("fill", -r * 0.96, r * 0.16, r * 1.92, r * 0.62, r * 0.26)
   Draw.setColor(metal(2.2))
   Draw.roundRect("fill", -r * 0.76, -r * 0.84, r * 1.52, r * 1.18, r * 0.26)
   Draw.setColor(RIM, 0.5)
   Draw.capsule("fill", -r * 0.50, -r * 0.78, r * 0.50, -r * 0.78, r * 0.07)
-  -- the jib: mast, boom, and a block swinging on a line. The only thing in the
-  -- crew that reaches out sideways, and the tallest outline of the six.
+  -- the jib: mast and boom. The only thing in the crew that reaches out
+  -- sideways, and the tallest outline of the six.
   Draw.setColor(metal(3.0))
   Draw.capsule("fill", -r * 0.18, -r * 0.82, -r * 0.18, -r * 1.84, r * 0.105)
   Draw.capsule("fill", -r * 0.24, -r * 1.78, r * 0.96, -r * 1.50, r * 0.09)
-  local hang = r * (0.40 + math.sin(self.age * 1.5 + self.bob) * 0.12)
-  Draw.setColor(metal(2.0))
-  Draw.capsule("fill", r * 0.92, -r * 1.48, r * 0.92, -r * 1.48 + hang, r * 0.035)
-  Draw.setColor(P.shade(P.ramp.cobalt, 3))
-  Draw.diamond(r * 0.92, -r * 1.48 + hang + r * 0.17, r * 0.15, r * 0.20, "fill")
-  self:drawLoad(r, r * 0.02, r * 1.02)
-  self:drawAntenna(-r * 0.62, -r * 0.76, r * 0.54, r)
-  self:drawEye(0, -r * 0.36, r * 1.02, r * 0.46)
-end
+end }
 
 function Bot:body_repulsor(r)
   local pa = self.pulseAnim or 0
   if pa > 0 then self.pulseAnim = math.max(0, pa - love.timer.getDelta() * 3) end
+  self:hull(r, 1)
+  -- The emitter, which is the whole point of it. The glow behind it used to run
+  -- to three quarters alpha over a disc two and a half times the pylon's own
+  -- radius: at night it was a ball of light with the machine invisible inside
+  -- it, and now that a Repulsor also lights the ground it covers and paints its
+  -- own reach, the emitter does not have to shout as well. The ring is the
+  -- reading; the glow is the hint under it.
+  Draw.ring(0, -r * 1.12, r * 0.46 + pa * r * 0.6, r * 0.13, 0, U.TAU,
+            P.alpha(P.accentCool, 0.6 + pa * 0.4), 0.4)
+  Draw.glow(0, -r * 1.12, r * (0.78 + pa * 1.1), P.accentCool, 0.13 + pa * 0.26, 2)
+  -- charges left, as pips along the base
+  local n = self.def.charges
+  local b = bakeSlots(self)
+  if not b.charge then
+    local R = self.def.radius
+    b.charge = pipRow(n, function(i, lit)
+      Draw.setColor(lit and P.accentCool or P.inkFaint, lit and 0.9 or 0.25)
+      love.graphics.circle("fill", -R * 0.5 + (i - 1) * (R / math.max(1, n - 1)), R * 0.5, R * 0.08)
+    end, true)
+  end
+  self:pips(r, b.charge, self.charges or 0)
+  self:drawAntenna(-r * 0.40, -r * 0.34, r * 0.52, r)
+  self:drawEye(r)
+end
+
+HULL.repulsor = { function(r)
   -- three splayed feet and a body that tapers to a point. The build-bar glyph
   -- is a triangle under a ring, and a triangle is a shape no other bot makes.
   Draw.setColor(metal(1.4))
@@ -780,28 +975,30 @@ function Bot:body_repulsor(r)
   love.graphics.polygon("fill", 0, -r * 1.02, r * 0.86, r * 0.34, -r * 0.86, r * 0.34)
   Draw.setColor(RIM, 0.5)
   Draw.capsule("fill", -r * 0.04, -r * 0.96, -r * 0.74, r * 0.26, r * 0.065)
-  -- The emitter, which is the whole point of it. The glow behind it used to run
-  -- to three quarters alpha over a disc two and a half times the pylon's own
-  -- radius: at night it was a ball of light with the machine invisible inside
-  -- it, and now that a Repulsor also lights the ground it covers and paints its
-  -- own reach, the emitter does not have to shout as well. The ring is the
-  -- reading; the glow is the hint under it.
-  Draw.ring(0, -r * 1.12, r * 0.46 + pa * r * 0.6, r * 0.13, 0, U.TAU,
-            P.alpha(P.accentCool, 0.6 + pa * 0.4), 0.4)
-  Draw.glow(0, -r * 1.12, r * (0.78 + pa * 1.1), P.accentCool, 0.13 + pa * 0.26, 2)
-  -- charges left, as pips along the base
-  local n = self.def.charges
-  for i = 1, n do
-    local lit = i <= (self.charges or 0)
-    Draw.setColor(lit and P.accentCool or P.inkFaint, lit and 0.9 or 0.25)
-    love.graphics.circle("fill", -r * 0.5 + (i - 1) * (r / math.max(1, n - 1)), r * 0.5, r * 0.08)
-  end
-  self:drawAntenna(-r * 0.40, -r * 0.34, r * 0.52, r)
-  self:drawEye(0, r * 0.06, r * 0.92, r * 0.34)
-end
+end }
 
 function Bot:body_sentry(r)
   local rec = (self.recoil or 0) * r * 0.35
+  self:hull(r, 1)
+  -- The lit edge down the head is a *stroked* line, and a stroked line is the
+  -- one thing in the vocabulary that cannot be baked without losing LOVE's own
+  -- feathering of it, so it stays live: one call, on the least numerous machine.
+  Draw.setColor(RIM, 0.55)
+  love.graphics.setLineWidth(r * 0.11)
+  love.graphics.line(-r * 0.72, -r * 0.54, 0, -r * 1.46)
+  love.graphics.setLineWidth(1)
+  local ca, sa = math.cos(self.aimAngle), math.sin(self.aimAngle)
+  Draw.setColor(metal(3.0))
+  Draw.capsule("fill", -ca * rec, -r * 0.56 - sa * rec,
+               ca * r * 1.30 - ca * rec, -r * 0.56 + sa * r * 1.30 - sa * rec, r * 0.15)
+  Draw.setColor(LEAF_LOAD, 0.95)
+  love.graphics.circle("fill", ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.14)
+  Draw.glow(ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.75, LEAF_GLOW, 0.3, 2)
+  self:drawAntenna(r * 0.26, -r * 1.14, r * 0.48, r)
+  self:drawEye(r)
+end
+
+HULL.sentry = { function(r)
   Draw.setColor(metal(1.5))
   for i = 0, 2 do
     local a = i * U.TAU / 3 + math.pi / 6
@@ -811,82 +1008,105 @@ function Bot:body_sentry(r)
   -- a diamond head, exactly the glyph on the build bar
   Draw.setColor(metal(2.4))
   Draw.diamond(0, -r * 0.56, r * 0.74, r * 0.92, "fill")
-  Draw.setColor(RIM, 0.55)
-  love.graphics.setLineWidth(r * 0.11)
-  love.graphics.line(-r * 0.72, -r * 0.54, 0, -r * 1.46)
-  love.graphics.setLineWidth(1)
-  local ca, sa = math.cos(self.aimAngle), math.sin(self.aimAngle)
-  Draw.setColor(metal(3.0))
-  Draw.capsule("fill", -ca * rec, -r * 0.56 - sa * rec,
-               ca * r * 1.30 - ca * rec, -r * 0.56 + sa * r * 1.30 - sa * rec, r * 0.15)
-  Draw.setColor(P.shade(P.ramp.leaf, 3.2), 0.95)
-  love.graphics.circle("fill", ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.14)
-  Draw.glow(ca * r * 1.36, -r * 0.56 + sa * r * 1.36, r * 0.75, P.shade(P.ramp.leaf, 3.6), 0.3, 2)
-  self:drawAntenna(r * 0.26, -r * 1.14, r * 0.48, r)
-  self:drawEye(0, -r * 0.56, r * 0.70, r * 0.34)
-end
+end }
 
 function Bot:body_harvester(r)
-  -- the only round feet in the crew, and they turn while it works
+  -- the only round feet in the crew, and they turn while it works. Tyre and
+  -- hub bake; the tyre's stroked band and the spoke do not, and the band is
+  -- lifted out from between them because it overlaps neither.
+  self:hull(r, 1)
   local roll = self.age * 3.2 + self.bob
   for i = -1, 1, 2 do
     local wx = i * r * 0.68
-    Draw.setColor(metal(1.1))
-    love.graphics.circle("fill", wx, r * 0.42, r * 0.40)
     Draw.setColor(metal(2.6), 0.9)
     love.graphics.setLineWidth(r * 0.09)
     love.graphics.circle("line", wx, r * 0.42, r * 0.30)
     love.graphics.setLineWidth(1)
-    Draw.setColor(metal(2.8))
-    love.graphics.circle("fill", wx, r * 0.42, r * 0.13)
     Draw.setColor(metal(3.2), 0.8)
     Draw.capsule("fill", wx - math.cos(roll) * r * 0.29, r * 0.42 - math.sin(roll) * r * 0.29,
                  wx + math.cos(roll) * r * 0.29, r * 0.42 + math.sin(roll) * r * 0.29, r * 0.045)
   end
-  -- a low, wide hull: the flattest outline of the six
-  Draw.setColor(metal(2.3))
-  Draw.roundRect("fill", -r * 1.02, -r * 0.54, r * 2.04, r * 0.94, r * 0.24)
-  Draw.setColor(RIM, 0.55)
-  Draw.capsule("fill", -r * 0.78, -r * 0.48, r * 0.78, -r * 0.48, r * 0.07)
+  self:hull(r, 2)
   -- scoop, always on the leading edge
   local sc = self.faceY > 0 and 1 or -1
   Draw.setColor(metal(2.9))
   Draw.capsule("fill", -r * 0.72, r * 0.34 * sc, r * 0.72, r * 0.34 * sc, r * 0.13)
   -- what it has actually picked up, in a basket on the roof
-  local n = math.min(self.cargo or 0, self.def.capacity)
-  for i = 1, n do
-    Draw.setColor(P.shade(P.ramp.cobalt, 2.6 + (i % 2) * 0.6))
-    love.graphics.circle("fill", -r * 0.42 + ((i - 1) % 3) * r * 0.42,
-                         -r * 0.76 - math.floor((i - 1) / 3) * r * 0.30, r * 0.16)
+  local b = bakeSlots(self)
+  if not b.cargo then
+    local R = self.def.radius
+    b.cargo = pipRow(self.def.capacity, function(i)
+      Draw.setColor(COBALT_PIP[(i % 2) + 1])
+      love.graphics.circle("fill", -R * 0.42 + ((i - 1) % 3) * R * 0.42,
+                           -R * 0.76 - math.floor((i - 1) / 3) * R * 0.30, R * 0.16)
+    end)
   end
-  self:drawLoad(r, r * 0.12, r * 1.30)
+  self:pips(r, b.cargo, self.cargo or 0)
+  self:drawLoad(r, 0.12, 1.30)
   self:drawAntenna(-r * 0.86, -r * 0.48, r * 0.56, r)
-  self:drawEye(0, -r * 0.16, r * 0.90, r * 0.40)
+  self:drawEye(r)
 end
+
+HULL.harvester = {
+  function(r)
+    for i = -1, 1, 2 do
+      local wx = i * r * 0.68
+      Draw.setColor(metal(1.1))
+      love.graphics.circle("fill", wx, r * 0.42, r * 0.40)
+      Draw.setColor(metal(2.8))
+      love.graphics.circle("fill", wx, r * 0.42, r * 0.13)
+    end
+  end,
+  -- a low, wide hull: the flattest outline of the six
+  function(r)
+    Draw.setColor(metal(2.3))
+    Draw.roundRect("fill", -r * 1.02, -r * 0.54, r * 2.04, r * 0.94, r * 0.24)
+    Draw.setColor(RIM, 0.55)
+    Draw.capsule("fill", -r * 0.78, -r * 0.48, r * 0.78, -r * 0.48, r * 0.07)
+  end,
+}
 
 function Bot:body_beacon(r)
   local pulse = 0.75 + math.sin(self.glowPhase or 0) * 0.25
-  -- splayed struts under a mast: thin and tall, the opposite outline to the
-  -- Harvester, and the same A-frame the build-bar glyph draws
-  Draw.setColor(metal(1.4))
-  for i = -1, 1, 2 do
-    Draw.capsule("fill", i * r * 0.10, -r * 0.50, i * r * 0.60, r * 0.48, r * 0.11)
-  end
-  Draw.setColor(metal(1.8))
-  Draw.capsule("fill", 0, r * 0.36, 0, -r * 1.26, r * 0.15)
+  self:hull(r, 1)
   -- the lantern. Deliberately still `eye`, the warm amber: it is a lamp, and a
   -- lamp is the one thing in the crew that has earned the right to be warm.
-  Draw.setColor(metal(2.7))
-  Draw.roundRect("fill", -r * 0.42, -r * 2.00, r * 0.84, r * 0.28, r * 0.12)
+  -- It breathes, so it sits live between the two halves of its own housing.
   Draw.setColor(P.eye, 0.55 + pulse * 0.45)
   Draw.roundRect("fill", -r * 0.32, -r * 1.80, r * 0.64, r * 0.60, r * 0.18)
-  Draw.setColor(metal(2.7))
-  Draw.roundRect("fill", -r * 0.42, -r * 1.24, r * 0.84, r * 0.22, r * 0.09)
-  Draw.setColor(RIM, 0.5)
-  Draw.capsule("fill", -r * 0.34, -r * 1.94, r * 0.34, -r * 1.94, r * 0.06)
+  self:hull(r, 2)
   Draw.glow(0, -r * 1.50, r * 2.9 * pulse, P.eye, 0.55)
   self:drawAntenna(-r * 0.36, -r * 1.92, r * 0.46, r)
-  self:drawEye(0, -r * 0.58, r * 0.58, r * 0.30)
+  self:drawEye(r)
+end
+
+HULL.beacon = {
+  -- splayed struts under a mast: thin and tall, the opposite outline to the
+  -- Harvester, and the same A-frame the build-bar glyph draws
+  function(r)
+    Draw.setColor(metal(1.4))
+    for i = -1, 1, 2 do
+      Draw.capsule("fill", i * r * 0.10, -r * 0.50, i * r * 0.60, r * 0.48, r * 0.11)
+    end
+    Draw.setColor(metal(1.8))
+    Draw.capsule("fill", 0, r * 0.36, 0, -r * 1.26, r * 0.15)
+    Draw.setColor(metal(2.7))
+    Draw.roundRect("fill", -r * 0.42, -r * 2.00, r * 0.84, r * 0.28, r * 0.12)
+  end,
+  -- the housing's lower lip, and the rim light along the top of it
+  function(r)
+    Draw.setColor(metal(2.7))
+    Draw.roundRect("fill", -r * 0.42, -r * 1.24, r * 0.84, r * 0.22, r * 0.09)
+    Draw.setColor(RIM, 0.5)
+    Draw.capsule("fill", -r * 0.34, -r * 1.94, r * 0.34, -r * 1.94, r * 0.06)
+  end,
+}
+
+-- Every one of the six wears the same eye plate, at its own size and its own
+-- place on the chassis. Added here, once the types exist, so the plate's
+-- geometry lives next to the eye that moves inside it and not six times over.
+for kind, e in pairs(EYE) do
+  HULL[kind].plate = function(r) eyePlate(r, e) end
 end
 
 --- Drawn by the player while being carried.
@@ -909,7 +1129,7 @@ function Bot:emitLight(Lighting)
     -- standing inside your own light.
     local pulse = 0.85 + math.sin((self.glowPhase or 0)) * 0.15
     Lighting.addLight(self.x, self.y - self.radius * 1.4, self.def.radius_field, P.lightPlayer,
-                      1.15 * pulse, { flicker = 0.03 })
+                      1.15 * pulse, OPT_FLICK3)
   else
     -- A bot's eye is drawn into the scene, and the scene is multiplied by this
     -- very buffer -- so after dusk the *only* thing that keeps a machine's face
@@ -928,13 +1148,13 @@ function Bot:emitLight(Lighting)
       -- still armed.
       local br = 0.82 + 0.18 * math.sin(self.age * 2.4)
       Lighting.addLight(self.x, self.y - self.radius * 0.4, self.def.lightRadius * k,
-                        P.lightFriend, self.def.lightGain * br * k, { flicker = 0.04 })
+                        P.lightFriend, self.def.lightGain * br * k, OPT_FLICK4)
       return
     end
     local L = T.light
     local g = (self.state == "down" and L.downGain or L.gain) * k
     Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * L.radius * k,
-                      P.lightFriend, g, { flicker = 0.03 })
+                      P.lightFriend, g, OPT_FLICK3)
     -- and a tight core, so what you see is a lit machine rather than a lit
     -- patch of grass with something dark standing on it
     Lighting.addLight(self.x, self.y - self.radius * 0.35, self.radius * L.core * k,

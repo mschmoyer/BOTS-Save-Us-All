@@ -19,6 +19,41 @@
 -- NOTE: util.lua's hash2/valueNoise/fbm/ridge are numerically broken (the mixing step
 -- overflows double precision and every sample collapses to ~0). Until that is fixed
 -- upstream this file carries its own drop-in noise, `N`, with an identical API.
+--
+-- NOTE: _generate is the load's largest cost -- 25.8 million sines, 0.71 s under
+-- LuaJIT and a measured 9.7 s in the browser build -- and it does NOT move to the
+-- GPU. A fragment shader can reproduce `N`'s sine argument exactly (the three
+-- inputs are integers, so x*127.1 + y*311.7 + s*74.7 is an exact integer over ten
+-- and survives float32 through a Cody-Waite reduction; that was built and measured
+-- at a mean hash error of 0.0012). It still produces a different island, because
+-- the hash's last step is
+--
+--     fract(sin(A) * 43758.5453)
+--
+-- and `fract` is discontinuous. A float32 sine is granular at 6e-8; times 43758
+-- that is 0.0026 of pre-fract value, so roughly one hash in two hundred lands the
+-- wrong side of an integer and comes back off by a whole unit rather than by a
+-- rounding error. At ~200 hashes a cell that is about one wrapped lattice point
+-- per cell, and a wrapped point in a low octave moves a whole bay. Measured on
+-- seed 31337: 1.9% of cells changed land/water, landArea +4.5%, landBox moved
+-- 104 units, and the coastline is visibly not the same island.
+--
+-- Getting the wrap rate down to where it stops mattering needs the sine to ~1e-11,
+-- which means software double-float arithmetic through the reduction, the
+-- polynomial and the final multiply -- in a language (GLSL ES 1.0) that does not
+-- promise IEEE single precision in the first place.
+--
+-- The readback is NOT the reason. Measured in the hosted web build under
+-- SwiftShader, 426x301: Canvas:newImageData 23 ms warm (132 ms on the first
+-- call), getString 1 ms. What the browser does not have is a canvas to read back
+-- *from*: love.graphics.getCanvasFormats() there reports
+-- depth16, hdr, normal, rgb565, rgb5a1, rgba16f, rgba4, srgba8, stencil8 --
+-- no `rgba8`, and `normal` resolves to **rgba4**, four bits a channel. Asking for
+-- "rgba8" does not fail softly either: LOVE's "format is not supported by your
+-- graphics drivers" error escapes pcall inside love.js and takes the frame down.
+-- Any future GPU pass here must use the default format and expect four bits, or
+-- rgba16f, and must not assume pcall will save it. See docs/PERFORMANCE_SPEC.md,
+-- item L2.
 
 local U     = require("src.core.util")
 local P     = require("src.engine.palette")

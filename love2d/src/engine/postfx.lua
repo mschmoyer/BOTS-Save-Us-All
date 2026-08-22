@@ -70,7 +70,31 @@ local scene, grade, aa
 local half1, half2, quarter1, quarter2
 local W, H, SW, SH = 0, 0, 0, 0
 local prevCanvas
-local fmt = "rgba8"
+
+-- Canvas format, resolved from the driver on first use and NEVER assumed.
+--
+-- This used to default to "rgba8", which is fine everywhere except the place
+-- the game ships. love.js reports `depth16, hdr, normal, rgb565, rgb5a1,
+-- rgba16f, rgba4, srgba8, stencil8` -- there is no rgba8 at all, and `normal`
+-- there is rgba4, four bits a channel. Asking for a format the driver lacks
+-- does not fail softly: LOVE raises "The rgba8 canvas format is not supported
+-- by your graphics drivers" and, inside love.js, that error escapes pcall and
+-- takes the frame down.
+--
+-- Post.init resolves this properly, but Post.resize and Post.applySettings
+-- both call allocate() directly, so any path that resizes before it inits --
+-- booting straight into a scene, for one -- allocated every canvas as rgba8
+-- and died on the title screen in the browser while working perfectly
+-- natively. Resolving lazily means there is no ordering left to get wrong.
+local fmt = nil
+
+local function pickFormat()
+  local fmts = love.graphics.getCanvasFormats()
+  if not fmts then return "normal" end          -- LOVE's default, always present
+  if fmts.rgba16f then return "rgba16f" end     -- what we actually want: HDR bloom
+  if fmts.rgba8 then return "rgba8" end
+  return "normal"
+end
 
 ------------------------------------------------------------------ shockwaves
 local SHOCKS = 4
@@ -265,6 +289,8 @@ local function snd(sh, name, a, b, c, d)
 end
 
 local function newCanvas(w, h)
+  -- `or pickFormat()`: allocate() has callers that do not go through Post.init.
+  if not fmt then fmt = pickFormat(); Post.hdr = (fmt == "rgba16f") end
   local c = love.graphics.newCanvas(math.max(1, math.floor(w)),
                                     math.max(1, math.floor(h)), { format = fmt })
   c:setFilter("linear", "linear")
@@ -300,8 +326,7 @@ end
 function Post.init(w, h)
   w = w or love.graphics.getWidth()
   h = h or love.graphics.getHeight()
-  local fmts = love.graphics.getCanvasFormats()
-  fmt = (fmts and fmts.rgba16f) and "rgba16f" or "rgba8"
+  fmt = pickFormat()
   Post.hdr = (fmt == "rgba16f")
   if not S.bright then
     S.bright = love.graphics.newShader(SRC_BRIGHT)
@@ -382,18 +407,33 @@ end
 
 --------------------------------------------------------------------- the scene
 --- Bind the scene target. Everything the world draws goes here.
+--- Bind the scene target *and* the transform that maps window coordinates into
+--- it. The scene canvas is `SW x SH`, not `W x H`, whenever `settings.scale` is
+--- below 1 -- and everything that draws into it (the camera, the lighting
+--- composite, the weather sheet) works in window coordinates. Without this
+--- scale the world was drawn full size into a smaller canvas and then blown
+--- back up to the window: the frame was cropped to its top-left corner, which
+--- at the auto-selected `quality=low` (scale 0.7) parked the player about 70%
+--- across and 70% down instead of in the middle.
 function Post.beginScene(r, g, b)
   if not scene then Post.init() end
   prevCanvas = love.graphics.getCanvas()
   love.graphics.setCanvas(scene)
   local c = P.black
   love.graphics.clear(r or c[1], g or c[2], b or c[3], 1)
+  love.graphics.push()
+  if SW ~= W or SH ~= H then love.graphics.scale(SW / W, SH / H) end
 end
 
 function Post.endScene()
+  love.graphics.pop()
   love.graphics.setCanvas(prevCanvas)
   prevCanvas = nil
 end
+
+--- The window -> scene-canvas factor `beginScene` installs. Anything that
+--- resets the transform mid-scene has to put it back itself.
+function Post.sceneScale() return (W and W > 0) and (SW / W) or 1 end
 
 function Post.getSceneCanvas() return scene end
 
