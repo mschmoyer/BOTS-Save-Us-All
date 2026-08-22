@@ -653,6 +653,22 @@ function World:restore(d)
     self.peakBots[kind] = (v > owned) and v or owned
   end
 
+  -- The graves. Replayed through `Relic.addHusk` rather than reconstructed, so
+  -- the minimum gap, the cap and the retirement queue all apply exactly as they
+  -- did in the run that wrote them, and the hashed angle and flip come back off
+  -- the same floored coordinates. Written oldest-first, so laying them in order
+  -- leaves the queue retiring in the order it would have. Without this a
+  -- resumed run kept every name in the memorial and lost every body: the island
+  -- forgot its dead and the planters planted over the ground they died on.
+  local hu = d.husks or {}
+  local HS = Save.HUSK_STRIDE
+  if Relic.addHusk then
+    for i = 1, #hu - (HS - 1), HS do
+      local kind = TU.bots.order[hu[i + 2] or 1] or TU.bots.order[1]
+      Relic.addHusk(self, hu[i], hu[i + 1], kind)
+    end
+  end
+
   self.cycle  = math.max(1, math.floor(d.cycle or 1))
   self.cobalt = math.max(0, math.floor(d.cobalt or 0))
   self.time   = d.time or 0
@@ -1424,6 +1440,28 @@ function World:update(dt, realDt)
   if self.rallyX then self.rallyT = (self.rallyT or 0) + dt end
   if self.rig then self.rig:update(dt) end
   if self.player then self.player:update(dt, self.camera) end
+  -- CULLING IS A SIMULATION INPUT, so it cannot be left to the draw pass.
+  --
+  -- `Tree:update` sets `onScreen` from the module view rect, and two things in
+  -- the update path read it: the LOD scheduler right below, and
+  -- `Tree:updateLeaves`, which gates every pollen and firefly emit on it. The
+  -- rect was only ever written from inside `World:draw`. In a real session that
+  -- is harmless -- every frame draws -- but headless only calls love.draw() on
+  -- photographed frames, so until the first photograph the rect was untouched
+  -- and EVERY tree reported on screen, at full LOD and full emission.
+  --
+  -- Two consequences, both measured. The shot list changed the run: seeds and
+  -- frame counts held, `shots=5900` and `shots=10,5900` diverged from the
+  -- photographed frame onward (t=362/cycle 3/187 trees against t=385/cycle
+  -- 4/237). And every balance number this repo ever took from a trace was
+  -- measured on a game that never culled, which is not the game that ships.
+  -- Setting the rect here makes headless match the browser and makes a trace
+  -- independent of where its shots fall; three shot lists now agree byte for
+  -- byte. Only the cull inputs -- the air, the rim and the x-ray focus are a
+  -- LOOK and stay in draw.
+  if self.camera and self.camera.viewRect and Tree.setView then
+    Tree.setView(self.camera:viewRect(0))
+  end
   sweep(self.trees, self.hTree, dt)
   self:refreshVisibleTrees()
   -- THE X-RAY IS A CAMERA EFFECT, NOT A SIMULATION ONE, and this is the whole
@@ -1872,7 +1910,14 @@ function World:drawSpeech()
     local who = s.who
     if who.alive and self.camera:visible(who.x, who.y, 60) then
       local rise = U.smoothstep(0, 0.35, s.t) * 6
-      self:drawBubble(who.x, who.y - (who.radius or 12) * 2.4 - rise, s.line, a)
+      -- ...with who is talking. `Bot:plateAlpha` returns 0 for the whole time a
+      -- machine holds a speech slot, so this is the only place its name can be
+      -- while it has something to say. THE HUMAN IS UNNAMED AND STAYS UNNAMED:
+      -- he speaks through this queue too, and a label over his one bark would
+      -- undo the thing the whole script protects.
+      local name = (who.kind ~= "player") and who.name or nil
+      self:drawBubble(who.x, who.y - (who.radius or 12) * 2.4 - rise, s.line, a,
+                      name)
     end
   end
 end
@@ -1969,7 +2014,13 @@ local function grieve(b)
   if not b.alive or b.state ~= "work" then return end
   b.grief = TU.bots.grief.time
   b.griefX, b.griefY = griefX, griefY
-  b.wx, b.wy = griefX, griefY
+  -- On the ring, not on the body: `Bot:pickWander` keeps them there for the
+  -- rest of the grief, but this first target is set directly and used to send
+  -- every mourner to the corpse's exact coordinates. See T.bots.grief.standOff.
+  local G = TU.bots.grief
+  local ang = b.rng and b.rng:angle() or 0
+  local dist = b.rng and b.rng:range(G.standOff, G.arrive) or G.standOff
+  b.wx, b.wy = griefX + math.cos(ang) * dist, griefY + math.sin(ang) * dist
 end
 
 local function crewMourns(bot)
@@ -1978,6 +2029,25 @@ local function crewMourns(bot)
   if w.phase == "extraction" or w.phase == "ending" then return end
   griefX, griefY = bot.x, bot.y
   w.hBot:each(bot.x, bot.y, TU.bots.grief.radius, grieve)
+end
+
+--- Call the crew to a place, for a body that fell a while ago.
+---
+--- `crewMourns` runs on the death itself, and the grief it sets lasts
+--- `T.bots.grief.time` -- fourteen seconds. The funeral beat cannot use that
+--- window: a machine dies mid-fight, and the beat's "calm" guard then holds it
+--- until the fight is over. Measured on seed 4242, the beat sat for 82 seconds
+--- with zero bots within 240 units of the body for every one of them, and fired
+--- through its own relief valve onto an empty clearing. The crew had mourned
+--- properly, a minute earlier, and gone back to work.
+---
+--- So the funeral is CONVENED. The beat asks for the crew when it is otherwise
+--- ready, and waits for them to walk over -- which is what the scene is.
+function World:mournAt(x, y)
+  if not (self.hBot and x and y) then return end
+  if self.phase == "extraction" or self.phase == "ending" then return end
+  griefX, griefY = x, y
+  self.hBot:each(x, y, TU.bots.grief.radius, grieve)
 end
 
 Signal.on("bot:downed", crewMourns)

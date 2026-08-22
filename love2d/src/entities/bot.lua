@@ -285,7 +285,7 @@ function Bot:pickWander(minSoil)
   -- It grieves before it works. Whatever it was doing, the next place it wants
   -- to be is where the body is.
   if (self.grief or 0) > 0 and self.griefX then
-    local a, d = self.rng:angle(), self.rng:range(0, T.grief.arrive)
+    local a, d = self.rng:angle(), self.rng:range(T.grief.standOff, T.grief.arrive)
     self.wx, self.wy = self.griefX + math.cos(a) * d, self.griefY + math.sin(a) * d
     return
   end

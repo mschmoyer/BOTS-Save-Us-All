@@ -484,6 +484,12 @@ function HUD.init(world)
   local Wo = package.loaded["src.world.world"]
   if Wo and rawget(Wo, "_hudSpeech") == nil then
     Wo._hudSpeech = true
+    -- The original is KEPT, because one scene has to draw a bubble itself. The
+    -- ending runs its own draw pass and never calls HUD.draw, so anything this
+    -- hook queues there sits in the buffer until the process exits -- which is
+    -- what happened to the only line in the ending that answers the human.
+    -- See scenes/ending.lua:drawQuietLine.
+    Wo.drawBubbleRaw = Wo.drawBubble
     Wo.drawBubble = function(_, x, y, text, a, name)
       HUD.queueSpeech(x, y, text, a, name)
     end

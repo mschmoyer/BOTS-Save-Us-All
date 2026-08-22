@@ -65,7 +65,15 @@ local T = {
   -- machines in a heap over the husk, the dead one the least visible object in
   -- its own funeral. `guard = "calm"` only asks about blight, so these two ask
   -- about the site as well.
-  funeralNear = 90,      -- ...this close to the body counts as standing on it
+  -- ...this close to the body counts as standing ON it. Was 90, which stopped
+  -- being the right number once `T.bots.grief.standOff` moved the mourners out
+  -- to a ring at 95-150: at 90 the guard was measuring the ring itself. It
+  -- never cleared -- measured on seed 4242, 4 to 5 machines inside 90 for the
+  -- whole 82 seconds the beat waited, against a crowd limit of 2, so the beat
+  -- fired every time through its relief valve rather than because the shot was
+  -- ready. 48 is the body and its own footprint: a machine inside that is
+  -- overlapping the corpse, which is the thing this guard was written to stop.
+  funeralNear = 48,
   funeralCrowd = 2,      -- ...and this many is a crowd (so: one mourner, or none)
   -- ...and the opposite failure, which the first cut of this guard produced on
   -- the very first capture: the crew's grief timer runs 14s and then they all
@@ -217,7 +225,18 @@ local function bodyClear(world, ctx, ready)
   if (ready or 0) >= T.funeralAlone then return true end
   local x, y = ctx.lostX, ctx.lostY
   if botsNear(world, x, y, T.funeralNear) >= T.funeralCrowd then return false end
-  return botsNear(world, x, y, T.funeralWitness) >= 1
+  if botsNear(world, x, y, T.funeralWitness) >= 1 then return true end
+  -- Nobody in the frame. Ask for them, once, and wait: grief runs fourteen
+  -- seconds from the death and this beat's "calm" guard routinely holds it far
+  -- longer than that, so by the time the site is quiet enough to shoot, the
+  -- machines that mourned have been back at work for a minute. Convening costs
+  -- one spatial query per body and turns the relief valve back into a valve
+  -- instead of the normal path.
+  if not ctx.convened and world.mournAt then
+    ctx.convened = true
+    world:mournAt(x, y)
+  end
+  return false
 end
 
 --- ONE NAME OVER A FUNERAL. `Bot.plateOnly` is the ending's guest list, and it
@@ -459,7 +478,18 @@ local BEATS = {
     prep = function(world, ctx)
       local p = world.player
       local a = ctx.bot
-      if not (a and a.alive) then a = pickBot(world, p and p.x, p and p.y) end
+      -- THE FIRST ONE SAYS IT, if it is still standing. This beat's own comment
+      -- -- "by then they are not disobeying an order, they are keeping a
+      -- decision they already made" -- only reads if it is the same machine
+      -- that made the decision, and `question`, `answer` and `ending` all
+      -- prefer it for exactly that reason. This one took the nearest survivor,
+      -- and across six seeds the untouchable line went to a stranger 6 times
+      -- out of 6 -- twice while the first one was alive and upright nearby.
+      if not (a and a.alive and a.state ~= "dead") then
+        local first = Story.theFirstOne
+        if first and first.alive and first.state ~= "dead" then a = first
+        else a = pickBot(world, p and p.x, p and p.y) end
+      end
       ctx.bot = a
       bind("botA", a)
       bind("botB", pickBot(world, p and p.x, p and p.y, a))
@@ -715,7 +745,6 @@ local function resetState()
   Story.armed    = {}
   Story.cooldown = 0
   Story.reactT   = 0
-  Story.dawnFlip = false
   -- names.lua's two story overlays on the ambient pools -- see N.extraction and
   -- N.lastNight there. Owned here, written nowhere else, and cleared with the
   -- rest of the run state so a restart does not open on last-night dialogue.
@@ -934,12 +963,14 @@ local function subscribe()
   -- what "Or the radio." lands on at the end.
   Signal.on("phase:dawn",  function()
     Story.reactT = 0
-    if Story.fired.radio then
-      Story.dawnFlip = not Story.dawnFlip
-      react(Story.dawnFlip and "radio" or "dawn")
-    else
-      react("dawn")
-    end
+    -- EVERY dawn after the beat, not every other one. This alternated, and the
+    -- radio beat fires on cycle 4 -- so only four dawns were left and the whole
+    -- thread delivered TWO lines in a run, against the four the pool in
+    -- names.lua was written expecting ("i listened all night", "still zero").
+    -- The counting pool already owns the three mornings before the beat; after
+    -- it, the morning is the radio. Measured across three seeds before the
+    -- change: 2 radio lines per run.
+    react(Story.fired.radio and "radio" or "dawn")
   end, Story)
   Signal.on("boss:phase",  function() react("boss") end, Story)
 

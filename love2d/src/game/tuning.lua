@@ -327,7 +327,16 @@ T.bots.grief = {
   radius  = 340,     -- who saw it
   time    = 14,      -- seconds they carry it
   workMul = 0.5,     -- how much less they get done meanwhile
-  arrive  = 46,      -- how close they stand
+  -- HOW CLOSE THEY STAND, and it is a ring, not a disc. At `arrive = 46` with
+  -- no floor the crew walked onto the body -- and the funeral beat's own guard
+  -- rejects the shot while two or more machines are within `funeralNear = 90`
+  -- of it. The grief system was manufacturing exactly the crowd the funeral
+  -- refused, so the beat could only fire after grief expired and everyone had
+  -- gone back to work: captured, a well-composed funeral over a husk with not
+  -- one mourner in frame. Standing off puts them inside `funeralWitness = 240`
+  -- and outside `funeralNear`, so the beat fires while they are still there.
+  standOff = 95,     -- ...and no closer than this
+  arrive  = 150,     -- ...and no further than this
   chatter = 0.55,    -- chance a grieving bot's next line comes from the loss pool
 }
 

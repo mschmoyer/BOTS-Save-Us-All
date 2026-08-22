@@ -816,6 +816,28 @@ function Player:draw()
     Draw.blob(vx, vy, r * 0.31, 9, 12, 0.10, 0.66)
     Draw.setColor(P.white, 0.85 * flicker)
     g.circle("fill", vx - r * 0.10, vy - r * 0.09, r * 0.068)
+  else
+    -- NO HELMET, AND STILL A FACE.
+    --
+    -- The visor was the only feature this head had and it is gated on the suit,
+    -- so the instant the ending sets the helmet down, his head became a bare
+    -- oval with a rim arc on it -- at the one moment in the game the camera
+    -- pushes in on the grounds that it is "close enough to read his face"
+    -- (scenes/ending.lua). It is also the silhouette the comment above the suit
+    -- palette calls out as the failure that rewrite existed to escape.
+    --
+    -- The portrait in game/dialogue.lua already proves the design at close
+    -- range: hair, brows, eyes. At world scale it is the hair and the eyes, and
+    -- the eyes take the same gaze offset the visor used, so the head still
+    -- turns to whatever he is looking at -- which through the whole last scene
+    -- is the machines standing around him.
+    local vox, voy = math.cos(gang) * r * 0.16, math.sin(gang) * r * 0.12
+    Draw.setColor(P.shade(P.ramp.bark, 2.0), flicker)
+    Draw.blob(hox, hcy - r * 0.20, r * 0.47, 11, 14, 0.09, 0.50)
+    for sd = -1, 1, 2 do
+      Draw.setColor(P.shade(P.ramp.bark, 1.1), 0.92 * flicker)
+      g.circle("fill", hox + vox + sd * r * 0.19, hcy + voy + r * 0.05, r * 0.072)
+    end
   end
 
   g.pop()

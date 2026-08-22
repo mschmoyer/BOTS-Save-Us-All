@@ -568,7 +568,14 @@ local function composeRow(list, used, said, worded, heads, jit, prev, prevHead,
       return line, hp
     end
   end
-  local hp = phrase(list[1], worded, jit)
+  -- LAST RESORT, and it used to print the same sentence twice in a row. It
+  -- took neither `prevHead` nor `claim`, so `phrase` saw counters that never
+  -- moved and handed two adjacent machines with one clause apiece a byte-
+  -- identical epitaph -- captured, LAMP-05 over FRAME-05. Avoiding the head
+  -- above and claiming the wording is what every other exit here already does.
+  local hp, hv = phrase(list[1], worded, jit, prevHead)
+  claim(list[1], hp, hv)
+  heads[list[1].key] = (heads[list[1].key] or 0) + 1
   return hp .. ".", hp
 end
 
@@ -905,6 +912,38 @@ function S:hushLine()
   world.cutscene = false
   world:speak(b, line)
   world.cutscene = was
+end
+
+--- ...and draw it, by hand, because nothing else will.
+---
+--- THREE THINGS SILENCED THIS LINE AND ONLY ONE OF THEM WAS EVER FIXED.
+--- `World:drawSpeech` reaches it and calls `self:drawBubble` -- but
+--- `game/hud.lua` monkey-patches that method on the class into a push onto a
+--- HUD-side queue, and the ending scene never calls `HUD.draw`, so the queue is
+--- never flushed; and `HUD.drawSpeech` drops everything while `world.cutscene`
+--- is set, which the ending sets on its first frame. An earlier pass found the
+--- cutscene guard on `World:speak` and lifted it, and the line has still never
+--- appeared in a finished run: it was queued, aged by `tickSpeech`, and thrown
+--- away. `drawBubbleRaw` is the unpatched method, kept for exactly this.
+---
+--- Drawn inside the camera, over the world, before the glow -- which is where
+--- `World:drawSpeech` would have put it. The alpha is that function's, so the
+--- line fades in and out the way a bot's line does anywhere else in the game.
+function S:drawQuietLine(world)
+  local Wo = package.loaded["src.world.world"]
+  local raw = Wo and rawget(Wo, "drawBubbleRaw")
+  local sp = world and world.speeches
+  if not (raw and sp) then return end
+  for i = 1, #sp do
+    local e = sp[i]
+    local who = e.who
+    if who and who.alive then
+      local a = U.saturate(math.min(e.t * 4, (e.dur - e.t) * 2))
+      if a > 0.01 then
+        raw(world, who.x, who.y - (who.radius or 12) * 2.4, e.line, a)
+      end
+    end
+  end
 end
 
 --- The world is not running, so the one line a bot says out loud during the
@@ -1390,6 +1429,7 @@ function S:draw()
   if world and world.draw then
     cam:attach()
     world:draw(cam)
+    self:drawQuietLine(world)
     self:drawCircleGlow()
     cam:detach()
   end

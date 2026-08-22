@@ -422,7 +422,16 @@ local function rebuildMenu()
   end
   MENU[#MENU + 1] = { id = "begin",
                       label = resume and "NEW RUN" or "BEGIN",
-                      sub = "Seven cycles. One island. No help coming." }
+                      -- "No help coming." was cut. Every other channel in this
+                      -- game states a fact and lets the player draw the
+                      -- conclusion -- SIGNALS RECEIVED 0, NO ANSWER, DAY 12 --
+                      -- and this printed the conclusion itself, in a narrator
+                      -- voice that exists nowhere else, before the player had
+                      -- pressed anything. It also flattened him: he keeps the
+                      -- radio on because someone MIGHT be alive, and a menu
+                      -- that has already ruled that out makes his hope read as
+                      -- stupidity instead of as the thing he will not say.
+                      sub = "Seven cycles. One island." }
   MENU[#MENU + 1] = { id = "options", label = "OPTIONS" }
   -- There is no quitting a browser tab from inside it, and a row that does
   -- nothing when you press it is the cheapest thing a menu can do.
