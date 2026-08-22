@@ -87,6 +87,11 @@ local T = {
   -- is not guaranteed to clear before `patience` drops it. After this long
   -- holding a moment that is otherwise good, the funeral takes the crowd.
   funeralAlone = 45.0,
+  -- ...and how often the beat asks the crew to come, while it waits. Once was
+  -- not enough: a machine that falls where the crew has already finished
+  -- working leaves nobody inside grief's radius to answer the first call, and
+  -- the beat then sat with an empty site until its patience ran out.
+  funeralConvene = 6.0,
 }
 Story.tuning = T
 
@@ -222,18 +227,33 @@ end
 --- get its funeral: a crowded one is a bad shot, and no funeral at all is a
 --- machine that died with nothing said over it.
 local function bodyClear(world, ctx, ready)
-  if (ready or 0) >= T.funeralAlone then return true end
   local x, y = ctx.lostX, ctx.lostY
+  local witness = botsNear(world, x, y, T.funeralWitness)
+  -- THE VALVE MAY NOT HAND BACK AN EMPTY CLEARING. It used to return true on
+  -- time alone, which produced precisely the shot the paragraph above forbids:
+  -- captured on seed 4242, the human says the dead machine's name over open
+  -- water and tree canopy with no body visible and nobody within four hundred
+  -- pixels. The same beat on seed 777 is six mourners in an arc around a lit
+  -- body. One relief valve, two completely different scenes, and the valve was
+  -- the normal path rather than the exception.
+  --
+  -- So the valve now only forgives the CROWD rule -- the thing it was written
+  -- for, a site that will not settle -- and never the witness rule. A beat that
+  -- cannot find anybody is dropped on its patience, which is a machine dying
+  -- with nothing said over it; that is a worse outcome than a good shot and a
+  -- better one than a voice talking to scenery.
+  if (ready or 0) >= T.funeralAlone and witness >= 1 then return true end
   if botsNear(world, x, y, T.funeralNear) >= T.funeralCrowd then return false end
-  if botsNear(world, x, y, T.funeralWitness) >= 1 then return true end
-  -- Nobody in the frame. Ask for them, once, and wait: grief runs fourteen
+  if witness >= 1 then return true end
+  -- Nobody in the frame. Ask for them, and keep asking: grief runs fourteen
   -- seconds from the death and this beat's "calm" guard routinely holds it far
   -- longer than that, so by the time the site is quiet enough to shoot, the
-  -- machines that mourned have been back at work for a minute. Convening costs
-  -- one spatial query per body and turns the relief valve back into a valve
-  -- instead of the normal path.
-  if not ctx.convened and world.mournAt then
-    ctx.convened = true
+  -- machines that mourned have been back at work for a minute. Convening once
+  -- was not enough when the body fell somewhere the crew had already left --
+  -- the crew moves, so ask again on a slow clock until somebody is close.
+  local now = world.time or 0
+  if world.mournAt and (not ctx.convenedAt or now - ctx.convenedAt >= T.funeralConvene) then
+    ctx.convenedAt = now
     world:mournAt(x, y)
   end
   return false

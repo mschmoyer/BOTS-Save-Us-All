@@ -80,7 +80,7 @@ N.chatter = {
     -- through. `hurt` keeps "do not stop for me", which is the same idea about
     -- the present moment rather than a farewell, and is the better one.
     "the little ones are covered",
-    "it is coming this way", "do not look at it. work.",
+    "it is coming this way", "do not look at it", "work",
     "we lost the far row", "i am still here", "i cannot see you",
     "the lamp is holding", "i cannot see the north row", "one got past me",
     "stand in the light", "who is on the east row",

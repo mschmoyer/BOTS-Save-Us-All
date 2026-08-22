@@ -923,7 +923,31 @@ function S:hushLine()
   if self.saidQuiet then return end
   local world = self.world
   local ctx = self.ctx
+  -- WHOEVER IS STANDING CLOSEST TO HIM SAYS IT.
+  --
+  -- This took `ctx.bot or ctx.bot2`, which is the cast the scene was staged
+  -- around -- and the ring is thirty machines wide, so that bot is routinely at
+  -- the edge of the frame. Captured: the line on FRAME-03 at the top border,
+  -- four hundred pixels from the human, half over its own nameplate, and
+  -- present in one of five frames sampled across the hush. The line survives
+  -- being missed even less well than most: it is three words, it is the only
+  -- thing in the ending that contradicts him, and it is deliberately spoken
+  -- BEFORE "Just me. All alone. Forever." rather than after -- he is told they
+  -- are there and says he is alone anyway, which is the whole irony and only
+  -- works if the player saw the telling.
   local b = ctx and (ctx.bot or ctx.bot2)
+  local p = world and world.player
+  if p and world.bots then
+    local best, bd = nil, math.huge
+    for i = 1, #world.bots do
+      local o = world.bots[i]
+      if o.alive and o.state ~= "dead" then
+        local d = U.dist2(o.x, o.y, p.x, p.y)
+        if d < bd then best, bd = o, d end
+      end
+    end
+    if best then b = best end
+  end
   local line = Script.credits and Script.credits.quiet
   if not (world and world.speak and line) then return end
   if not (b and b.alive and b.state ~= "dead") then return end
