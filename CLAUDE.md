@@ -124,7 +124,9 @@ NODE_PATH=/home/user/.toolchain/node_modules \
 The Love2D web build is the only thing this repository hosts. `vercel.json` at the root runs
 `npm run build` (which is `love2d/tools/build_web.sh public`, the hosted multi-file shape) and
 serves `public/`; `.vercelignore` keeps the GameMaker project out of the deployment. It is live at
-<https://bots-save-us-all.vercel.app>.
+<https://bots-save-us-all.vercel.app>. The build image has no LÖVE and no xvfb, so the audio and
+tree bakes are skipped there and the hosted build is unbaked -- baking in CI would mean
+committing the artifacts.
 
 `tools/shot.sh` only renders the frames it photographs, so a full 20-minute session captures in
 seconds. **Read the PNGs.** Nothing about this game can be judged from the source alone.

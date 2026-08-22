@@ -38,7 +38,15 @@ trap 'rm -rf "$WORK"' EXIT
 #    baked, it is a stb_vorbis decode inside the wasm instead. It is a cache --
 #    BOTS_SKIP_BAKE=1 ships without it and the game synthesizes as it always
 #    has. See the note above BAKE_DIR in src/engine/audio.lua.
-[ -n "${BOTS_SKIP_BAKE:-}" ] || tools/bake_audio.sh
+#    Both bakes render offline in LOVE under a virtual X server, so they only
+#    run where that toolchain exists. On a machine without it -- a Mac, the
+#    Vercel build image -- skip rather than fail: an unbaked build is still a
+#    valid build, it just pays the synthesis cost in the browser.
+have() { command -v "$1" >/dev/null 2>&1; }
+can_bake() { have love && have xvfb-run; }
+if [ -n "${BOTS_SKIP_BAKE:-}" ]; then :
+elif can_bake && have oggenc; then tools/bake_audio.sh
+else echo "build_web: no love/xvfb-run/oggenc here -- shipping WITHOUT the sound bank" >&2; fi
 
 # 0b. bake the tree mesh library into src/bake/trees, same deal: 250 cells of
 #     geometry that depend on nothing but the species, the variant and the
@@ -47,7 +55,9 @@ trap 'rm -rf "$WORK"' EXIT
 #     after the first visit) -- BOTS_SKIP_TREE_BAKE=1 ships without it and the
 #     game tessellates as it always has. See the note above BAKE_DIR in
 #     src/entities/tree.lua.
-[ -n "${BOTS_SKIP_TREE_BAKE:-}" ] || tools/bake_trees.sh
+if [ -n "${BOTS_SKIP_TREE_BAKE:-}" ]; then :
+elif can_bake; then tools/bake_trees.sh
+else echo "build_web: no love/xvfb-run here -- shipping WITHOUT the tree mesh library" >&2; fi
 
 # 1. zip the project into a .love (source, plus assets/music -- the only binary
 #    media in the game; everything else is still generated at runtime)

@@ -85,6 +85,13 @@ See [`../docs/PERFORMANCE_SPEC.md`](../docs/PERFORMANCE_SPEC.md) for the measure
 `node_modules` (what Vercel installs -- `npm install` at the repository root), or the
 original toolchain path.
 
+The two bakes (`tools/bake_audio.sh`, `tools/bake_trees.sh`) render offline in LÖVE under a
+virtual X server. Where that toolchain is missing -- macOS, the Vercel build image -- the
+build says so and ships without them, and the game synthesizes the bank and tessellates the
+trees at runtime exactly as it did before the bakes existed. **The hosted build is currently
+an unbaked one**: to ship a baked build the artifacts have to be produced on the Linux
+toolchain and committed, since nothing in CI can generate them.
+
 ### The hosted deploy
 
 From the repository root:
