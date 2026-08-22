@@ -36,6 +36,9 @@ local TU       = require("src.game.tuning")
 local Draw = Opt.require("src.engine.draw")
 local Text = Opt.require("src.engine.text")
 local UI   = Opt.require("src.engine.ui")
+-- Only for `Bot.plateOnly`: the two funerals seat the one machine that speaks
+-- and leave the rest of the crew anonymous. See `soloPlate`.
+local Bot  = Opt.require("src.entities.bot")
 -- Only for the two things a hint has to keep off: the bottom band, and the
 -- screen during a cutscene.
 local HUD  = Opt.require("src.game.hud")
@@ -56,6 +59,26 @@ local T = {
   reactGap    = 5.5,
   hurtQuiet   = 8.0,     -- seconds after a hit before a "calm" beat may play
   reinforceGap = 5.0,    -- ...between two walk-ins saying where they came from
+  -- A FUNERAL IS ABOUT ONE MACHINE. Both loss beats put the camera on a body
+  -- at zoom 1.7, which is a 940x530 window with the corpse in the middle of it
+  -- -- and the rescue AI walks the crew to whatever went down. Captured: six
+  -- machines in a heap over the husk, the dead one the least visible object in
+  -- its own funeral. `guard = "calm"` only asks about blight, so these two ask
+  -- about the site as well.
+  funeralNear = 90,      -- ...this close to the body counts as standing on it
+  funeralCrowd = 2,      -- ...and this many is a crowd (so: one mourner, or none)
+  -- ...and the opposite failure, which the first cut of this guard produced on
+  -- the very first capture: the crew's grief timer runs 14s and then they all
+  -- walk back to work, so "wait until nobody is on the body" waited until
+  -- nobody was anywhere, and the beat played over a husk alone on a beach with
+  -- a voice off-screen asking whether it could be fixed. Somebody has to be in
+  -- the shot. At zoom 1.7 the frame is 940x530 world units, so this is well
+  -- inside it.
+  funeralWitness = 240,
+  -- ...but a beat that never plays is worse than a crowded one, and the site
+  -- is not guaranteed to clear before `patience` drops it. After this long
+  -- holding a moment that is otherwise good, the funeral takes the crowd.
+  funeralAlone = 45.0,
 }
 Story.tuning = T
 
@@ -166,6 +189,68 @@ local function blightNear(world, r)
   return n
 end
 
+--- Living machines standing within `r` of a point. The corpse is not one of
+--- them: it is what they are standing on.
+local function botsNear(world, x, y, r)
+  local list = world and world.bots
+  if not (list and x and y) then return 0 end
+  local n = 0
+  for i = 1, #list do
+    local b = list[i]
+    if b.alive and b.state ~= "dead" and U.dist2(b.x, b.y, x, y) <= r * r then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+--- Is this a shot of a funeral? Two things, and they pull against each other:
+--- nobody piled ON the body, and somebody standing near enough to be in the
+--- frame with it. One machine and a husk is the picture; six machines is a
+--- traffic jam and none at all is a voice off-screen.
+---
+--- `ready` is how long this beat has been holding a moment its own guard was
+--- happy with, and is the relief valve. A site that never settles must still
+--- get its funeral: a crowded one is a bad shot, and no funeral at all is a
+--- machine that died with nothing said over it.
+local function bodyClear(world, ctx, ready)
+  if (ready or 0) >= T.funeralAlone then return true end
+  local x, y = ctx.lostX, ctx.lostY
+  if botsNear(world, x, y, T.funeralNear) >= T.funeralCrowd then return false end
+  return botsNear(world, x, y, T.funeralWitness) >= 1
+end
+
+--- ONE NAME OVER A FUNERAL. `Bot.plateOnly` is the ending's guest list, and it
+--- is exactly what these two beats want: the survivor doing the talking keeps
+--- its plate, the crew that happens to be in shot is anonymous, and the four
+--- de-collided nameplates that used to stack up over the body are gone.
+---
+--- Left set, this would silently delete every nameplate for the rest of the
+--- run, so the release is not optional and cannot depend on the scene ending
+--- tidily: `fire` clears it on every exit path there is -- watched, skipped,
+--- aborted, and the one where the beat cancelled before it opened -- and
+--- `resetState` clears it again for a restart. It only ever clears its OWN
+--- list, so it cannot pull the guest list out from under the ending.
+local function soloPlate(bot)
+  if not (Bot and bot) then return end
+  local only = { [bot] = true }
+  Story.plateHeld = only
+  Bot.plateOnly = only
+end
+
+--- ...and hand it back. Identified BY THE LIST, not by "is anything seated":
+--- a beat that shouldered in on top of another one runs the loser's release
+--- after the winner's prep has already seated its own machine, and a release
+--- that only asked "is there a guest list" would blank the scene that is
+--- actually playing.
+local function releasePlate(only)
+  if not Bot then return end
+  only = only or Story.plateHeld
+  if not only then return end
+  if Bot.plateOnly  == only then Bot.plateOnly  = nil end
+  if Story.plateHeld == only then Story.plateHeld = nil end
+end
+
 --- Is this a moment a cutscene can have?
 local function guardOk(kind, world)
   local p = world and world.player
@@ -233,12 +318,16 @@ local BEATS = {
   },
   {
     id = "firstLoss", pri = 2, guard = "calm", delay = 2.2, patience = 300,
+    -- ...and the body has the ground to itself. See `bodyClear`.
+    require = bodyClear,
     prep = function(world, ctx)
       -- somebody has to be left to ask the question
       local b = pickBot(world, ctx.lostX, ctx.lostY)
       if not b then return false end
       ctx.bot = b
       bind("botB", b)
+      -- the one asking "can you fix it" is the only name in the frame
+      soloPlate(b)
       return true
     end,
   },
@@ -334,6 +423,8 @@ local BEATS = {
     -- loss -- if it is, firstLoss has the body, and two funerals over it would
     -- be worse than none.
     id = "firstBotLost", pri = 2, guard = "calm", delay = 2.2, patience = 300,
+    -- ...and the body has the ground to itself. See `bodyClear`.
+    require = bodyClear,
     prep = function(world, ctx)
       -- botB, not botA: botA is the machine that died, and the survivor
       -- standing over it is somebody else. ctx.lostX/lostY stay put -- the
@@ -343,6 +434,7 @@ local BEATS = {
       if not b then return false end
       ctx.bot = b
       bind("botB", b)
+      soloPlate(b)
       return true
     end,
   },
@@ -644,6 +736,10 @@ local function resetState()
   Story.questionBot  = nil
   Story.epitaphs = {}
   Story.sacrificed = {}
+  -- The funeral's one nameplate. Belt and braces: `fire` already releases it on
+  -- every exit path, and a list left set here would blank the crew's names for
+  -- the whole of the next run.
+  releasePlate()
   Story.watch    = nil
   Story.tut      = { active = nil, a = 0, t = 0, gap = 1.5, fading = false,
                      shown = {}, doneIds = {} }
@@ -671,8 +767,12 @@ local function fire(entry, force)
   if not beat then return true end
   local world = Story.world
   if entry.def.prep and entry.def.prep(world, entry.ctx) == false then
+    releasePlate()                    -- ...whatever a half-run prep seated
     return true                       -- cancel: the scene lost its cast
   end
+  -- The one nameplate this beat's prep seated, if it seated one. Held by value
+  -- so the release below is this beat's and not whoever is on screen later.
+  local held = Story.plateHeld
   refreshCast(world)
   local id = entry.def.id
   local h = Dialogue.play(beat.steps, {
@@ -682,11 +782,16 @@ local function fire(entry, force)
     id      = id,
     replace = force == true,
     onDone  = function()
+      -- Dialogue:finish runs this on EVERY exit -- watched, skipped from the
+      -- keyboard, and aborted by a scene teardown -- which is the whole reason
+      -- the plate release lives here rather than in the last step of a script.
+      releasePlate(held)
       Story.cooldown = T.beatGap
       Story.tut.gap = max(Story.tut.gap or 0, 1.6)
     end,
   })
-  if not h then return false end
+  -- ...and the path where the panel refused: prep has already run.
+  if not h then releasePlate(held) return false end
   Story.fired[id] = true
   Story.cooldown = T.beatGap
   return true
@@ -989,8 +1094,15 @@ local function updateBeats(dt, world)
     if e.def.patience and e.age > e.def.patience then
       e.expired = true
     elseif e.wait <= 0 and (Story.cooldown <= 0 or e.def.pri >= 3) then
-      if guardOk(e.def.guard, world) and (not e.def.require or e.def.require(world, e.ctx)) then
-        if not pick or e.def.pri > pick.def.pri then pick, pickI = e, i end
+      if guardOk(e.def.guard, world) then
+        -- How long this beat has had a moment its own guard was happy with and
+        -- has been held back by nothing but its `require`. Not `age`, which
+        -- also counts the night it was queued in: a relief valve wants to know
+        -- how long the beat has been THIS close, not how old it is.
+        e.ready = (e.ready or 0) + dt
+        if not e.def.require or e.def.require(world, e.ctx, e.ready) then
+          if not pick or e.def.pri > pick.def.pri then pick, pickI = e, i end
+        end
       end
     end
   end

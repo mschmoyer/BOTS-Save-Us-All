@@ -129,7 +129,8 @@ local T = {
   -- and the lines would go unread. So the camera lifts instead, by half the
   -- panel, for exactly as long as the panel is up.
   panelPad  = 46,        -- world px of chassis-and-nameplate above and below
-  -- THE TURN IS SHOT ALONE.
+  -- THE TURN IS NOT SHOT ALONE -- and it must not be. Read this before you
+  -- touch `turnClear`, `turnMin` or `turnMax`.
   --
   -- "Just me." / "All alone." / "Forever." -- and the helmet on the ground with
   -- the air hose still attached -- were played at the framing the whole ring
@@ -138,12 +139,35 @@ local T = {
   -- is how many of them are standing there; it is the wrong image for three
   -- lines about being alone. So the ending is two shots. The panel coming back
   -- up after the silence is the cut, and it pushes in to a portrait on him.
-  -- Derived from the ring, like every other framing in this scene: push until
-  -- the nearest machine on the circle is outside the frame, then stop. Fixed
-  -- numbers do not survive a crew of six or a crew of forty.
-  turnClear = 0.90,      -- of the half-frame the ring must be beyond
+  -- Derived from the ring, like every other framing in this scene: a crew of
+  -- six and a crew of forty get the same picture, which no fixed number does.
+  --
+  -- What the push ASKS for is "until the nearest machine on the circle is out
+  -- of frame". IT NEVER GETS IT, and the arithmetic says it never can. The ring
+  -- is r wide and 0.78r tall, so its widest axis is the horizontal -- which is
+  -- the one `getWidth() * 0.5` below measures against -- and clearing it needs
+  -- zoom > 800/r on a 1600px frame. `ringGap` puts the 33-machine crew of a
+  -- finished run at r = 168, which asks for 4.8 against a `turnMax` of 3.6.
+  -- Only a crew of about 44, standing at the full `ringMax` of 226 with the
+  -- island wide enough that the circle kept its radius, ever comes in under the
+  -- cap. Every real ending therefore stops AT 3.6 with the left and right
+  -- shoulders of the circle still in shot: eight to fourteen machines, counted
+  -- in captures.
+  --
+  -- THAT IS THE SHOT, AND IT IS THE BETTER ONE. The line is a man saying he is
+  -- alone while the machines stand there looking at him; emptying the frame
+  -- would make him right, and the irony is the whole image. What the cap buys
+  -- is the half of the intent that was worth having -- off the wide, close
+  -- enough to read his face, the crowd pressed to the edges instead of posed
+  -- across the middle -- and it throws away the half that would have cost the
+  -- scene its point.
+  --
+  -- So do not "correct" this to what the numbers claim. The ratio is what keeps
+  -- a two-machine ending from being shot like a forty-machine one; the ceiling
+  -- is what keeps the machines in the picture. Both stay.
+  turnClear = 0.90,      -- how far past the half-frame the ring is pushed for
   turnMin   = 2.6,
-  turnMax   = 3.6,
+  turnMax   = 3.6,       -- ...and the cap that always wins. See above.
   turnHush  = 2.0,       -- panel down this long and the silence has started
   turnSay   = 5.2,       -- ...and this far into it, one machine answers him
   -- The crowd does not introduce itself over the last shot of the game.
@@ -344,10 +368,23 @@ end
 ---
 --- Three rules it will not break.
 ---
----   * The head clause is the machine's own ranked fact and the tally does not
----     get to move it. The work leads; that is the whole point of the ranking,
----     and a page that reshuffled headlines for variety would be describing
----     machines by what its neighbours had not said yet.
+---   * The head clause is the machine's own ranked fact, and for the first
+---     `T.bots.memorial.headMax` printings of that kind of fact the tally does
+---     not get to move it. The work leads; that is the whole point of the
+---     ranking, and a page that reshuffled every headline for variety would be
+---     describing machines by what its neighbours had not said yet.
+---
+---     PAST THAT IT MAY BE DEMOTED, and this is the difference between a page
+---     and a table. Most of a crew are Planters, so "planted" is the ranked
+---     fact on most of the page; eleven consecutive rows were captured whose
+---     head clause was the tree count and nothing else. By the fourth of those
+---     the reader has stopped reading the fact and started reading the form. So
+---     once a head kind has led `headMax` rows, a machine that has something
+---     ELSE worth leading with -- see `LEAD` -- opens on that instead and the
+---     work count moves into the second clause, where it is still said, still
+---     exact, and no longer the first word for the tenth time. A machine with
+---     nothing else to say still leads with its work: a page that padded to
+---     avoid a pattern would be worse than the pattern.
 ---   * No row ever repeats the row above it word for word. Two identical
 ---     sentences in a row is the one thing a memorial cannot survive. A second
 ---     clause is tried first, then a demotion of the head.
@@ -365,17 +402,61 @@ local SECOND = {         -- clauses that can be a row's second sentence
   -- when there is nothing to say, and it is never worth saying twice.
 }
 
+--- ...and the ones worth OPENING a row with once the work has saturated. Not
+--- every second clause is a headline. "it came online on the third day" and
+--- "it got up twice" are true, and they are footnotes; leading forty rows with
+--- them would trade one template for a duller one. These four are facts a
+--- reader would want first: what the player did with their hands, the machine
+--- that never fell, the one that covered the whole island, and how long it
+--- stood. Which of them a row actually gets is decided by the same page-wide
+--- tally as the second clause, so a promoted headline that has already led
+--- three rows is as expensive as any other repetition and the page moves on.
+local LEAD = { carried = true, never = true, walked = true, nights = true }
+
 --- Which wording of a clause to use, and the tally slot it belongs to. Only one
 --- clause -- the tree count, which lands on two thirds of a long page -- has
 --- more than one wording; the page takes whichever of the two it has used less.
 --- Counted per WORDING and not per finished phrase, because every tree count is
 --- a different phrase and a per-phrase tally would only ever alternate when two
 --- machines happened to plant the same number.
-local function phrase(c, worded)
+---
+--- ...AND THE TIE IS BROKEN BY THE ROW, NOT BY THE COUNTER. "Take whichever I
+--- have used less" is a perfect alternator: the counts can never differ by more
+--- than one, so the page printed planted / put / planted / put down eleven
+--- consecutive rows. Two wordings in strict rotation are more obviously a
+--- template than one wording repeated -- the reader stops seeing a fact and
+--- starts seeing the machine that generated it. `jit` is a per-row coin from
+--- the golden ratio: deterministic (the same run always composes the same
+--- page), balanced (the counts still cannot drift apart, because the tie is all
+--- it decides), and aperiodic -- so the page gets pairs in either order and
+--- never a phase you can hear.
+---
+--- `avoid` is the sentence the row above opened with, and is passed only for a
+--- row's HEAD. Two rows in a row that begin "planted five trees." are two
+--- machines that happened to plant the same number, and the coin is not allowed
+--- to put them under each other: that is the one collision the strict
+--- alternation used to prevent by accident, and the page has always had a rule
+--- against a row repeating the one above it.
+local function phrase(c, worded, jit, avoid)
   if not c.alt then return c.text, c.key end
   local a, b = c.key .. "|a", c.key .. "|b"
-  if (worded[a] or 0) <= (worded[b] or 0) then return c.text, a end
-  return c.alt, b
+  local na, nb = worded[a] or 0, worded[b] or 0
+  local text, slot
+  if na == nb then
+    if jit then text, slot = c.alt, b else text, slot = c.text, a end
+  elseif na < nb then text, slot = c.text, a
+  else text, slot = c.alt, b end
+  if avoid and text == avoid then
+    if slot == a then return c.alt, b end
+    return c.text, a
+  end
+  return text, slot
+end
+
+--- The coin. Row `i` of the page, off the golden ratio: no period a reader can
+--- pick up, and no dependence on anything but which row this is.
+local function rowJitter(i)
+  return ((i * 0.6180339887) % 1) < 0.5
 end
 
 --- A clause as a sentence of its own. Most are bare predicates about the
@@ -389,9 +470,39 @@ local function rowWidth(str, size)
   return #str * size * 0.5
 end
 
+--- The clause on this machine worth opening its row with instead of its own
+--- ranked fact, or nil for "nothing better than the work". Scored like a second
+--- clause -- rank, then what the page has already spent on that kind of fact --
+--- so a promotion is as page-aware as every other choice here, and a promoted
+--- headline saturates in its turn.
+local function bestLead(list, used, said, worded, heads, jit, MEM)
+  local best, bestScore
+  for i = 2, #list do
+    local c = list[i]
+    local ph = phrase(c, worded, jit)
+    -- Three things a promotion has to be. In the machine's LEAD set; under the
+    -- same ceiling as the headline it is replacing, or the commonest of them --
+    -- every machine has stood through some number of nights -- just becomes the
+    -- new first word of the page; and a sentence this page has not printed yet.
+    --
+    -- That last one is not a nicety. `said` counts second clauses too, and
+    -- without it the page put "it walked the whole island." at the end of one
+    -- row and "walked the whole island." at the head of the next, and led two
+    -- consecutive rows with "stood through two nights." A work count at least
+    -- has a different number in it every time; a promoted headline that is not
+    -- new is strictly worse than the template it was promoted over.
+    if LEAD[c.key] and (heads[c.key] or 0) < MEM.headMax and (said[ph] or 0) == 0 then
+      local sc = i + MEM.spread * min(used[c.key] or 0, MEM.spreadCap)
+      if not bestScore or sc < bestScore then best, bestScore = i, sc end
+    end
+  end
+  return best
+end
+
 --- One row. `used` counts kinds of fact, `said` counts finished sentences,
---- `prev` is the line above this one.
-local function composeRow(list, used, said, worded, prev, maxW, size)
+--- `heads` counts kinds of fact that have LED a row, `prev` is the line above.
+local function composeRow(list, used, said, worded, heads, jit, prev, prevHead,
+                          maxW, size)
   local MEM = TU.bots.memorial
   local cand = {}
   local function claim(c, ph, vk)
@@ -399,21 +510,41 @@ local function composeRow(list, used, said, worded, prev, maxW, size)
     said[ph] = (said[ph] or 0) + 1
     worded[vk] = (worded[vk] or 0) + 1
   end
-  -- Two attempts: the machine's headline, and -- only if that collides with the
-  -- row above and nothing else will separate them -- the fact under it.
+
+  -- Which entries of the list to try as the head, in order. The machine's own
+  -- ranked fact, then -- only if that collides with the row above and nothing
+  -- else will separate them -- the fact under it. Ahead of both, once that kind
+  -- of fact has already led `headMax` rows, whatever this machine has that is
+  -- worth leading with instead.
+  local promoted
+  if list[1] and (heads[list[1].key] or 0) >= MEM.headMax then
+    promoted = bestLead(list, used, said, worded, heads, jit, MEM)
+  end
+  local order, nOrder = {}, 0
+  if promoted then nOrder = 1 order[1] = promoted end
   for h = 1, math.min(#list, 2) do
+    if h ~= promoted then nOrder = nOrder + 1 order[nOrder] = h end
+  end
+
+  for oi = 1, nOrder do
+    local h = order[oi]
     local head = list[h]
-    local hp, hv = phrase(head, worded)
+    local hp, hv = phrase(head, worded, jit, prevHead)
     local n = 0
     for i = 1, #list do
       local c = list[i]
       if i ~= h and SECOND[c.key] and c.key ~= head.key then
         n = n + 1
         cand[n] = c
-        c._ph, c._vk = phrase(c, worded)
+        c._ph, c._vk = phrase(c, worded, jit)
         c._say = sentence(c, c._ph)
         c._score = i + MEM.spread * min(used[c.key] or 0, MEM.spreadCap)
                      + MEM.exact * (said[c._ph] or 0)
+        -- A DEMOTED HEADLINE IS MOVED, NOT DROPPED. When the row opens on a
+        -- promoted clause, the machine's own ranked fact takes the second
+        -- sentence ahead of everything else: the page decided it should not
+        -- LEAD forty rows, not that this machine's work should go unsaid.
+        if h == promoted and i == 1 then c._score = -1 end
       end
     end
     for i = n + 1, #cand do cand[i] = nil end
@@ -422,17 +553,23 @@ local function composeRow(list, used, said, worded, prev, maxW, size)
       local line = hp .. ". " .. cand[i]._say
       if line ~= prev and rowWidth(line, size) <= maxW then
         claim(head, hp, hv)
+        heads[head.key] = (heads[head.key] or 0) + 1
         claim(cand[i], cand[i]._ph, cand[i]._vk)
-        return line
+        return line, hp
       end
     end
+    -- ...but a promoted head only earns the row if the work came with it. On
+    -- its own it is a machine described by how long it stood while the trees
+    -- it planted go unmentioned, which is not an improvement on the template.
     local line = hp .. "."
-    if line ~= prev then
+    if h ~= promoted and line ~= prev then
       claim(head, hp, hv)
-      return line
+      heads[head.key] = (heads[head.key] or 0) + 1
+      return line, hp
     end
   end
-  return (phrase(list[1], worded)) .. "."
+  local hp = phrase(list[1], worded, jit)
+  return hp .. ".", hp
 end
 
 --- Write every row's finished sentence. Called from `layoutCredits`, so a
@@ -441,14 +578,17 @@ function S:composeMemorial(colW, size)
   local rows = self.fallen
   if not rows then return end
   local maxW = colW * TU.bots.memorial.rowWidth
-  local used, said, worded, prev = {}, {}, {}, nil
+  local used, said, worded, heads = {}, {}, {}, {}
+  local prev, prevHead = nil, nil
   for i = 1, #rows do
     local r = rows[i]
     local list = r.clauses
     if list and #list > 0 then
-      r.epitaph = composeRow(list, used, said, worded, prev, maxW, size)
+      r.epitaph, prevHead = composeRow(list, used, said, worded, heads,
+                                       rowJitter(i), prev, prevHead, maxW, size)
     else
       r.epitaph = (r.line or "was here") .. "."
+      prevHead = nil
     end
     prev = r.epitaph
   end

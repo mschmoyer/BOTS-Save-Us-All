@@ -565,7 +565,13 @@ S.credits = {
     { key = "o2",      label = "OXYGEN RESTORED", suffix = "%" },
     { key = "cycles",  label = "NIGHTS HELD" },
     { key = "built",   label = "BOTS BUILT" },
-    { key = "rescued", label = "CARRIED HOME" },
+    -- A COUNT OF TRIPS, NOT OF MACHINES. `stats.rescued` counts rescue events:
+    -- one machine you went out for four times is four. Under BOTS BUILT 65 a
+    -- row reading CARRIED HOME 73 is a subset larger than its set, which on
+    -- this page reads as a bug rather than as a fact. The label says what the
+    -- number counts, and the count is the one worth having -- it is the number
+    -- of times the player put the work down and walked out for one of them.
+    { key = "rescued", label = "TIMES YOU CARRIED ONE HOME" },
     -- The last line of the tally is the one the game is about: the rig came
     -- down mostly because they walked into it, and the number says how much.
     -- Named in full, because it sits under OXYGEN RESTORED 84% and "THEY

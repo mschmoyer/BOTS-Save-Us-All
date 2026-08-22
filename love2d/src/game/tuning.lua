@@ -303,6 +303,14 @@ T.bots.memorial = {
   spread   = 1.2,
   spreadCap = 3,
   exact    = 3.0,
+  -- How many rows a KIND of fact may lead before the page stops treating it as
+  -- news. The work leads -- that is the ranking's whole point -- but a crew of
+  -- Planters means the tree count is the ranked fact on nearly every machine,
+  -- and after the third row the reader is no longer being told what this one
+  -- did, they are being shown the template. Past this, a row whose headline has
+  -- saturated may lead with something else it is and print the work second; the
+  -- fact is not lost, it stops being the opening word. See `composeRow`.
+  headMax  = 3,
   -- A row is one line under one name. Anything wider than this loses its second
   -- clause rather than wrapping into the row below it -- the scroll has a fixed
   -- row pitch and no reflow. Measured as a fraction of the memorial column, and
