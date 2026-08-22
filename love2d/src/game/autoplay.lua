@@ -4,6 +4,13 @@
 local U  = require("src.core.util")
 local TU = require("src.game.tuning")
 
+-- Same shape as scenes/game.lua's: the harness installs _G.BOTS_CFG, and a
+-- bare luajit run falls back to the environment.
+local cfg = _G.BOTS_CFG or function(n)
+  local v = os.getenv(n)
+  return (v ~= nil and v ~= "") and v or nil
+end
+
 local A = {}
 A.__index = A
 
@@ -40,7 +47,17 @@ function A:decide(p, dt)
     self.aimX, self.aimY = dx, dy
     return dx, dy, act
   end
-  local down = w:nearestDownedBot(p.x, p.y, 900)
+  -- THIS AGENT IS A BETTER RESCUER THAN ANY PERSON, and that makes every
+  -- loss number a trace produces a lower bound rather than a measurement.
+  -- It scans 900 units -- most of the island, and about the width of the
+  -- screen at ship zoom -- and drops everything to go and fetch. A player has
+  -- a HUD pip, a countdown, and one pair of eyes.
+  --
+  -- Measured both ways on the same seeds: with this on, the run loses 3 (4242)
+  -- and 10 (777) machines; with BOTS_NO_RESCUE=1 it loses 11 and 34. A person
+  -- is somewhere in that band, and a pass that tunes the loss economy against
+  -- the top of it is tuning against the instrument. Bracket it instead.
+  local down = (not cfg("BOTS_NO_RESCUE")) and w:nearestDownedBot(p.x, p.y, 900) or nil
   if down and not (w.boss and w.boss.alive) then
     local d = U.dist(p.x, p.y, down.x, down.y)
     self.gx, self.gy = down.x, down.y

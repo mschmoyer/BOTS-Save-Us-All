@@ -131,7 +131,7 @@ committing the artifacts.
 `tools/shot.sh` only renders the frames it photographs, so a full 20-minute session captures in
 seconds. **Read the PNGs.** Nothing about this game can be judged from the source alone.
 
-**Three traps in that harness**, each of which has produced a confident wrong number:
+**Four traps in that harness**, each of which has produced a confident wrong number:
 
 - The autoplay **trace** *was* not reproducible — two identical runs ended at 466 and 250
   trees — and this was diagnosed as machine contention for a long time. It was not. **LuaJIT
@@ -159,6 +159,19 @@ seconds. **Read the PNGs.** Nothing about this game can be judged from the sourc
   Read the result as: ~66% of pixels differ by ±1 (the dither/grade floor, ignore it) and the
   signal is the count differing by **more than 10/255**. For reference, F1+F2+F4 against their
   baseline measured 0.022–0.045% over that threshold across three frames.
+- **The autoplay agent is a better rescuer than any person, so every loss number
+  a trace produces is a lower bound rather than a measurement.** `game/autoplay.lua`
+  scans 900 world units for a downed bot -- most of the island, and about the width of
+  the screen at ship zoom -- and drops whatever it is doing to go and fetch. A player has
+  a HUD pip, a countdown and one pair of eyes. Measured both ways on the same seeds:
+  the default agent finishes a run having lost **3** machines (seed 4242) and **10**
+  (777); `BOTS_NO_RESCUE=1` finishes the same runs having lost **11** and **34**. A
+  person is somewhere in that band. A whole critique pass once concluded from the low
+  figure that "the nights cost you almost nothing" and proposed rebalancing the loss
+  economy — against the instrument. **Bracket it: run both bounds before you touch a
+  difficulty number.** The same runs also show `stats.rescued` climbing while the agent
+  rescues nobody, because Beacons revive the downed on their own; the rescue economy has
+  two sources and only one of them is the player.
 - Headless capture only calls `love.draw()` on photographed frames. This used to mean far more
   than "culling measurements are invalid", and the entry that said only that was hiding the
   real problem: **photographing a frame changed the simulation.** `Tree:update` sets `onScreen`
