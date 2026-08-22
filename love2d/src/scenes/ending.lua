@@ -549,18 +549,42 @@ local function composeRow(list, used, said, worded, heads, jit, prev, prevHead,
         cand[n] = c
         c._ph, c._vk = phrase(c, worded, jit)
         c._say = sentence(c, c._ph)
-        -- `went` pays neither penalty. Both exist to stop a FORM being reused
-        -- -- "planted N trees" over and over is a template, and the page is
-        -- right to ration it. But twenty of these machines charged the rig,
-        -- that is one fact rather than a form, and a memorial is supposed to
-        -- repeat the thing they all did. Rationed like a template it appeared
-        -- on two rows out of fourteen; the other twelve were listed by their
-        -- gardening. This is the line the whole ending is about.
-        local rationed = c.key ~= "went"
-        c._score = i
-        if rationed then
-          c._score = c._score + MEM.spread * min(used[c.key] or 0, MEM.spreadCap)
-                              + MEM.exact * (said[c._ph] or 0)
+        -- `went` PAYS `spread` AND NOT `exact`, and the two failures either
+        -- side of that are why the split is where it is.
+        --
+        -- `exact` is 3.0 and does not saturate, and "it went at the rig." is
+        -- the same sentence every time -- so charging it priced the clause out
+        -- after one use and the page carried it on TWO rows of fourteen while
+        -- twelve machines that charged the Harvester Prime were listed by their
+        -- gardening. Exempting it from both made it permanently the cheapest
+        -- candidate on every rebellion machine, and the only brake left was the
+        -- one-row `prevSecond` lockout -- which turns "always wins" into "wins
+        -- every other row". Captured: rows 4, 6, 8, 10, 12, 14, 16, 18 and 20.
+        -- A casualty list with the same sentence on alternate lines is not a
+        -- roll call, it is a chorus, and it is the exact failure this file
+        -- diagnoses forty lines up for the planted/put pair: two things in
+        -- strict rotation read as the machine that generated them.
+        --
+        -- `spread` is the right cost because it SATURATES (1.2, capped at 3
+        -- printings). It makes the clause lose sometimes and win sometimes
+        -- without ever pricing it out, so it clumps and gaps instead of
+        -- alternating. `exact` stays off because it exists to stop a FORM being
+        -- reused, and twenty machines charging the rig is one shared fact, not
+        -- a form -- a memorial is supposed to repeat the thing they all did.
+        c._score = i + MEM.spread * min(used[c.key] or 0, MEM.spreadCap)
+        if c.key ~= "went" then
+          c._score = c._score + MEM.exact * (said[c._ph] or 0)
+        elseif jit then
+          -- ...AND A COIN, because a saturating penalty alone still ticks. Once
+          -- `used` hits `spreadCap` the clause's score stops moving, every
+          -- rival's score is static too, and the only thing left deciding it is
+          -- the one-row lockout -- which is a clock. Captured after the
+          -- saturating fix: rows 5, 7, 9, 11, 13. Adding the row's own coin to
+          -- the cost breaks the tick without changing how often it prints: the
+          -- coin is `rowJitter`, an irrational rotation over the row index, so
+          -- it never falls into a period. It is the same device this file
+          -- already uses to choose between two wordings, for the same reason.
+          c._score = c._score + MEM.spread * 2.5
         end
         -- A DEMOTED HEADLINE IS MOVED, NOT DROPPED. When the row opens on a
         -- promoted clause, the machine's own ranked fact takes the second
@@ -577,8 +601,17 @@ local function composeRow(list, used, said, worded, heads, jit, prev, prevHead,
     for pass = 1, 2 do
       for i = 1, n do
         local line = hp .. ". " .. cand[i]._say
+        -- BOTH DIAGONALS, not just the two verticals. The guards ran
+        -- head-vs-prevHead and second-vs-prevSecond and nothing looked across,
+        -- so a row could head with the clause the row above had closed on, or
+        -- close on the one it had opened with. Captured twice, the second time
+        -- after the first diagonal was added and only the second was left:
+        -- LAMP-02 heading "went at the rig." over FRAME-02 closing "it went at
+        -- the rig." -- one word apart with every guard satisfied. Pass 2 drops
+        -- all four, so none of this can starve a row of its second clause.
         if line ~= prev and rowWidth(line, size) <= maxW
-           and (pass == 2 or cand[i]._ph ~= prevSecond) then
+           and (pass == 2 or (cand[i]._ph ~= prevSecond and hp ~= prevSecond
+                              and cand[i]._ph ~= prevHead and hp ~= prevHead)) then
           claim(head, hp, hv)
           heads[head.key] = (heads[head.key] or 0) + 1
           claim(cand[i], cand[i]._ph, cand[i]._vk)
@@ -989,6 +1022,21 @@ end
 --- Drawn inside the camera, over the world, before the glow -- which is where
 --- `World:drawSpeech` would have put it. The alpha is that function's, so the
 --- line fades in and out the way a bot's line does anywhere else in the game.
+--- Is the crew's one spoken line on screen right now? Used to take the crew's
+--- nameplates down for its duration; see the note where plateGain is set.
+function S:quietLineLive()
+  local sp = self.world and self.world.speeches
+  if not sp then return false end
+  for i = 1, #sp do
+    local e = sp[i]
+    if e.who and e.who.alive
+       and U.saturate(math.min(e.t * 4, (e.dur - e.t) * 2)) > 0.01 then
+      return true
+    end
+  end
+  return false
+end
+
 function S:drawQuietLine(world)
   local Wo = package.loaded["src.world.world"]
   local raw = Wo and rawget(Wo, "drawBubbleRaw")
@@ -1125,6 +1173,15 @@ function S:update(dt, realDt)
   -- they have no business over a list of the dead.
   if Bot then
     Bot.plateGain = T.plateGain * (1 - U.saturate(self.creditsT / T.memBack))
+    -- ...and NOTHING while the crew's one line is up. `drawQuietLine` renders
+    -- through `drawBubbleRaw`, the unpatched four-argument World:drawBubble,
+    -- which knows nothing about nameplates and de-collides against nothing --
+    -- so the plates behind it print straight through the panel. Captured: the
+    -- line that answers fifteen minutes of radio silence rendering as
+    -- `we are here-03`, with the tail of FRAME-03's plate running out past the
+    -- bubble edge and reading as part of the sentence. Three words at the end
+    -- of the game get the frame to themselves.
+    if self:quietLineLive() then Bot.plateGain = 0 end
   end
 
   -- THE CUT INTO THE TURN, detected rather than scripted. The script takes the
